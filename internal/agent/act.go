@@ -257,6 +257,25 @@ func (e *AgentEngine) collectKnowledgeRefs(state *types.AgentState, newRefs []*t
 	}
 }
 
+// collectPushedIDs merges newly pushed knowledge IDs into state.PushedKnowledgeIDs,
+// deduplicating by ID. Not thread-safe: callers must invoke it on a single
+// goroutine (e.g. after g.Wait() in the parallel tool path).
+func (e *AgentEngine) collectPushedIDs(state *types.AgentState, newIDs []string) {
+	if state == nil || len(newIDs) == 0 {
+		return
+	}
+	seen := make(map[string]bool, len(state.PushedKnowledgeIDs))
+	for _, id := range state.PushedKnowledgeIDs {
+		seen[id] = true
+	}
+	for _, id := range newIDs {
+		if id != "" && !seen[id] {
+			state.PushedKnowledgeIDs = append(state.PushedKnowledgeIDs, id)
+			seen[id] = true
+		}
+	}
+}
+
 // executeToolCallsParallel runs all tool calls concurrently using errgroup,
 // collecting results in original order.
 func (e *AgentEngine) executeToolCallsParallel(
@@ -284,11 +303,15 @@ func (e *AgentEngine) executeToolCallsParallel(
 
 	_ = g.Wait()
 
-	// Merge references from parallel tool calls. collectKnowledgeRefs is not
-	// thread-safe, so this must happen in a single goroutine after g.Wait().
+	// Merge references from parallel tool calls. collectKnowledgeRefs and
+	// collectPushedIDs are not thread-safe, so this must happen in a single
+	// goroutine after g.Wait().
 	for _, toolCall := range results {
 		if toolCall.Result != nil && toolCall.Result.Success && len(toolCall.Result.SearchResults) > 0 {
 			e.collectKnowledgeRefs(state, toolCall.Result.SearchResults)
+		}
+		if toolCall.Result != nil && toolCall.Result.Success && len(toolCall.Result.PushedKnowledgeIDs) > 0 {
+			e.collectPushedIDs(state, toolCall.Result.PushedKnowledgeIDs)
 		}
 	}
 
@@ -345,6 +368,9 @@ func (e *AgentEngine) executeSingleToolCall(
 	// Collect references from retrieval tools (serial path; single goroutine).
 	if toolCall.Result != nil && toolCall.Result.Success && len(toolCall.Result.SearchResults) > 0 {
 		e.collectKnowledgeRefs(state, toolCall.Result.SearchResults)
+	}
+	if toolCall.Result != nil && toolCall.Result.Success && len(toolCall.Result.PushedKnowledgeIDs) > 0 {
+		e.collectPushedIDs(state, toolCall.Result.PushedKnowledgeIDs)
 	}
 
 	result := toolCall.Result

@@ -192,12 +192,13 @@ func (e *AgentEngine) emitCompletionEvent(
 		Type:      event.EventAgentComplete,
 		SessionID: sessionID,
 		Data: event.AgentCompleteData{
-			FinalAnswer:     state.FinalAnswer,
-			KnowledgeRefs:   knowledgeRefsInterface,
-			AgentSteps:      state.RoundSteps, // Include detailed execution steps for message storage
-			TotalSteps:      len(state.RoundSteps),
-			TotalDurationMs: time.Since(startTime).Milliseconds(),
-			MessageID:       messageID, // Include message ID for proper message update
+			FinalAnswer:        state.FinalAnswer,
+			KnowledgeRefs:      knowledgeRefsInterface,
+			PushedKnowledgeIDs: state.PushedKnowledgeIDs,
+			AgentSteps:         state.RoundSteps, // Include detailed execution steps for message storage
+			TotalSteps:         len(state.RoundSteps),
+			TotalDurationMs:    time.Since(startTime).Milliseconds(),
+			MessageID:          messageID, // Include message ID for proper message update
 		},
 	})
 

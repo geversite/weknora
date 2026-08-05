@@ -196,6 +196,13 @@ type ToolResult struct {
 	// (knowledge_search, wiki_search, etc.). Non-retrieval tools leave this nil.
 	// Used by the agent engine to collect cited knowledge for reference tracking.
 	SearchResults []*SearchResult `json:"-"` // 不序列化，仅引擎内部使用
+
+	// PushedKnowledgeIDs marks which knowledge_ids in this tool result were
+	// "pushed" (delivered as downloadable links) by the push_files tool.
+	// Only push_files populates it. The engine collects these into
+	// AgentState.PushedKnowledgeIDs so RecordReferenceEvents can tag the
+	// corresponding citation events as reference_type='push'.
+	PushedKnowledgeIDs []string `json:"-"` // 不序列化，仅引擎内部使用
 }
 
 // ToolCall represents a single tool invocation within an agent step
@@ -244,6 +251,11 @@ type AgentState struct {
 	IsComplete    bool            `json:"is_complete"`    // Whether agent has finished
 	FinalAnswer   string          `json:"final_answer"`   // The final answer to the query
 	KnowledgeRefs []*SearchResult `json:"knowledge_refs"` // Collected knowledge references
+
+	// PushedKnowledgeIDs collects the knowledge_ids pushed by push_files during
+	// this agent run, deduplicated. Persisted onto the assistant message so
+	// RecordReferenceEvents can tag those citations as reference_type='push'.
+	PushedKnowledgeIDs []string `json:"pushed_knowledge_ids"`
 }
 
 // FunctionDefinition represents a function definition for LLM function calling

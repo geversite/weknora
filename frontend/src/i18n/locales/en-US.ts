@@ -783,6 +783,7 @@ export default {
     manageAgents: 'Manage',
     builtinAgents: 'Built-in Agents',
     customAgents: 'Custom Agents',
+    pushFiles: 'Push Files',
     capabilities: {
       kbCount: '{count} knowledge base(s) specified',
       kbAll: 'Access to all knowledge bases',
@@ -2656,6 +2657,10 @@ export default {
     documentFileLabel: 'File:',
     documentMetadataLabel: 'Metadata',
     documentInfoEmpty: 'No document information available',
+    filePushEmpty: 'No files pushed',
+    download: 'Download',
+    expiresIn: 'Expires in {hours}h',
+    pushFailed: 'Push failed',
     positionLabel: 'Position:',
     chunkPositionValue: 'Chunk #{index}',
     contentLengthLabelSimple: 'Content length:',
@@ -4550,7 +4555,8 @@ export default {
       executeSkillScript: 'Execute Skill Script',
       dataAnalysis: 'Data Analysis',
       dataSchema: 'Data Schema',
-      databaseQuery: 'Database Query'
+      databaseQuery: 'Database Query',
+      pushFiles: 'Push Files'
     },
     citation: {
       notFound: 'Content not found',
@@ -4762,6 +4768,8 @@ export default {
       getDocInfoDesc: 'View document metadata',
       dbQuery: 'Query Database',
       dbQueryDesc: 'Query information from the database',
+      pushFiles: 'Push Files',
+      pushFilesDesc: 'Generate time-limited download links for files in the knowledge base and show them as cards',
       dataAnalysis: 'Data Analysis',
       dataAnalysisDesc: 'Understand data files and perform data analysis',
       dataSchema: 'View Data Schema',

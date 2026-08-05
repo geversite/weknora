@@ -73,6 +73,10 @@ var toolHandlePolicies = map[string]toolHandlePolicy{
 		sourceIDKeys: map[string]struct{}{"knowledge_ids": {}, "faq_ids": {}},
 		sourceOutput: true,
 	},
+	"push_files": {
+		sourceIDKeys: map[string]struct{}{"knowledge_ids": {}},
+		sourceOutput: true,
+	},
 	"query_knowledge_graph": {
 		sourceIDKeys: map[string]struct{}{"knowledge_base_ids": {}},
 		sourceOutput: true,

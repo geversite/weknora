@@ -749,6 +749,11 @@ func applyIMCompleteDataToMessage(msg *types.Message, data event.AgentCompleteDa
 			msg.KnowledgeReferences = types.References(refs)
 		}
 	}
+	if len(data.PushedKnowledgeIDs) > 0 {
+		if idsJSON, err := json.Marshal(data.PushedKnowledgeIDs); err == nil {
+			msg.PushedKnowledgeIDs = types.JSON(idsJSON)
+		}
+	}
 	if steps := sanitizeIMAgentSteps(data.AgentSteps); len(steps) > 0 {
 		msg.AgentSteps = steps
 	}
@@ -2730,6 +2735,9 @@ loop:
 	bufMu.Unlock()
 
 	finalDisplay := cleanIMContent(ctx, FormatIMFinalFromParts(parts), tenant, s.defaultFileSvc, s.storageResolver)
+	// M2: IM channels don't render the structured file_push cards; surface pushed
+	// file download links at the end of the message body.
+	finalDisplay = appendPushedFileLinks(ctx, finalDisplay, assistantMsg, s.knowledgeService, s.defaultFileSvc)
 	if noVisibleContent || finalDisplay == "" {
 		fallback := "抱歉，我暂时无法回答这个问题。"
 		if finalErr != nil {
@@ -2757,6 +2765,9 @@ loop:
 	if answer == "" {
 		answer = "抱歉，我暂时无法回答这个问题。"
 	}
+	// M2: persist the pushed file download links into the assistant message so
+	// the recorded content matches what was displayed on the IM channel.
+	answer = appendPushedFileLinks(ctx, answer, assistantMsg, s.knowledgeService, s.defaultFileSvc)
 
 	assistantMsg.Content = answer
 	assistantMsg.IsCompleted = true
@@ -2957,6 +2968,8 @@ func (s *Service) runQA(ctx context.Context, session *types.Session, query strin
 	if notice := s.buildIMMCPAuthNotice(ctx, authServices); notice != "" {
 		answer = appendIMAuthNotice(answer, notice)
 	}
+	// M2: surface pushed file download links at the end of the message body.
+	answer = appendPushedFileLinks(ctx, answer, assistantMsg, s.knowledgeService, s.defaultFileSvc)
 
 	// Update assistant message with the full answer (including citation tags for web rendering).
 	assistantMsg.Content = answer

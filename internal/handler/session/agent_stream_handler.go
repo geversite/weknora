@@ -616,6 +616,14 @@ func (h *AgentStreamHandler) handleComplete(ctx context.Context, evt event.Event
 			h.assistantMessage.KnowledgeReferences = knowledgeRefs
 		}
 
+		// Update pushed knowledge IDs if provided (M2: push_files tool).
+		if len(data.PushedKnowledgeIDs) > 0 {
+			idsJSON, err := json.Marshal(data.PushedKnowledgeIDs)
+			if err == nil {
+				h.assistantMessage.PushedKnowledgeIDs = types.JSON(idsJSON)
+			}
+		}
+
 		h.assistantMessage.Content += data.FinalAnswer
 
 		// Update agent steps if provided

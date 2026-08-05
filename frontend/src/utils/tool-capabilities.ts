@@ -55,6 +55,7 @@ export const TOOL_CAPABILITY_REQUIREMENTS: Record<string, ToolRequirement> = {
   query_knowledge_graph: { anyOf: ['vector', 'keyword'], consumesFiles: true },
   get_document_info:     { anyOf: ['vector', 'keyword'], consumesFiles: true },
   database_query:        { anyOf: ['vector', 'keyword'], consumesFiles: true },
+  push_files:            { anyOf: ['vector', 'keyword'], consumesFiles: true },
 
   // ---- Wiki (operates on wiki pages referenced by the wiki machinery;
   //      arbitrary user-picked file IDs aren't meaningful here) ----

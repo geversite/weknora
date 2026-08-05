@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
@@ -468,6 +469,18 @@ func (s *messageService) RecordReferenceEvents(ctx context.Context, tenantID uin
 		return
 	}
 
+	// M2: resolve which knowledge_ids were pushed by the push_files tool so the
+	// corresponding reference events can be tagged reference_type='push'.
+	pushedSet := make(map[string]bool)
+	if len(assistantMessage.PushedKnowledgeIDs) > 0 {
+		var ids []string
+		if err := json.Unmarshal(assistantMessage.PushedKnowledgeIDs, &ids); err == nil {
+			for _, id := range ids {
+				pushedSet[id] = true
+			}
+		}
+	}
+
 	seen := make(map[string]bool)
 	var events []*types.ReferenceEvent
 	for _, ref := range assistantMessage.KnowledgeReferences {
@@ -480,6 +493,10 @@ func (s *messageService) RecordReferenceEvents(ctx context.Context, tenantID uin
 		// Agent 路径标记为 agent 类型。
 		if assistantMessage.AgentID != "" || len(assistantMessage.AgentSteps) > 0 {
 			refType = types.ReferenceTypeAgent
+		}
+		// M2: 被 push_files 推送的文件标记为 push 类型。
+		if pushedSet[ref.KnowledgeID] {
+			refType = types.ReferenceTypePush
 		}
 
 		events = append(events, &types.ReferenceEvent{

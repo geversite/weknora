@@ -57,6 +57,18 @@ func agentHasKnowledgeScope(config *types.AgentConfig) bool {
 	)
 }
 
+// firstSearchTargetTenant returns the first non-zero tenant ID found in the
+// search targets, used to sign presigned download URLs for push_files. Falls
+// back to 0 (presign signing will then fail gracefully if no tenant is bound).
+func firstSearchTargetTenant(searchTargets types.SearchTargets) uint64 {
+	for _, t := range searchTargets {
+		if t != nil && t.TenantID != 0 {
+			return t.TenantID
+		}
+	}
+	return 0
+}
+
 // knowledgeBaseIDsForPrompt returns KB IDs to show in runtime_context metadata.
 // Prefer explicit KnowledgeBases; fall back to deduped IDs from SearchTargets.
 func knowledgeBaseIDsForPrompt(config *types.AgentConfig) []string {
@@ -486,6 +498,8 @@ func (s *agentService) registerTools(
 			tools.ToolDatabaseQuery:       true,
 			tools.ToolDataAnalysis:        true,
 			tools.ToolDataSchema:          true,
+			// push_files pushes files from an in-scope KB, so it also requires knowledge scope.
+			tools.ToolPushFiles: true,
 			// Wiki tools also require at least one KB in scope.
 			tools.ToolWikiReadPage:      true,
 			tools.ToolWikiSearch:        true,
@@ -532,6 +546,7 @@ func (s *agentService) registerTools(
 		tools.ToolQueryKnowledgeGraph: true,
 		tools.ToolGetDocumentInfo:     true,
 		tools.ToolDatabaseQuery:       true,
+		tools.ToolPushFiles:           true,
 	}
 	allWikiToolSet := map[string]bool{
 		tools.ToolWikiReadPage:      true,
@@ -613,6 +628,13 @@ func (s *agentService) registerTools(
 				WithKnowledgeScope(s.knowledgeService)
 		case tools.ToolGetDocumentInfo:
 			toolToRegister = tools.NewGetDocumentInfoTool(s.knowledgeService, s.chunkService, config.SearchTargets)
+		case tools.ToolPushFiles:
+			if s.fileService == nil {
+				logger.Warnf(ctx, "push_files tool requires a file service, skipping registration")
+				continue
+			}
+			tenantID := firstSearchTargetTenant(config.SearchTargets)
+			toolToRegister = tools.NewPushFilesTool(s.knowledgeService, s.fileService, config.SearchTargets, tenantID)
 		case tools.ToolDatabaseQuery:
 			toolToRegister = tools.NewDatabaseQueryTool(s.db, config.SearchTargets)
 		case tools.ToolWebSearch:

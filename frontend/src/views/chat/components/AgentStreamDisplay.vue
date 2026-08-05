@@ -579,6 +579,7 @@ const TOOL_NAME_KEYS: Record<string, string> = {
   data_analysis: 'agentStream.tools.dataAnalysis',
   data_schema: 'agentStream.tools.dataSchema',
   database_query: 'agentStream.tools.databaseQuery',
+  push_files: 'agentStream.tools.pushFiles',
 };
 
 const getLocalizedToolName = (toolName?: string | null): string => {
@@ -1203,6 +1204,20 @@ watch(eventStream, (stream) => {
 
   // Scan stream to find thinking events to expand and collapse
   const newActiveIds = new Set<string>();
+
+  // push_files delivers download cards the user must be able to click right
+  // away, so auto-expand the card once the tool has finished (not pending).
+  for (const event of stream) {
+    if (
+      event &&
+      event.type === 'tool_call' &&
+      event.tool_name === 'push_files' &&
+      !event.pending &&
+      event.tool_call_id
+    ) {
+      expandedEvents.value.add(event.tool_call_id);
+    }
+  }
 
   // Walk backwards to find the trailing thinking block
   let inTrailingThinking = true;
@@ -1895,6 +1910,15 @@ const toggleEvent = (eventId: string) => {
 };
 
 const handleActionHeaderClick = (event: any) => {
+  // push_files is both a reference-carrying tool (its pushed files are cited as
+  // knowledge_references) AND a card-rendering tool (file_push cards). We must
+  // expand the card so users can reach the download button; otherwise clicking
+  // would only open the reference drawer and the download card stays hidden.
+  if (event?.tool_name === 'push_files') {
+    if (event.tool_call_id) toggleEvent(event.tool_call_id);
+    if (canOpenToolReferences(event)) openToolReferences(event);
+    return;
+  }
   if (canOpenToolReferences(event)) {
     openToolReferences(event);
     return;

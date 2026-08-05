@@ -32,6 +32,9 @@ const (
 	ToolWikiFlagIssue     = "wiki_flag_issue"
 	ToolWikiReadIssue     = "wiki_read_issue"
 	ToolWikiUpdateIssue   = "wiki_update_issue"
+	// ToolPushFiles pushes knowledge base files as downloadable links (M2).
+	// Not part of DefaultAllowedTools(); must be explicitly enabled.
+	ToolPushFiles = "push_files"
 )
 
 // AvailableTool defines a simple tool metadata used by settings APIs.
@@ -67,6 +70,7 @@ func AvailableToolDefinitions() []AvailableTool {
 		{Name: ToolWikiDeletePage, Label: "删除Wiki", Description: "删除Wiki页面并自动清理关联死链"},
 		{Name: ToolWikiReadIssue, Label: "查看Wiki问题", Description: "查看特定的Wiki页面问题详情"},
 		{Name: ToolWikiUpdateIssue, Label: "更新Wiki问题状态", Description: "更新特定的Wiki页面问题状态"},
+		{Name: ToolPushFiles, Label: "推送文件", Description: "生成知识库文件的下载链接并呈现给用户"},
 	}
 }
 

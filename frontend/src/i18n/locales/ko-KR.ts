@@ -954,6 +954,8 @@ export default {
       getDocInfoDesc: '문서 메타데이터 보기',
       dbQuery: '데이터베이스 쿼리',
       dbQueryDesc: '데이터베이스에서 정보 조회',
+      pushFiles: '파일 푸시',
+      pushFilesDesc: '지식 베이스의 파일에 대한 시간 제한 다운로드 링크를 생성하여 카드로 표시',
       dataAnalysis: '데이터 분석',
       dataAnalysisDesc: '데이터 파일을 이해하고 데이터 분석 수행',
       dataSchema: '데이터 스키마 보기',
@@ -1212,7 +1214,8 @@ export default {
       executeSkillScript: '스킬 스크립트 실행',
       dataAnalysis: '데이터 분석',
       dataSchema: '데이터 구조',
-      databaseQuery: '데이터베이스 조회'
+      databaseQuery: '데이터베이스 조회',
+      pushFiles: '파일 푸시'
     },
     mcpOAuth: {
       waiting: '인증 대기 · {target}',
@@ -3129,6 +3132,10 @@ export default {
     documentFileLabel: '파일 정보:',
     documentMetadataLabel: '메타데이터',
     documentInfoEmpty: '문서 정보 없음',
+    filePushEmpty: '푸시된 파일 없음',
+    download: '다운로드',
+    expiresIn: '{hours}시간 후 만료',
+    pushFailed: '푸시 실패',
     positionLabel: '위치:',
     chunkPositionValue: '{index}번째 청크',
     contentLengthLabelSimple: '내용 길이:',
@@ -4779,6 +4786,7 @@ export default {
     manageAgents: '관리',
     builtinAgents: '내장된 인텔리전스',
     customAgents: '맞춤형 에이전트',
+    pushFiles: '파일 푸시',
     selector: {
       title: '에이전트 선택',
       current: '현재 선택',

@@ -46,6 +46,9 @@
       v-else-if="displayType === 'wiki_write_page' || displayType === 'wiki_replace_text' || displayType === 'wiki_rename_page' || displayType === 'wiki_delete_page'"
       :data="toolData as WikiEditData" />
 
+    <!-- File Push Cards Display -->
+    <FilePushCards v-else-if="displayType === 'file_push'" :data="toolData as FilePushData" />
+
     <!-- Fallback: Display raw output -->
     <div v-else class="fallback-output">
       <div class="fallback-header">
@@ -75,7 +78,8 @@ import type {
   WebFetchResultsData,
   GrepResultsData,
   KnowledgeChunksListData,
-  WikiEditData
+  WikiEditData,
+  FilePushData
 } from '@/types/tool-results';
 
 import SearchResults from './tool-results/SearchResults.vue';
@@ -92,6 +96,7 @@ import WebFetchResults from './tool-results/WebFetchResults.vue';
 import GrepResults from './tool-results/GrepResults.vue';
 import KnowledgeChunksList from './tool-results/KnowledgeChunksList.vue';
 import WikiEditResult from './tool-results/WikiEditResult.vue';
+import FilePushCards from './tool-results/FilePushCards.vue';
 
 interface Props {
   displayType?: DisplayType;

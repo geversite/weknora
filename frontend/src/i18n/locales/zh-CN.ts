@@ -954,6 +954,8 @@ export default {
       getDocInfoDesc: '查看文档元数据',
       dbQuery: '查询数据库',
       dbQueryDesc: '查询数据库中的信息',
+      pushFiles: '推送文件',
+      pushFilesDesc: '为知识库中的文件生成限时下载链接并展示为卡片',
       dataAnalysis: '数据分析',
       dataAnalysisDesc: '理解数据文件并进行数据分析',
       dataSchema: '查看数据元信息',
@@ -1212,7 +1214,8 @@ export default {
       executeSkillScript: '执行技能脚本',
       dataAnalysis: '数据分析',
       dataSchema: '数据结构',
-      databaseQuery: '数据库查询'
+      databaseQuery: '数据库查询',
+      pushFiles: '推送文件'
     },
     mcpOAuth: {
       waiting: '等待授权 · {target}',
@@ -3129,6 +3132,10 @@ export default {
     documentFileLabel: '文件信息:',
     documentMetadataLabel: '元数据',
     documentInfoEmpty: '暂无文档信息',
+    filePushEmpty: '暂无推送文件',
+    download: '下载',
+    expiresIn: '{hours} 小时后过期',
+    pushFailed: '推送失败',
     positionLabel: '位置:',
     chunkPositionValue: '第 {index} 个片段',
     contentLengthLabelSimple: '内容长度:',
@@ -4779,6 +4786,7 @@ export default {
     manageAgents: '管理',
     builtinAgents: '内置智能体',
     customAgents: '自定义智能体',
+    pushFiles: '推送文件',
     selector: {
       title: '选择智能体',
       current: '当前',

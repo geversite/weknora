@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -167,15 +168,82 @@ func resolveTenantFileServiceWithFallback(
 	return nil, "", false
 }
 
+// isInlineDisplayContentType reports whether a MIME type is safe and useful to
+// render inline (images, audio, video, html, pdf, plain text). Everything else
+// (docx/xlsx/pptx/zip/… and unknown types) is treated as an attachment so the
+// resource grant / :r token download carries the real filename.
+func isInlineDisplayContentType(contentType string) bool {
+	base := strings.ToLower(strings.TrimSpace(contentType))
+	if i := strings.IndexByte(base, ';'); i >= 0 {
+		base = base[:i]
+	}
+	base = strings.TrimSpace(base)
+	switch {
+	case strings.HasPrefix(base, "image/"),
+		strings.HasPrefix(base, "audio/"),
+		strings.HasPrefix(base, "video/"),
+		strings.HasPrefix(base, "text/"),
+		base == "application/pdf",
+		base == "application/javascript",
+		base == "application/json",
+		base == "application/xml":
+		return true
+	}
+	return false
+}
+
+// sanitizeDownloadFilename makes a stored filename safe to embed as the
+// ASCII fallback of a Content-Disposition value: strips quotes/CR/LF (which
+// would break or inject headers), path separators and any non-printable byte
+// (a "/" inside a bare filename is invalid per RFC 6266 and makes some
+// browsers fall back to the token name).
+func sanitizeDownloadFilename(name string) string {
+	var b strings.Builder
+	b.Grow(len(name))
+	for _, r := range name {
+		switch {
+		case r == '"' || r == '\\' || r == '/' || r == '\r' || r == '\n' || r == 0x7f:
+			// drop header-breaking and path chars
+		case r < 0x20:
+			// drop other control chars
+		case r > 0x7e:
+			// non-ASCII: keep only for the RFC 5987 filename* variant; the
+			// ASCII fallback substitutes with '_'
+			b.WriteByte('_')
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
 // streamStoredFile writes the shared success response of every file proxy:
 // safe content type, nosniff, disposition for non-inline types, the route's
 // cache policy, then the body (skipped for HEAD). Closes reader.
-func streamStoredFile(c *gin.Context, reader io.ReadCloser, contentType string, inline bool, cacheControl, logTag string) {
+// An optional trailing filename makes the browser download under a meaningful
+// name instead of a token/resource id (used by the /r/:token push-file grant).
+func streamStoredFile(c *gin.Context, reader io.ReadCloser, contentType string, inline bool, cacheControl, logTag string, filename ...string) {
 	defer reader.Close()
 	c.Header("Content-Type", contentType)
 	c.Header("X-Content-Type-Options", "nosniff")
 	if !inline {
-		c.Header("Content-Disposition", "attachment")
+		if len(filename) > 0 && filename[0] != "" {
+			// RFC 6266/5987: ASCII fallback (filename="...") plus the real
+			// UTF-8 name (filename*=UTF-8''...), so Chinese filenames download
+			// with the correct name on all browsers instead of a token id.
+			ascii := sanitizeDownloadFilename(filename[0])
+			utf8Name := url.PathEscape(filename[0])
+			disposition := "attachment"
+			if ascii != "" {
+				disposition += `; filename="` + ascii + `"`
+			}
+			if utf8Name != "" {
+				disposition += "; filename*=UTF-8''" + utf8Name
+			}
+			c.Header("Content-Disposition", disposition)
+		} else {
+			c.Header("Content-Disposition", "attachment")
+		}
 	}
 	c.Header("Cache-Control", cacheControl)
 	c.Status(http.StatusOK)
@@ -343,8 +411,15 @@ func serveResourceGrants(
 		if resource.MimeType != "" && inline {
 			contentType = resource.MimeType
 		}
+		// resource grants double as IM download links AND inline image/video
+		// previews. Document types such as docx/xlsx/pptx/zip must download with
+		// their real filename (streamStoredFile sets the attachment header only
+		// when inline is false); only display-safe media stays inline.
+		if !isInlineDisplayContentType(contentType) {
+			inline = false
+		}
 		streamStoredFile(c, reader, contentType, inline, "private, max-age=300",
-			"resource grant (resource_id="+resource.ID+")")
+			"resource grant (resource_id="+resource.ID+")", fileName)
 	}
 	r.GET("/r/:token", handler)
 	r.HEAD("/r/:token", handler)

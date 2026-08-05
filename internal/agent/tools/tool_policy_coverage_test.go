@@ -38,6 +38,7 @@ func TestEveryBuiltInToolDeclaresAModelHandlePolicy(t *testing.T) {
 		ToolWikiFlagIssue,
 		ToolWikiReadIssue,
 		ToolWikiUpdateIssue,
+		ToolPushFiles,
 	}
 	for _, name := range builtIns {
 		if !modelcontext.HasToolPolicy(name) {

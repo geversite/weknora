@@ -954,6 +954,8 @@ export default {
       getDocInfoDesc: 'Просмотр метаданных документа',
       dbQuery: 'Запрос к базе данных',
       dbQueryDesc: 'Запрос информации из базы данных',
+      pushFiles: 'Отправка файлов',
+      pushFilesDesc: 'Создание временных ссылок для скачивания файлов из базы знаний и их отображение в виде карточек',
       dataAnalysis: 'Анализ данных',
       dataAnalysisDesc: 'Понимание файлов данных и проведение анализа',
       dataSchema: 'Схема данных',
@@ -1212,7 +1214,8 @@ export default {
       executeSkillScript: 'Выполнение скрипта навыка',
       dataAnalysis: 'Анализ данных',
       dataSchema: 'Структура данных',
-      databaseQuery: 'Запрос к базе данных'
+      databaseQuery: 'Запрос к базе данных',
+      pushFiles: 'Отправка файлов'
     },
     mcpOAuth: {
       waiting: 'Ожидание авторизации · {target}',
@@ -3129,6 +3132,10 @@ export default {
     documentFileLabel: 'Файл:',
     documentMetadataLabel: 'Метаданные',
     documentInfoEmpty: 'Нет данных о документах',
+    filePushEmpty: 'Нет отправленных файлов',
+    download: 'Скачать',
+    expiresIn: 'Истекает через {hours} ч.',
+    pushFailed: 'Не удалось отправить',
     positionLabel: 'Позиция:',
     chunkPositionValue: 'Фрагмент №{index}',
     contentLengthLabelSimple: 'Длина содержимого:',
@@ -4779,6 +4786,7 @@ export default {
     manageAgents: 'Manage',
     builtinAgents: 'Built-in Agents',
     customAgents: 'Custom Agents',
+    pushFiles: 'Push Files',
     selector: {
       title: 'Select Agent',
       current: 'Current',
