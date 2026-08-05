@@ -1360,4 +1360,9 @@ func (h *Handler) completeAssistantMessage(ctx context.Context, assistantMessage
 			}
 		}()
 	}
+
+	// Record citation events for the files actually referenced by this answer.
+	// RecordReferenceEvents is internally async/non-blocking.
+	tenantID := types.MustTenantIDFromContext(ctx)
+	h.messageService.RecordReferenceEvents(ctx, tenantID, assistantMessage)
 }

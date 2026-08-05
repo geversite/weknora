@@ -2037,6 +2037,20 @@ export default {
         replace: 'Replace'
       }
     },
+    citationStats: {
+      title: 'Citation Statistics',
+      desc: 'How often files in this knowledge base are cited by Q&A answers, helping evaluate file popularity and value.',
+      totalCount: 'Total Citations',
+      recentCount: 'Last 30 Days',
+      zeroCitedCount: 'Zero-Cited Files',
+      topCitedTitle: 'Most Cited Files',
+      zeroCitedTitle: 'Never-Cited Files',
+      noTopCited: 'No citation data yet. Citations will appear here after Q&A generates references.',
+      noZeroCited: 'No files are zero-cited in this knowledge base.',
+      times: 'times',
+      loadFailed: 'Failed to load citation statistics',
+      refresh: 'Refresh'
+    },
     titleCreate: 'Create Knowledge Base',
     titleEdit: 'Knowledge Base Settings',
     navGroups: {
@@ -2059,7 +2073,8 @@ export default {
       asr: 'Audio',
       datasource: 'Data Sources',
       share: 'Sharing',
-      activity: 'Activity'
+      activity: 'Activity',
+      citation: 'Citation Stats'
     },
     errors: {
       vectorStoreBindingInvalid: 'The selected vector store cannot be used. Choose a different store or use the system default.',

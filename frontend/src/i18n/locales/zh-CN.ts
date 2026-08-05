@@ -3682,7 +3682,8 @@ export default {
       asr: '音频处理',
       datasource: '数据源',
       share: '共享管理',
-      activity: '活动记录'
+      activity: '活动记录',
+      citation: '引用统计'
     },
     navGroups: {
       basic: '基础',
@@ -3817,6 +3818,20 @@ export default {
         actor: '发起人',
         outcome: '结果'
       }
+    },
+    citationStats: {
+      title: '引用统计',
+      desc: '统计该知识库内的文件被问答回答引用的次数，用于评估文件热度与价值。',
+      totalCount: '累计引用',
+      recentCount: '近30天引用',
+      zeroCitedCount: '零引用文件',
+      topCitedTitle: '最常被引用的文件',
+      zeroCitedTitle: '从未被引用的文件',
+      noTopCited: '暂无引用数据，问答产生引用后会显示在这里。',
+      noZeroCited: '该知识库没有零引用的文件。',
+      times: '次',
+      loadFailed: '引用统计加载失败',
+      refresh: '刷新'
     }
   },
   embedPublish: {

@@ -3682,7 +3682,8 @@ export default {
       asr: '오디오',
       datasource: '데이터 소스',
       share: '공유관리',
-      activity: '활동 기록'
+      activity: '활동 기록',
+      citation: '인용 통계'
     },
     navGroups: {
       basic: '기본',
@@ -3817,6 +3818,20 @@ export default {
         actor: '시작자',
         outcome: '결과'
       }
+    },
+    citationStats: {
+      title: '인용 통계',
+      desc: '이 지식 베이스의 파일이 Q&A 답변에서 인용된 횟수를 집계하여 파일 인기도와 가치를 평가하는 데 도움을 줍니다.',
+      totalCount: '누적 인용',
+      recentCount: '최근 30일',
+      zeroCitedCount: '인용 없는 파일',
+      topCitedTitle: '가장 많이 인용된 파일',
+      zeroCitedTitle: '한 번도 인용되지 않은 파일',
+      noTopCited: '아직 인용 데이터가 없습니다. Q&A가 참조를 생성하면 여기에 표시됩니다.',
+      noZeroCited: '이 지식 베이스에는 인용 없는 파일이 없습니다.',
+      times: '회',
+      loadFailed: '인용 통계를 불러오지 못했습니다.',
+      refresh: '새로고침'
     }
   },
   embedPublish: {

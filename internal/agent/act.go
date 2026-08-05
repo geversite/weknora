@@ -211,7 +211,7 @@ func formatToolHint(name string, args map[string]any) string {
 // When ParallelToolCalls is enabled and there are 2+ tool calls, they execute concurrently.
 func (e *AgentEngine) executeToolCalls(
 	ctx context.Context, response *types.ChatResponse,
-	step *types.AgentStep, iteration int, sessionID, assistantMessageID string,
+	state *types.AgentState, step *types.AgentStep, iteration int, sessionID, assistantMessageID string,
 ) {
 	if len(response.ToolCalls) == 0 {
 		return
@@ -223,12 +223,37 @@ func (e *AgentEngine) executeToolCalls(
 
 	// Use parallel execution when enabled and there are multiple tool calls
 	if e.config.ParallelToolCalls && n >= 2 {
-		e.executeToolCallsParallel(ctx, response, step, iteration, sessionID, assistantMessageID)
+		e.executeToolCallsParallel(ctx, response, state, step, iteration, sessionID, assistantMessageID)
 		return
 	}
 
 	for i, tc := range response.ToolCalls {
-		e.executeSingleToolCall(ctx, tc, i, step, iteration, round, sessionID, assistantMessageID)
+		e.executeSingleToolCall(ctx, tc, i, state, step, iteration, round, sessionID, assistantMessageID)
+	}
+}
+
+// collectKnowledgeRefs merges new search results into state.KnowledgeRefs,
+// deduplicating by KnowledgeID + ChunkID.
+func (e *AgentEngine) collectKnowledgeRefs(state *types.AgentState, newRefs []*types.SearchResult) {
+	if state == nil || len(newRefs) == 0 {
+		return
+	}
+	seen := make(map[string]bool, len(state.KnowledgeRefs))
+	for _, r := range state.KnowledgeRefs {
+		if r != nil {
+			key := r.KnowledgeID + ":" + r.ID // knowledgeID:chunkID
+			seen[key] = true
+		}
+	}
+	for _, r := range newRefs {
+		if r == nil || r.KnowledgeID == "" {
+			continue
+		}
+		key := r.KnowledgeID + ":" + r.ID
+		if !seen[key] {
+			state.KnowledgeRefs = append(state.KnowledgeRefs, r)
+			seen[key] = true
+		}
 	}
 }
 
@@ -236,7 +261,7 @@ func (e *AgentEngine) executeToolCalls(
 // collecting results in original order.
 func (e *AgentEngine) executeToolCallsParallel(
 	ctx context.Context, response *types.ChatResponse,
-	step *types.AgentStep, iteration int, sessionID, assistantMessageID string,
+	state *types.AgentState, step *types.AgentStep, iteration int, sessionID, assistantMessageID string,
 ) {
 	round := iteration + 1
 	n := len(response.ToolCalls)
@@ -258,6 +283,14 @@ func (e *AgentEngine) executeToolCallsParallel(
 	}
 
 	_ = g.Wait()
+
+	// Merge references from parallel tool calls. collectKnowledgeRefs is not
+	// thread-safe, so this must happen in a single goroutine after g.Wait().
+	for _, toolCall := range results {
+		if toolCall.Result != nil && toolCall.Result.Success && len(toolCall.Result.SearchResults) > 0 {
+			e.collectKnowledgeRefs(state, toolCall.Result.SearchResults)
+		}
+	}
 
 	// Append results and emit events in original order
 	for _, toolCall := range results {
@@ -304,10 +337,15 @@ func (e *AgentEngine) executeToolCallsParallel(
 // executeSingleToolCall runs one tool call sequentially (original behavior).
 func (e *AgentEngine) executeSingleToolCall(
 	ctx context.Context, tc types.LLMToolCall, i int,
-	step *types.AgentStep, iteration, round int, sessionID, assistantMessageID string,
+	state *types.AgentState, step *types.AgentStep, iteration, round int, sessionID, assistantMessageID string,
 ) {
 	toolCall := e.runToolCall(ctx, tc, i, iteration, round, sessionID, assistantMessageID)
 	step.ToolCalls = append(step.ToolCalls, toolCall)
+
+	// Collect references from retrieval tools (serial path; single goroutine).
+	if toolCall.Result != nil && toolCall.Result.Success && len(toolCall.Result.SearchResults) > 0 {
+		e.collectKnowledgeRefs(state, toolCall.Result.SearchResults)
+	}
 
 	result := toolCall.Result
 	if result == nil {

@@ -181,6 +181,24 @@ export function listMoveTargets(sourceKbId: string) {
   return get(`/api/v1/knowledge-bases/${sourceKbId}/move-targets`);
 }
 
+// 引用统计相关类型与 API（M1：引用计数）
+export interface KnowledgeCitationCount {
+  knowledge_id: string;
+  count: number;
+  last_cited_at: string;
+}
+
+export interface CitationStats {
+  total_count: number;
+  recent_count: number;
+  top_cited: KnowledgeCitationCount[];
+  zero_cited_ids: string[];
+}
+
+export function getCitationStats(kbId: string) {
+  return get(`/api/v1/knowledge-bases/${kbId}/citation-stats`) as Promise<{ success: boolean; data: CitationStats }>;
+}
+
 // 移动知识到其他知识库
 export function moveKnowledge(data: {
   knowledge_ids: string[];

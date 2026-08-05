@@ -128,7 +128,7 @@ export default defineConfig({
     },
   },
   server: {
-    port: 5173,
+    port: 8081,
     host: true,
     // 代理配置，用于开发环境
     proxy: {

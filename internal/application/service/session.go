@@ -123,6 +123,7 @@ type sessionService struct {
 	webSearchProviderRepo interfaces.WebSearchProviderRepository // Repository for web search provider entities
 	kbShareService        interfaces.KBShareService              // Service for KB sharing operations
 	suggestionRepo        interfaces.MessageSuggestionRepository
+	referenceEventRepo    interfaces.ReferenceEventRepository // Repository for citation event cleanup
 }
 
 // NewSessionService creates a new session service instance with all required dependencies
@@ -140,6 +141,7 @@ func NewSessionService(cfg *config.Config,
 	webSearchProviderRepo interfaces.WebSearchProviderRepository,
 	kbShareService interfaces.KBShareService,
 	suggestionRepo interfaces.MessageSuggestionRepository,
+	referenceEventRepo interfaces.ReferenceEventRepository,
 ) interfaces.SessionService {
 	return &sessionService{
 		cfg:                   cfg,
@@ -156,6 +158,7 @@ func NewSessionService(cfg *config.Config,
 		webSearchProviderRepo: webSearchProviderRepo,
 		kbShareService:        kbShareService,
 		suggestionRepo:        suggestionRepo,
+		referenceEventRepo:    referenceEventRepo,
 	}
 }
 
@@ -458,6 +461,11 @@ func (s *sessionService) DeleteSession(ctx context.Context, id string) error {
 	// Use WithoutCancel so the goroutine survives after the HTTP request context is done.
 	bgCtx := context.WithoutCancel(ctx)
 	go func() {
+		if s.referenceEventRepo != nil {
+			if err := s.referenceEventRepo.DeleteBySession(bgCtx, id); err != nil {
+				logger.Warnf(bgCtx, "Failed to delete reference events for session %s: %v", id, err)
+			}
+		}
 		knowledgeIDs, err := s.messageRepo.GetKnowledgeIDsBySessionID(bgCtx, id)
 		if err != nil {
 			logger.Warnf(bgCtx, "Failed to get knowledge IDs for session %s: %v", id, err)
@@ -524,6 +532,11 @@ func (s *sessionService) BatchDeleteSessions(ctx context.Context, ids []string) 
 	for _, id := range visibleIDs {
 		// Cleanup chat history knowledge entries (async, best-effort)
 		go func(sessionID string) {
+			if s.referenceEventRepo != nil {
+				if err := s.referenceEventRepo.DeleteBySession(bgCtx, sessionID); err != nil {
+					logger.Warnf(bgCtx, "Failed to delete reference events for session %s: %v", sessionID, err)
+				}
+			}
 			knowledgeIDs, err := s.messageRepo.GetKnowledgeIDsBySessionID(bgCtx, sessionID)
 			if err != nil {
 				logger.Warnf(bgCtx, "Failed to get knowledge IDs for session %s: %v", sessionID, err)
@@ -574,6 +587,11 @@ func (s *sessionService) DeleteAllSessions(ctx context.Context) error {
 		for _, session := range sessions {
 			// Cleanup chat history knowledge entries (async, best-effort)
 			go func(sessionID string) {
+				if s.referenceEventRepo != nil {
+					if err := s.referenceEventRepo.DeleteBySession(bgCtx, sessionID); err != nil {
+						logger.Warnf(bgCtx, "Failed to delete reference events for session %s: %v", sessionID, err)
+					}
+				}
 				knowledgeIDs, err := s.messageRepo.GetKnowledgeIDsBySessionID(bgCtx, sessionID)
 				if err != nil {
 					logger.Warnf(bgCtx, "Failed to get knowledge IDs for session %s: %v", sessionID, err)

@@ -22,13 +22,14 @@ var regThinkIndex = regexp.MustCompile(`(?s)<think>.*?</think>`)
 // It reads the chat history knowledge base configuration from the tenant's ChatHistoryConfig,
 // which is managed via the settings UI.
 type messageService struct {
-	messageRepo    interfaces.MessageRepository    // Repository for message storage operations
-	sessionRepo    interfaces.SessionRepository    // Repository for session validation
-	tenantService  interfaces.TenantService        // Service for tenant operations (read ChatHistoryConfig)
-	kbService      interfaces.KnowledgeBaseService // Service for knowledge base operations (search chat history KB)
-	knowService    interfaces.KnowledgeService     // Service for knowledge operations (index/delete passages)
-	modelService   interfaces.ModelService         // Service for model operations (rerank model)
-	suggestionRepo interfaces.MessageSuggestionRepository
+	messageRepo        interfaces.MessageRepository    // Repository for message storage operations
+	sessionRepo        interfaces.SessionRepository    // Repository for session validation
+	tenantService      interfaces.TenantService        // Service for tenant operations (read ChatHistoryConfig)
+	kbService          interfaces.KnowledgeBaseService // Service for knowledge base operations (search chat history KB)
+	knowService        interfaces.KnowledgeService     // Service for knowledge operations (index/delete passages)
+	modelService       interfaces.ModelService         // Service for model operations (rerank model)
+	suggestionRepo     interfaces.MessageSuggestionRepository
+	referenceEventRepo interfaces.ReferenceEventRepository // Repository for citation event persistence
 }
 
 // NewMessageService creates a new message service instance with the required repositories
@@ -39,15 +40,17 @@ func NewMessageService(messageRepo interfaces.MessageRepository,
 	knowService interfaces.KnowledgeService,
 	modelService interfaces.ModelService,
 	suggestionRepo interfaces.MessageSuggestionRepository,
+	referenceEventRepo interfaces.ReferenceEventRepository,
 ) interfaces.MessageService {
 	return &messageService{
-		messageRepo:    messageRepo,
-		sessionRepo:    sessionRepo,
-		tenantService:  tenantService,
-		kbService:      kbService,
-		knowService:    knowService,
-		modelService:   modelService,
-		suggestionRepo: suggestionRepo,
+		messageRepo:        messageRepo,
+		sessionRepo:        sessionRepo,
+		tenantService:      tenantService,
+		kbService:          kbService,
+		knowService:        knowService,
+		modelService:       modelService,
+		suggestionRepo:     suggestionRepo,
+		referenceEventRepo: referenceEventRepo,
 	}
 }
 
@@ -419,6 +422,12 @@ func (s *messageService) DeleteMessageKnowledge(ctx context.Context, knowledgeID
 	if err := s.knowService.DeleteKnowledge(ctx, knowledgeID); err != nil {
 		logger.Warnf(ctx, "Failed to delete chat history knowledge %s: %v", knowledgeID, err)
 	}
+	// Clean up citation events for this knowledge entry (best-effort).
+	if s.referenceEventRepo != nil {
+		if err := s.referenceEventRepo.DeleteByKnowledge(ctx, knowledgeID); err != nil {
+			logger.Warnf(ctx, "Failed to delete reference events for knowledge %s: %v", knowledgeID, err)
+		}
+	}
 }
 
 // DeleteSessionKnowledge deletes all Knowledge entries for messages in a session from the chat history KB.
@@ -439,6 +448,95 @@ func (s *messageService) DeleteSessionKnowledge(ctx context.Context, sessionID s
 	if err := s.knowService.DeleteKnowledgeList(ctx, knowledgeIDs); err != nil {
 		logger.Warnf(ctx, "Failed to batch delete chat history knowledge for session %s: %v", sessionID, err)
 	}
+
+	// Clean up citation events produced by this session (best-effort).
+	if s.referenceEventRepo != nil {
+		if err := s.referenceEventRepo.DeleteBySession(ctx, sessionID); err != nil {
+			logger.Warnf(ctx, "Failed to delete reference events for session %s: %v", sessionID, err)
+		}
+	}
+}
+
+// RecordReferenceEvents records citation events for a completed assistant message.
+// Called from completeAssistantMessage after the answer is finalized.
+// Deduplicates by KnowledgeID (one file = one event per message).
+func (s *messageService) RecordReferenceEvents(ctx context.Context, tenantID uint64, assistantMessage *types.Message) {
+	if assistantMessage == nil || s.referenceEventRepo == nil {
+		return
+	}
+	if len(assistantMessage.KnowledgeReferences) == 0 {
+		return
+	}
+
+	seen := make(map[string]bool)
+	var events []*types.ReferenceEvent
+	for _, ref := range assistantMessage.KnowledgeReferences {
+		if ref == nil || ref.KnowledgeID == "" || seen[ref.KnowledgeID] {
+			continue
+		}
+		seen[ref.KnowledgeID] = true
+
+		refType := types.ReferenceTypeRAG
+		// Agent 路径标记为 agent 类型。
+		if assistantMessage.AgentID != "" || len(assistantMessage.AgentSteps) > 0 {
+			refType = types.ReferenceTypeAgent
+		}
+
+		events = append(events, &types.ReferenceEvent{
+			TenantID:        tenantID,
+			KnowledgeBaseID: ref.KnowledgeBaseID,
+			KnowledgeID:     ref.KnowledgeID,
+			MessageID:       assistantMessage.ID,
+			SessionID:       assistantMessage.SessionID,
+			ReferenceType:   refType,
+			Score:           ref.Score,
+		})
+	}
+
+	if len(events) == 0 {
+		return
+	}
+
+	// 异步入库，不阻塞回答完成流程。
+	bgCtx := context.WithoutCancel(ctx)
+	go func() {
+		if err := s.referenceEventRepo.BatchCreate(bgCtx, events); err != nil {
+			logger.Warnf(bgCtx, "Failed to record reference events for message %s: %v", assistantMessage.ID, err)
+		}
+	}()
+}
+
+// GetCitationStats returns citation statistics for a KB.
+func (s *messageService) GetCitationStats(ctx context.Context, kbID string) (*types.CitationStats, error) {
+	tenantID := types.MustTenantIDFromContext(ctx)
+
+	totalCount, err := s.referenceEventRepo.CountByKB(ctx, tenantID, kbID, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	since30 := time.Now().Add(-30 * 24 * time.Hour)
+	recentCount, err := s.referenceEventRepo.CountByKB(ctx, tenantID, kbID, &since30)
+	if err != nil {
+		return nil, err
+	}
+
+	topCited, err := s.referenceEventRepo.TopCited(ctx, tenantID, kbID, 10, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	zeroCited, err := s.referenceEventRepo.ZeroCited(ctx, tenantID, kbID)
+	if err != nil {
+		return nil, err
+	}
+
+	return &types.CitationStats{
+		TotalCount:   totalCount,
+		RecentCount:  recentCount,
+		TopCited:     topCited,
+		ZeroCitedIDs: zeroCited,
+	}, nil
 }
 
 // GetChatHistoryKBStats returns statistics about the chat history knowledge base.

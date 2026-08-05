@@ -1418,10 +1418,21 @@ func (t *KnowledgeSearchTool) formatOutput(
 		data["queries"] = queries
 	}
 
+	// Extract raw SearchResults for engine-level reference tracking. Only the
+	// actually-returned results are carried, so the "引用以回答实际使用为准"
+	// invariant holds at the tool level.
+	rawResults := make([]*types.SearchResult, 0, len(results))
+	for _, r := range results {
+		if r != nil && r.SearchResult != nil {
+			rawResults = append(rawResults, r.SearchResult)
+		}
+	}
+
 	return &types.ToolResult{
-		Success: true,
-		Output:  output,
-		Data:    data,
+		Success:       true,
+		Output:        output,
+		Data:          data,
+		SearchResults: rawResults,
 	}, nil
 }
 

@@ -270,6 +270,14 @@ func (t *ListKnowledgeChunksTool) Execute(ctx context.Context, args json.RawMess
 			"page_size":       pagination.PageSize,
 			"chunks":          formattedChunks,
 		},
+		// Carry a lightweight SearchResult so the agent engine can attribute
+		// this document to the assistant message for reference counting.
+		SearchResults: []*types.SearchResult{{
+			ID:              knowledgeID,
+			KnowledgeID:     knowledgeID,
+			KnowledgeBaseID: knowledge.KnowledgeBaseID,
+			KnowledgeTitle:  knowledgeTitle,
+		}},
 	}, nil
 }
 

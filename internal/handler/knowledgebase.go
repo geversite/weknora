@@ -35,6 +35,8 @@ type KnowledgeBaseHandler struct {
 	// userService 仅在 list 类接口里用于批量回填 creator_name；
 	// 真正的鉴权由 RBAC 中间件 + Lookup 完成，这里不参与决策。
 	userService interfaces.UserService
+	// messageService 用于引用统计（M1：引用计数）。
+	messageService interfaces.MessageService
 }
 
 // NewKnowledgeBaseHandler creates a new knowledge base handler instance
@@ -46,6 +48,7 @@ func NewKnowledgeBaseHandler(
 	asynqClient interfaces.TaskEnqueuer,
 	vectorStoreService interfaces.VectorStoreService,
 	userService interfaces.UserService,
+	messageService interfaces.MessageService,
 ) *KnowledgeBaseHandler {
 	return &KnowledgeBaseHandler{
 		service:            service,
@@ -55,7 +58,31 @@ func NewKnowledgeBaseHandler(
 		asynqClient:        asynqClient,
 		vectorStoreService: vectorStoreService,
 		userService:        userService,
+		messageService:     messageService,
 	}
+}
+
+// GetCitationStats returns citation statistics for a knowledge base (M1：引用计数).
+func (h *KnowledgeBaseHandler) GetCitationStats(c *gin.Context) {
+	kbID := c.Param("id")
+	if kbID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "knowledge base id is required"})
+		return
+	}
+
+	if h.messageService == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "citation statistics unavailable"})
+		return
+	}
+
+	stats, err := h.messageService.GetCitationStats(c.Request.Context(), kbID)
+	if err != nil {
+		logger.Errorf(c.Request.Context(), "Failed to get citation stats for KB %s: %v", kbID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "failed to get citation stats"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": stats})
 }
 
 // buildKBResponse turns a knowledge base into a JSON-ready response shape,

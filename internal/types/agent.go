@@ -191,6 +191,11 @@ type ToolResult struct {
 	Data    map[string]interface{} `json:"data,omitempty"`   // Structured data for programmatic use
 	Error   string                 `json:"error,omitempty"`  // Error message if execution failed
 	Images  []string               `json:"images,omitempty"` // Base64 data URIs from tool (e.g. MCP image content)
+
+	// SearchResults carries the raw search results from retrieval tools
+	// (knowledge_search, wiki_search, etc.). Non-retrieval tools leave this nil.
+	// Used by the agent engine to collect cited knowledge for reference tracking.
+	SearchResults []*SearchResult `json:"-"` // 不序列化，仅引擎内部使用
 }
 
 // ToolCall represents a single tool invocation within an agent step

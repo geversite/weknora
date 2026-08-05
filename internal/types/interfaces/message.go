@@ -57,6 +57,13 @@ type MessageService interface {
 
 	// GetChatHistoryKBStats returns statistics about the chat history knowledge base (indexed message count, etc.)
 	GetChatHistoryKBStats(ctx context.Context) (*types.ChatHistoryKBStats, error)
+
+	// RecordReferenceEvents records citation events for a completed assistant message.
+	// Deduplicates by KnowledgeID (one file = one event per message). Async, non-blocking.
+	RecordReferenceEvents(ctx context.Context, tenantID uint64, assistantMessage *types.Message)
+
+	// GetCitationStats returns citation statistics for a KB.
+	GetCitationStats(ctx context.Context, kbID string) (*types.CitationStats, error)
 }
 
 // MessageRepository defines the message repository interface

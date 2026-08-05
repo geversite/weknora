@@ -428,6 +428,11 @@
                 <div v-if="editorMode === 'edit' && activeKbId && canViewActivity && currentSection === 'activity'" class="section">
                   <KnowledgeBaseActivitySettings :kb-id="activeKbId" :active="currentSection === 'activity'" />
                 </div>
+
+                <!-- 引用统计（M1：最常引用 / 零引用文件） -->
+                <div v-if="editorMode === 'edit' && activeKbId && canViewActivity && currentSection === 'citation'" class="section">
+                  <CitationStatsPanel :kb-id="activeKbId" />
+                </div>
               </div>
 
               <!-- 保存按钮 -->
@@ -482,6 +487,7 @@ import GraphSettings from './settings/GraphSettings.vue'
 import KBShareSettings from './settings/KBShareSettings.vue'
 import DataSourceSettings from './settings/DataSourceSettings.vue'
 import KnowledgeBaseActivitySettings from './settings/KnowledgeBaseActivitySettings.vue'
+import CitationStatsPanel from './settings/CitationStatsPanel.vue'
 import { useI18n } from 'vue-i18n'
 
 const uiStore = useUIStore()
@@ -644,6 +650,9 @@ const navItems = computed(() => {
   if (canViewActivity.value) {
     items.push({ key: 'activity', icon: 'history', label: t('knowledgeEditor.sidebar.activity') })
   }
+  if (editorMode.value === 'edit' && activeKbId.value && canViewActivity.value) {
+    items.push({ key: 'citation', icon: 'link', label: t('knowledgeEditor.sidebar.citation') })
+  }
   return items
 })
 
@@ -676,7 +685,7 @@ const navGroups = computed(() => {
     {
       key: 'management',
       label: t('knowledgeEditor.navGroups.management'),
-      items: pickItems(['activity']),
+      items: pickItems(['activity', 'citation']),
     },
   ].filter((group) => group.items.length > 0)
 })

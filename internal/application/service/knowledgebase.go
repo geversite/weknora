@@ -48,6 +48,7 @@ type knowledgeBaseService struct {
 	syncLogRepo     interfaces.SyncLogRepository
 	dsScheduler     *datasource.Scheduler
 	audit           interfaces.AuditLogService
+	referenceRepo   interfaces.ReferenceEventRepository // Repository for citation event cleanup
 }
 
 // NewKnowledgeBaseService creates a new knowledge base service
@@ -70,6 +71,7 @@ func NewKnowledgeBaseService(repo interfaces.KnowledgeBaseRepository,
 	syncLogRepo interfaces.SyncLogRepository,
 	dsScheduler *datasource.Scheduler,
 	audit interfaces.AuditLogService,
+	referenceRepo interfaces.ReferenceEventRepository,
 ) interfaces.KnowledgeBaseService {
 	return &knowledgeBaseService{
 		repo:            repo,
@@ -82,6 +84,7 @@ func NewKnowledgeBaseService(repo interfaces.KnowledgeBaseRepository,
 		ownership:       ownership,
 		tenantRepo:      tenantRepo,
 		fileSvc:         fileSvc,
+		referenceRepo:   referenceRepo,
 		storageResolver: storageResolver,
 		graphEngine:     graphEngine,
 		asynqClient:     asynqClient,
@@ -957,6 +960,13 @@ func (s *knowledgeBaseService) ProcessKBDelete(ctx context.Context, t *asynq.Tas
 				"knowledge_base_id": kbID,
 			})
 			return err
+		}
+	}
+
+	// Delete citation events for this KB (best-effort, must not fail KB deletion).
+	if s.referenceRepo != nil {
+		if err := s.referenceRepo.DeleteByKB(ctx, kbID); err != nil {
+			logger.Warnf(ctx, "Failed to delete reference events for KB %s: %v", kbID, err)
 		}
 	}
 
