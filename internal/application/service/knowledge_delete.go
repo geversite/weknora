@@ -172,6 +172,12 @@ func (s *knowledgeService) DeleteKnowledge(ctx context.Context, id string) error
 	if err := s.repo.DeleteKnowledgeTagRelations(ctx, id); err != nil {
 		logger.Warnf(ctx, "Failed to delete tag relations for knowledge %s: %v", id, err)
 	}
+	// Best-effort: remove any conflict records referencing this knowledge (M3).
+	if s.conflictRepo != nil {
+		if err := s.conflictRepo.DeleteByKnowledge(ctx, id); err != nil {
+			logger.Warnf(ctx, "Failed to delete conflicts for knowledge %s: %v", id, err)
+		}
+	}
 	// Delete the knowledge row FIRST, then drop its physical file. Physical
 	// cleanup is deliberately deferred until the row is gone: if any of the
 	// index/chunk/graph cleanups above failed we already returned early with the

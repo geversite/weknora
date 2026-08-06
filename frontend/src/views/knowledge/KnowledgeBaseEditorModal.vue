@@ -107,6 +107,20 @@
                             </t-checkbox>
                             <p class="indexing-check-desc">{{ $t('knowledgeEditor.indexing.wikiDesc') }}</p>
                           </div>
+                          <div
+                            class="indexing-check-item"
+                            :class="{ 'is-checked': formData.indexingStrategy.conflictEnabled, 'is-disabled': isIndexingLocked }"
+                            @click="toggleConflictDetection"
+                          >
+                            <t-checkbox
+                              :checked="formData.indexingStrategy.conflictEnabled"
+                              :disabled="isIndexingLocked"
+                              class="indexing-check-box"
+                            >
+                              {{ $t('knowledgeEditor.indexing.conflictTitle') }}
+                            </t-checkbox>
+                            <p class="indexing-check-desc">{{ $t('knowledgeEditor.indexing.conflictDesc') }}</p>
+                          </div>
                         </div>
                         <p v-if="isIndexingLocked" class="form-tip locked-tip">
                           {{ $t('knowledgeEditor.indexing.lockedTip') }}
@@ -433,6 +447,11 @@
                 <div v-if="editorMode === 'edit' && activeKbId && canViewActivity && currentSection === 'citation'" class="section">
                   <CitationStatsPanel :kb-id="activeKbId" />
                 </div>
+
+                <!-- 知识冲突裁决队列（M3，仅编辑模式，KB 租户内 Owner/Admin） -->
+                <div v-if="editorMode === 'edit' && activeKbId && canViewActivity && currentSection === 'conflicts'" class="section">
+                  <ConflictQueue :kb-id="activeKbId" :active="currentSection === 'conflicts'" />
+                </div>
               </div>
 
               <!-- 保存按钮 -->
@@ -488,6 +507,7 @@ import KBShareSettings from './settings/KBShareSettings.vue'
 import DataSourceSettings from './settings/DataSourceSettings.vue'
 import KnowledgeBaseActivitySettings from './settings/KnowledgeBaseActivitySettings.vue'
 import CitationStatsPanel from './settings/CitationStatsPanel.vue'
+import ConflictQueue from './settings/ConflictQueue.vue'
 import { useI18n } from 'vue-i18n'
 
 const uiStore = useUIStore()
@@ -653,6 +673,9 @@ const navItems = computed(() => {
   if (editorMode.value === 'edit' && activeKbId.value && canViewActivity.value) {
     items.push({ key: 'citation', icon: 'link', label: t('knowledgeEditor.sidebar.citation') })
   }
+  if (editorMode.value === 'edit' && activeKbId.value && canViewActivity.value) {
+    items.push({ key: 'conflicts', icon: 'error-circle', label: t('knowledgeEditor.sidebar.conflicts') })
+  }
   return items
 })
 
@@ -685,7 +708,7 @@ const navGroups = computed(() => {
     {
       key: 'management',
       label: t('knowledgeEditor.navGroups.management'),
-      items: pickItems(['activity', 'citation']),
+      items: pickItems(['activity', 'citation', 'conflicts']),
     },
   ].filter((group) => group.items.length > 0)
 })
@@ -813,6 +836,7 @@ const initFormData = (type: 'document' | 'faq' = 'document') => {
       keywordEnabled: true,
       wikiEnabled: false,
       graphEnabled: false,
+      conflictEnabled: false,
     },
     // Vector-store binding. Empty string means "use the env-configured
     // store"; create mode defaults to that, edit mode loads the
@@ -938,6 +962,7 @@ const loadKBData = async (kbIdOverride?: string) => {
         keywordEnabled: kb.indexing_strategy?.keyword_enabled ?? true,
         wikiEnabled: kb.indexing_strategy?.wiki_enabled ?? false,
         graphEnabled: kb.indexing_strategy?.graph_enabled ?? false,
+        conflictEnabled: kb.indexing_strategy?.conflict_detect_enabled ?? false,
       },
       // Vector-store binding. vectorStoreId is editor-only state; it
       // is only included in the create request, never the update
@@ -1018,6 +1043,12 @@ const toggleWikiIndexing = () => {
   if (!formData.value) return
   if (isIndexingLocked.value) return
   formData.value.indexingStrategy.wikiEnabled = !formData.value.indexingStrategy.wikiEnabled
+}
+
+const toggleConflictDetection = () => {
+  if (!formData.value) return
+  if (isIndexingLocked.value) return
+  formData.value.indexingStrategy.conflictEnabled = !formData.value.indexingStrategy.conflictEnabled
 }
 
 const handleChunkingConfigUpdate = (config: any) => {
@@ -1301,6 +1332,7 @@ const buildSubmitData = () => {
       keyword_enabled: formData.value.indexingStrategy?.keywordEnabled ?? true,
       wiki_enabled: formData.value.indexingStrategy?.wikiEnabled ?? false,
       graph_enabled: formData.value.indexingStrategy?.graphEnabled ?? false,
+      conflict_detect_enabled: formData.value.indexingStrategy?.conflictEnabled ?? false,
     }
   }
 
@@ -1404,6 +1436,7 @@ const doSubmit = async () => {
           keyword_enabled: formData.value.indexingStrategy?.keywordEnabled ?? true,
           wiki_enabled: formData.value.indexingStrategy?.wikiEnabled ?? false,
           graph_enabled: formData.value.indexingStrategy?.graphEnabled ?? false,
+          conflict_detect_enabled: formData.value.indexingStrategy?.conflictEnabled ?? false,
         }
       }
       await updateKnowledgeBase(kbId, {

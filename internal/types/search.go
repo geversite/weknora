@@ -207,6 +207,11 @@ type SearchResult struct {
 
 	// KnowledgeBaseID is the ID of the knowledge base this result belongs to
 	KnowledgeBaseID string `json:"knowledge_base_id,omitempty"`
+
+	// ConflictPending marks that this chunk participates in an unresolved
+	// (pending) content conflict (M3). Rerank and answer assembly use it to
+	// demote the chunk and surface the divergent source.
+	ConflictPending bool `json:"conflict_pending,omitempty"`
 }
 
 // SearchParams represents the search parameters

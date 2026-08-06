@@ -703,12 +703,44 @@ func (s *knowledgeService) processChunks(ctx context.Context,
 		}
 	}
 
+	// Enqueue post-upload conflict detection (M3) when the KB has it enabled.
+	// This runs as its own task (not counted in the finalizing slots) so a
+	// detection failure never blocks the document from completing.
+	if kb.IsConflictDetectEnabled() {
+		s.enqueueConflictDetectTask(ctx, knowledge)
+	}
+
 	// Update tenant's storage usage
 	tenantInfo.StorageUsed += totalStorageSize
 	if err := s.tenantRepo.AdjustStorageUsed(ctx, tenantInfo.ID, totalStorageSize); err != nil {
 		logger.GetLogger(ctx).WithField("error", err).Errorf("processChunks update tenant storage used failed")
 	}
 	logger.GetLogger(ctx).Infof("processChunks successfully")
+}
+
+// enqueueConflictDetectTask queues a file-level conflict detection task for a
+// freshly-uploaded knowledge (M3). Best-effort: a failure is logged and does
+// not fail the upload.
+func (s *knowledgeService) enqueueConflictDetectTask(ctx context.Context, knowledge *types.Knowledge) {
+	if s.task == nil || knowledge == nil {
+		return
+	}
+	payload := types.ConflictDetectPayload{
+		TenantID:        knowledge.TenantID,
+		KnowledgeID:     knowledge.ID,
+		KnowledgeBaseID: knowledge.KnowledgeBaseID,
+	}
+	bytes, err := json.Marshal(payload)
+	if err != nil {
+		logger.GetLogger(ctx).WithField("error", err).Errorf("enqueueConflictDetectTask marshal failed for %s", knowledge.ID)
+		return
+	}
+	task := asynq.NewTask(types.TypeConflictDetect, bytes, conflictDetectTaskOptions()...)
+	if _, err := s.task.Enqueue(task); err != nil {
+		logger.GetLogger(ctx).WithField("error", err).Errorf("enqueueConflictDetectTask enqueue failed for %s", knowledge.ID)
+		return
+	}
+	logger.GetLogger(ctx).Infof("Enqueued conflict detect task for knowledge %s", knowledge.ID)
 }
 
 // defaultMaxInputChars is the default maximum characters used as input for summary generation.

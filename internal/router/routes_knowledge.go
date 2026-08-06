@@ -255,6 +255,27 @@ func RegisterKnowledgeBaseActivityRoutes(r *gin.RouterGroup, auditHandler *handl
 		g.OwnedKBOrAdmin(), g.KBAccessRead("id"), auditHandler.ListKnowledgeBaseActivity)
 }
 
+// RegisterKnowledgeConflictRoutes registers the M3 conflict adjudication queue.
+//
+// Conflict adjudication is a per-KB governance surface: reads (list/stats) are
+// Viewer+ gated by KBAccessRead; resolving a conflict mutates KB content
+// (disables/demotes chunks), so it requires KB ownership or Admin via
+// OwnedKBOrAdmin plus KBAccessWrite — matching chunks/FAQ mutation semantics.
+func RegisterKnowledgeConflictRoutes(r *gin.RouterGroup, conflictHandler *handler.KnowledgeConflictHandler, g *rbacGuards) {
+	if conflictHandler == nil {
+		return
+	}
+	conf := g.apiKeyGroup(r.Group("/knowledge-bases/:id/conflicts"), apiKeyRetrieve(apiKeyFullAccess()))
+	{
+		conf.GET("", g.Viewer(), g.KBAccessRead("id"), conflictHandler.ListConflicts)
+		conf.GET("/stats", g.Viewer(), g.KBAccessRead("id"), conflictHandler.GetConflictStats)
+	}
+	confWrite := g.apiKeyGroup(r.Group("/knowledge-bases/:id/conflicts"), apiKeyIngest(apiKeyFullAccess()))
+	{
+		confWrite.POST("/resolve", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), conflictHandler.Resolve)
+	}
+}
+
 // RegisterKnowledgeTagRoutes 注册知识库标签相关路由。
 //
 // Tags are KB metadata: Viewer reads, Contributor writes. Per-KB

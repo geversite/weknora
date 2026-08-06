@@ -42,6 +42,8 @@ const (
 	QueueSync           = "sync"
 	QueueMaintenance    = "low"
 	QueueWiki           = "wiki"
+	// QueueConflict carries post-upload conflict detection tasks (M3).
+	QueueConflict = "conflict"
 )
 
 // QueueDefinition is the single source of truth for queue topology. Worker
@@ -80,6 +82,7 @@ var queueDefinitions = []QueueDefinition{
 		TypeKnowledgeListDelete, TypeKnowledgeListReparse, TypeKnowledgeMove,
 	}},
 	{Name: QueueWiki, Pool: WorkerPoolWiki, Weight: 1, TaskTypes: []string{TypeWikiIngest, TypeWikiFinalize}},
+	{Name: QueueConflict, Pool: WorkerPoolEnrichment, Weight: 1, SharedWeight: 1, TaskTypes: []string{TypeConflictDetect}},
 }
 
 // QueueDefinitions returns a copy so callers cannot mutate global topology.
@@ -246,6 +249,7 @@ const (
 	TypeWikiIngest               = "wiki:ingest"                // Wiki 页面同步任务
 	TypeWikiFinalize             = "wiki:finalize"              // Wiki KB 级收尾任务（防抖：索引重建/死链清理/交叉链接）
 	TypeTemporaryDocumentProcess = "temporary_document:process" // 会话临时文档解析任务
+	TypeConflictDetect           = "conflict:detect"            // M3: 上传后文件级冲突检测
 )
 
 // ExtractChunkPayload represents the extract chunk task payload
@@ -486,6 +490,16 @@ type ImageMultimodalPayload struct {
 	// parent's image set. Used as the subspan name suffix
 	// ("multimodal.image[3]") so the timeline preserves order.
 	ImageIndex int `json:"image_index,omitempty"`
+}
+
+// ConflictDetectPayload represents the conflict detection task payload (M3).
+// It carries just enough to resolve the newly-uploaded knowledge at run time:
+// the worker reads fresh chunk content and compares against the same KB.
+type ConflictDetectPayload struct {
+	TracingContext
+	TenantID        uint64 `json:"tenant_id"`
+	KnowledgeID     string `json:"knowledge_id"`
+	KnowledgeBaseID string `json:"knowledge_base_id"`
 }
 
 // KnowledgePostProcessPayload represents the knowledge post process task payload.

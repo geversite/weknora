@@ -48,7 +48,8 @@ type knowledgeBaseService struct {
 	syncLogRepo     interfaces.SyncLogRepository
 	dsScheduler     *datasource.Scheduler
 	audit           interfaces.AuditLogService
-	referenceRepo   interfaces.ReferenceEventRepository // Repository for citation event cleanup
+	referenceRepo   interfaces.ReferenceEventRepository    // Repository for citation event cleanup
+	conflictRepo    interfaces.KnowledgeConflictRepository // Repository for M3 conflict cleanup
 }
 
 // NewKnowledgeBaseService creates a new knowledge base service
@@ -72,6 +73,7 @@ func NewKnowledgeBaseService(repo interfaces.KnowledgeBaseRepository,
 	dsScheduler *datasource.Scheduler,
 	audit interfaces.AuditLogService,
 	referenceRepo interfaces.ReferenceEventRepository,
+	conflictRepo interfaces.KnowledgeConflictRepository,
 ) interfaces.KnowledgeBaseService {
 	return &knowledgeBaseService{
 		repo:            repo,
@@ -85,6 +87,7 @@ func NewKnowledgeBaseService(repo interfaces.KnowledgeBaseRepository,
 		tenantRepo:      tenantRepo,
 		fileSvc:         fileSvc,
 		referenceRepo:   referenceRepo,
+		conflictRepo:    conflictRepo,
 		storageResolver: storageResolver,
 		graphEngine:     graphEngine,
 		asynqClient:     asynqClient,
@@ -967,6 +970,13 @@ func (s *knowledgeBaseService) ProcessKBDelete(ctx context.Context, t *asynq.Tas
 	if s.referenceRepo != nil {
 		if err := s.referenceRepo.DeleteByKB(ctx, kbID); err != nil {
 			logger.Warnf(ctx, "Failed to delete reference events for KB %s: %v", kbID, err)
+		}
+	}
+
+	// Delete conflict records for this KB (best-effort, must not fail KB deletion).
+	if s.conflictRepo != nil {
+		if err := s.conflictRepo.DeleteByKB(ctx, kbID); err != nil {
+			logger.Warnf(ctx, "Failed to delete conflicts for KB %s: %v", kbID, err)
 		}
 	}
 

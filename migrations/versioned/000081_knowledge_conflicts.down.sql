@@ -1,0 +1,9 @@
+DROP INDEX IF EXISTS idx_conflicts_created;
+DROP INDEX IF EXISTS idx_conflicts_chunk_b;
+DROP INDEX IF EXISTS idx_conflicts_chunk_a;
+DROP INDEX IF EXISTS idx_conflicts_knowledge_b;
+DROP INDEX IF EXISTS idx_conflicts_knowledge_a;
+DROP INDEX IF EXISTS idx_conflicts_kb_status;
+DROP INDEX IF EXISTS idx_conflicts_kb;
+DROP INDEX IF EXISTS idx_conflicts_tenant;
+DROP TABLE IF EXISTS knowledge_conflicts;

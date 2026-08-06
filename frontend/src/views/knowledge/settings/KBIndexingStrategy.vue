@@ -60,6 +60,21 @@
       <template v-if="modelValue.graphEnabled">
         <slot name="graph-settings" />
       </template>
+
+      <!-- Conflict Detection (M3) -->
+      <div class="setting-row">
+        <div class="setting-info">
+          <label>{{ $t('knowledgeEditor.indexing.conflictTitle') }}</label>
+          <p class="desc">{{ $t('knowledgeEditor.indexing.conflictDesc') }}</p>
+        </div>
+        <div class="setting-control">
+          <t-switch
+            :model-value="modelValue.conflictEnabled"
+            @change="(val: boolean) => update('conflictEnabled', val)"
+            size="medium"
+          />
+        </div>
+      </div>
     </div>
   </div>
 </template>
@@ -72,6 +87,7 @@ export interface IndexingStrategy {
   keywordEnabled: boolean
   wikiEnabled: boolean
   graphEnabled: boolean
+  conflictEnabled: boolean
 }
 
 const props = defineProps<{

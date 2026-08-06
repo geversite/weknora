@@ -17,6 +17,9 @@ type IndexingStrategy struct {
 	WikiEnabled bool `yaml:"wiki_enabled" json:"wiki_enabled"`
 	// GraphEnabled enables knowledge graph entity/relation extraction
 	GraphEnabled bool `yaml:"graph_enabled" json:"graph_enabled"`
+	// ConflictDetectEnabled enables post-upload content conflict detection
+	// between files within the same KB (M3). Default false; enabled per KB.
+	ConflictDetectEnabled bool `yaml:"conflict_detect_enabled" json:"conflict_detect_enabled"`
 }
 
 // DefaultIndexingStrategy returns the default strategy matching the legacy behavior:

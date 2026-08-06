@@ -730,6 +730,12 @@ func (kb *KnowledgeBase) IsGraphEnabled() bool {
 		kb.ExtractConfig != nil && kb.ExtractConfig.Enabled
 }
 
+// IsConflictDetectEnabled reports whether post-upload file-level conflict
+// detection is enabled for this knowledge base (M3). Default false.
+func (kb *KnowledgeBase) IsConflictDetectEnabled() bool {
+	return kb != nil && kb.IndexingStrategy.ConflictDetectEnabled
+}
+
 // NeedsEmbeddingModel returns true if any enabled pipeline requires an embedding model.
 // Currently only vector and keyword search need embeddings.
 func (kb *KnowledgeBase) NeedsEmbeddingModel() bool {

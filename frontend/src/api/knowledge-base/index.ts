@@ -594,3 +594,79 @@ export function batchReparseKnowledge(kbId: string, ids: string[], processConfig
     process_config: processConfig,
   });
 }
+
+// ---------------------------------------------------------------------------
+// M3: 知识冲突检测与裁决队列
+// ---------------------------------------------------------------------------
+export type KnowledgeConflictType =
+  | 'fact_contradiction'
+  | 'partial_contradiction'
+  | 'version_update';
+
+export type KnowledgeConflictStatus =
+  | 'pending'
+  | 'resolved_keep_both'
+  | 'resolved_newer_wins'
+  | 'resolved_older_wins'
+  | 'resolved_not_conflict';
+
+export interface KnowledgeConflict {
+  id: string;
+  tenant_id: number;
+  knowledge_base_id: string;
+  knowledge_id_a: string;
+  knowledge_id_b: string;
+  chunk_id_a: string;
+  chunk_id_b: string;
+  content_a: string;
+  content_b: string;
+  conflict_type: KnowledgeConflictType;
+  llm_reason: string;
+  status: KnowledgeConflictStatus;
+  resolved_by?: string;
+  resolved_at?: string;
+  resolution_note?: string;
+  detected_by?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ConflictListResponse {
+  success: boolean;
+  data: {
+    list: KnowledgeConflict[];
+    total: number;
+    page: number;
+    page_size: number;
+  };
+}
+
+export interface ConflictStats {
+  pending: number;
+  keep_both: number;
+  newer_wins: number;
+  older_wins: number;
+  not_conflict: number;
+}
+
+// 列出某个知识库的冲突（status 可选：pending / resolved_* / 空=全部）
+export function getKnowledgeConflicts(
+  kbId: string,
+  params?: { status?: string; page?: number; page_size?: number },
+) {
+  const query = buildQuery(params);
+  return get(`/api/v1/knowledge-bases/${kbId}/conflicts${query}`) as unknown as Promise<ConflictListResponse>;
+}
+
+// 冲突状态统计
+export function getKnowledgeConflictStats(kbId: string) {
+  return get(`/api/v1/knowledge-bases/${kbId}/conflicts/stats`) as unknown as Promise<{ success: boolean; data: ConflictStats }>;
+}
+
+// 裁决一个冲突
+export function resolveKnowledgeConflict(
+  kbId: string,
+  payload: { conflict_id: string; resolution: string; note?: string },
+) {
+  return post(`/api/v1/knowledge-bases/${kbId}/conflicts/resolve`, payload);
+}
