@@ -121,6 +121,21 @@
                             </t-checkbox>
                             <p class="indexing-check-desc">{{ $t('knowledgeEditor.indexing.conflictDesc') }}</p>
                           </div>
+                          <div
+                            class="indexing-check-item"
+                            :class="{ 'is-checked': formData.indexingStrategy.folderGovernanceEnabled, 'is-disabled': isIndexingLocked }"
+                            @click="toggleFolderGovernance"
+                          >
+                            <t-checkbox
+                              :checked="formData.indexingStrategy.folderGovernanceEnabled"
+                              :disabled="isIndexingLocked"
+                              class="indexing-check-box"
+                            >
+                              {{ $t('knowledgeEditor.indexing.folderGovernanceTitle') }}
+                              <span class="indexing-new-badge">NEW</span>
+                            </t-checkbox>
+                            <p class="indexing-check-desc">{{ $t('knowledgeEditor.indexing.folderGovernanceDesc') }}</p>
+                          </div>
                         </div>
                         <p v-if="isIndexingLocked" class="form-tip locked-tip">
                           {{ $t('knowledgeEditor.indexing.lockedTip') }}
@@ -837,6 +852,7 @@ const initFormData = (type: 'document' | 'faq' = 'document') => {
       wikiEnabled: false,
       graphEnabled: false,
       conflictEnabled: false,
+      folderGovernanceEnabled: false,
     },
     // Vector-store binding. Empty string means "use the env-configured
     // store"; create mode defaults to that, edit mode loads the
@@ -963,6 +979,7 @@ const loadKBData = async (kbIdOverride?: string) => {
         wikiEnabled: kb.indexing_strategy?.wiki_enabled ?? false,
         graphEnabled: kb.indexing_strategy?.graph_enabled ?? false,
         conflictEnabled: kb.indexing_strategy?.conflict_detect_enabled ?? false,
+        folderGovernanceEnabled: kb.indexing_strategy?.folder_governance_enabled ?? false,
       },
       // Vector-store binding. vectorStoreId is editor-only state; it
       // is only included in the create request, never the update
@@ -1049,6 +1066,12 @@ const toggleConflictDetection = () => {
   if (!formData.value) return
   if (isIndexingLocked.value) return
   formData.value.indexingStrategy.conflictEnabled = !formData.value.indexingStrategy.conflictEnabled
+}
+
+const toggleFolderGovernance = () => {
+  if (!formData.value) return
+  if (isIndexingLocked.value) return
+  formData.value.indexingStrategy.folderGovernanceEnabled = !formData.value.indexingStrategy.folderGovernanceEnabled
 }
 
 const handleChunkingConfigUpdate = (config: any) => {
@@ -1333,6 +1356,7 @@ const buildSubmitData = () => {
       wiki_enabled: formData.value.indexingStrategy?.wikiEnabled ?? false,
       graph_enabled: formData.value.indexingStrategy?.graphEnabled ?? false,
       conflict_detect_enabled: formData.value.indexingStrategy?.conflictEnabled ?? false,
+      folder_governance_enabled: formData.value.indexingStrategy?.folderGovernanceEnabled ?? false,
     }
   }
 
@@ -1437,6 +1461,7 @@ const doSubmit = async () => {
           wiki_enabled: formData.value.indexingStrategy?.wikiEnabled ?? false,
           graph_enabled: formData.value.indexingStrategy?.graphEnabled ?? false,
           conflict_detect_enabled: formData.value.indexingStrategy?.conflictEnabled ?? false,
+          folder_governance_enabled: formData.value.indexingStrategy?.folderGovernanceEnabled ?? false,
         }
       }
       await updateKnowledgeBase(kbId, {
@@ -1498,7 +1523,8 @@ const doSubmit = async () => {
           curr.vectorEnabled !== prev.vectorEnabled ||
           curr.keywordEnabled !== prev.keywordEnabled ||
           curr.wikiEnabled !== prev.wikiEnabled ||
-          curr.graphEnabled !== prev.graphEnabled
+          curr.graphEnabled !== prev.graphEnabled ||
+          curr.folderGovernanceEnabled !== prev.folderGovernanceEnabled
         )
         if (strategyChanged) {
           const dialog = DialogPlugin.confirm({

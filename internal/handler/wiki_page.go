@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/application/service"
@@ -20,10 +21,12 @@ import (
 
 // WikiPageHandler handles HTTP requests for wiki page operations
 type WikiPageHandler struct {
-	wikiService  interfaces.WikiPageService
-	kbService    interfaces.KnowledgeBaseService
-	lintService  *service.WikiLintService
-	auditService interfaces.AuditLogService
+	wikiService          interfaces.WikiPageService
+	kbService            interfaces.KnowledgeBaseService
+	lintService          *service.WikiLintService
+	auditService         interfaces.AuditLogService
+	folderService        interfaces.KnowledgeFolderService // M4-fix1: wiki governance page
+	folderSummaryService interfaces.FolderSummaryService   // M4-fix1: wiki governance page
 }
 
 // NewWikiPageHandler creates a new wiki page handler
@@ -32,12 +35,16 @@ func NewWikiPageHandler(
 	kbService interfaces.KnowledgeBaseService,
 	lintService *service.WikiLintService,
 	auditService interfaces.AuditLogService,
+	folderService interfaces.KnowledgeFolderService,
+	folderSummaryService interfaces.FolderSummaryService,
 ) *WikiPageHandler {
 	return &WikiPageHandler{
-		wikiService:  wikiService,
-		kbService:    kbService,
-		lintService:  lintService,
-		auditService: auditService,
+		wikiService:          wikiService,
+		kbService:            kbService,
+		lintService:          lintService,
+		auditService:         auditService,
+		folderService:        folderService,
+		folderSummaryService: folderSummaryService,
 	}
 }
 
@@ -763,6 +770,167 @@ func (h *WikiPageHandler) GetIndex(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, resp)
+}
+
+// GetGovernance godoc
+// @Summary      Get folder governance report as a wiki system page
+// @Description  Returns a virtual (non-persisted) wiki page containing the
+// @Description  folder governance report (empty/imbalanced/stale/duplicate/deep)
+// @Description  plus a folder summary status table. Read-only system page.
+// @Tags         Wiki
+// @Produce      json
+// @Param        kb_id  path  string  true  "Knowledge base ID"
+// @Success      200  {object}  map[string]interface{}
+// @Failure      400  {object}  errors.AppError
+// @Security     Bearer
+// @Router       /knowledgebase/{kb_id}/wiki/governance [get]
+func (h *WikiPageHandler) GetGovernance(c *gin.Context) {
+	kbID, tenantID, err := h.validateWikiKB(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	ctx := c.Request.Context()
+
+	// Folder governance may be disabled — return an empty system page so the
+	// frontend can still render the view without errors.
+	var report *types.FolderGovernanceReport
+	if h.folderService != nil {
+		report, err = h.folderService.GetGovernanceReport(ctx, kbID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+	} else {
+		report = &types.FolderGovernanceReport{}
+	}
+
+	var summaries []*types.FolderSummary
+	if h.folderSummaryService != nil {
+		if s, serr := h.folderSummaryService.ListSummariesByKB(ctx, tenantID, kbID); serr == nil {
+			summaries = s
+		}
+	}
+
+	// Enrich summary table with folder name/path/status via the folder tree.
+	var folderNodes []types.KnowledgeFolderNode
+	if h.folderService != nil {
+		if tree, terr := h.folderService.ListTree(ctx, kbID); terr == nil && tree != nil {
+			folderNodes = tree.Nodes
+		}
+	}
+
+	content := renderGovernanceAsMarkdown(report, summaries, folderNodes)
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data": gin.H{
+			"slug":      "_governance",
+			"title":     "文件夹治理",
+			"page_type": "index", // 系统页面类型，参与 GRAPH_SYSTEM_PAGE_TYPES 排除
+			"content":   content,
+			"is_system": true,
+		},
+	})
+}
+
+// renderGovernanceAsMarkdown turns the structured governance report plus
+// folder summary list into a Markdown system page body.
+func renderGovernanceAsMarkdown(report *types.FolderGovernanceReport, summaries []*types.FolderSummary, folderNodes []types.KnowledgeFolderNode) string {
+	if report == nil {
+		report = &types.FolderGovernanceReport{}
+	}
+	var b strings.Builder
+	b.WriteString("# 文件夹治理报告\n\n")
+
+	b.WriteString(fmt.Sprintf("- 空文件夹：%d 个\n", len(report.EmptyFolders)))
+	b.WriteString(fmt.Sprintf("- 失衡文件夹：%d 个\n", len(report.ImbalancedFolders)))
+	b.WriteString(fmt.Sprintf("- 过期摘要：%d 个\n", len(report.StaleSummaries)))
+	b.WriteString(fmt.Sprintf("- 重复文件：%d 组\n", len(report.DuplicateFiles)))
+	b.WriteString(fmt.Sprintf("- 层级过深：%d 个\n", len(report.DeepFolders)))
+	b.WriteString("\n")
+
+	if len(report.EmptyFolders) > 0 {
+		b.WriteString("## 空文件夹\n")
+		for _, f := range report.EmptyFolders {
+			b.WriteString(fmt.Sprintf("- **%s** (`%s`)\n", f.Name, f.Path))
+		}
+		b.WriteString("\n")
+	}
+
+	if len(report.ImbalancedFolders) > 0 {
+		b.WriteString("## 失衡文件夹（建议拆分）\n")
+		for _, f := range report.ImbalancedFolders {
+			b.WriteString(fmt.Sprintf("- **%s** — %d 个文件 (`%s`)\n", f.Name, f.FileCount, f.Path))
+		}
+		b.WriteString("\n")
+	}
+
+	if len(report.StaleSummaries) > 0 {
+		b.WriteString("## 过期摘要\n")
+		for _, s := range report.StaleSummaries {
+			b.WriteString(fmt.Sprintf("- **%s** — 生成于 %s，最近变更 %s\n",
+				s.Name, timeOrEmpty(s.GeneratedAt), timeOrEmpty(s.LastFileChange)))
+		}
+		b.WriteString("\n")
+	}
+
+	if len(report.DuplicateFiles) > 0 {
+		b.WriteString("## 跨文件夹重复文件\n")
+		for _, d := range report.DuplicateFiles {
+			b.WriteString(fmt.Sprintf("- **%s** — 出现在 %d 个文件夹\n", d.FileName, len(d.FolderPaths)))
+		}
+		b.WriteString("\n")
+	}
+
+	if len(report.DeepFolders) > 0 {
+		b.WriteString("## 层级过深（深度 > 5）\n")
+		for _, f := range report.DeepFolders {
+			b.WriteString(fmt.Sprintf("- **%s** — 深度 %d (`%s`)\n", f.Name, f.Depth, f.Path))
+		}
+		b.WriteString("\n")
+	}
+
+	if len(summaries) > 0 {
+		// map folder_id -> node for name/path/status enrichment
+		nodeByID := make(map[string]types.KnowledgeFolderNode, len(folderNodes))
+		for _, n := range folderNodes {
+			nodeByID[n.ID] = n
+		}
+		b.WriteString("## 文件夹摘要状态\n")
+		b.WriteString("| 文件夹 | 路径 | 摘要状态 | 版本 | 生成时间 |\n")
+		b.WriteString("|--------|------|----------|------|----------|\n")
+		for _, s := range summaries {
+			name, path, status := s.FolderID, "", ""
+			if n, ok := nodeByID[s.FolderID]; ok {
+				name = n.Name
+				path = n.Path
+				status = n.SummaryStatus
+			}
+			b.WriteString(fmt.Sprintf("| %s | %s | %s | v%d | %s |\n",
+				name, path, status, s.SummaryVersion,
+				timeOrEmpty(derefTime(s.GeneratedAt))))
+		}
+	}
+
+	return b.String()
+}
+
+// timeOrEmpty formats a time as YYYY-MM-DD, or "-" when zero.
+func timeOrEmpty(t time.Time) string {
+	if t.IsZero() {
+		return "-"
+	}
+	return t.Format("2006-01-02")
+}
+
+// derefTime dereferences a *time.Time, returning the zero time when nil.
+func derefTime(t *time.Time) time.Time {
+	if t == nil {
+		return time.Time{}
+	}
+	return *t
 }
 
 // Graph query parameter bounds. The defaults cap an `overview` request at

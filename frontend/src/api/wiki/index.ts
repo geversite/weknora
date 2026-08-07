@@ -298,6 +298,21 @@ export function getWikiIndex(
   return get(`/api/v1/knowledgebase/${kbId}/wiki/index${suffix}`);
 }
 
+export interface WikiGovernancePage {
+  slug: string;
+  title: string;
+  page_type: string;
+  content: string;
+  is_system: boolean;
+}
+
+// getWikiGovernance fetches the folder governance report as a virtual wiki
+// system page (markdown), analogous to /index. M4-fix1 moved the governance
+// info from a standalone tab into the wiki as a system page.
+export function getWikiGovernance(kbId: string) {
+  return get<WikiGovernancePage>(`/api/v1/knowledgebase/${kbId}/wiki/governance`);
+}
+
 export interface WikiGraphQueryParams {
   mode?: 'overview' | 'ego';
   center?: string;

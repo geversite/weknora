@@ -40,6 +40,10 @@ type SearchTarget struct {
 	// document KBs this is kept for tracing after the relation-table lookup has
 	// been resolved to KnowledgeIDs; TagIDs remains the physical index filter.
 	ScopeTagIDs []string `json:"scope_tag_ids,omitempty"`
+	// M4: restrict retrieval to files within these folders (inclusive of subfolders).
+	// Resolved to KnowledgeIDs at search time by looking up folder membership.
+	// Special value "__root__" matches files with folder_id = '' (root level).
+	FolderIDs []string `json:"folder_ids,omitempty"`
 	// DisableRecallThresholds keeps recall broad inside an already constrained,
 	// user-selected scope. The reranker still orders candidates, but vector and
 	// keyword thresholds cannot erase the whole explicit scope before reranking.
@@ -92,7 +96,7 @@ func HasKnowledgeRetrievalScope(
 			continue
 		}
 		if target.Type == SearchTargetTypeKnowledgeBase || len(target.KnowledgeIDs) > 0 ||
-			len(target.TagIDs) > 0 || len(target.ScopeTagIDs) > 0 {
+			len(target.TagIDs) > 0 || len(target.ScopeTagIDs) > 0 || len(target.FolderIDs) > 0 {
 			return true
 		}
 	}
@@ -198,6 +202,15 @@ type SearchResult struct {
 	// MatchedContent is the actual content that was matched in vector search
 	// For FAQ: this is the matched question text (standard or similar question)
 	MatchedContent string `json:"matched_content,omitempty"`
+
+	// M4: the file-level folder this chunk belongs to (populated from
+	// chunks.folder_id during retrieval). Empty for non-folder chunks.
+	FolderID string `json:"folder_id,omitempty"`
+
+	// M4-fix2: materialized path of FolderID (e.g. "/产品线A/协议规范/"),
+	// populated in the chat pipeline so <document> rendering can show the
+	// file's location without a per-result DB lookup.
+	FolderPath string `json:"folder_path,omitempty"`
 
 	// KnowledgeDescription is the description of the knowledge document
 	KnowledgeDescription string `json:"knowledge_description,omitempty"`

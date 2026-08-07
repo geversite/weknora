@@ -43,6 +43,7 @@ type AsynqTaskParams struct {
 	ImageMultimodal      interfaces.TaskHandler `name:"imageMultimodal"`
 	KnowledgePostProcess interfaces.TaskHandler `name:"knowledgePostProcess"`
 	ConflictDetect       interfaces.ConflictDetectService
+	FolderSummary        interfaces.FolderSummaryTaskService
 	WikiIngest           interfaces.TaskHandler `name:"wikiIngest"`
 	TemporaryDocument    interfaces.TemporaryDocumentService
 	DeadLetterRepo       interfaces.TaskDeadLetterRepository
@@ -305,6 +306,11 @@ func RunAsynqServer(params AsynqTaskParams) *asynq.ServeMux {
 	// Register conflict detection handler (M3)
 	if params.ConflictDetect != nil {
 		mux.HandleFunc(types.TypeConflictDetect, params.ConflictDetect.Handle)
+	}
+
+	// Register folder summary generation handler (M4)
+	if params.FolderSummary != nil {
+		mux.HandleFunc(types.TypeFolderSummaryGeneration, params.FolderSummary.Handle)
 	}
 
 	// Register data source sync handler

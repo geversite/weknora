@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"mime/multipart"
+	"time"
 
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/hibiken/asynq"
@@ -13,6 +14,10 @@ import (
 type KnowledgeService interface {
 	// CreateKnowledgeFromFile creates knowledge from a file.
 	// channel identifies the ingestion channel (e.g. "web", "api", "wechat"); empty defaults to "web".
+	// folderIDs is an optional trailing variadic: when a folder id is supplied,
+	// the file-hash dedup is scoped to that folder (M4) and the created
+	// knowledge is assigned to it. Existing callers that don't pass it are
+	// unaffected (dedup stays KB-wide).
 	CreateKnowledgeFromFile(
 		ctx context.Context,
 		kbID string,
@@ -23,6 +28,7 @@ type KnowledgeService interface {
 		tagIDs []string,
 		channel string,
 		processOverrides *types.KnowledgeProcessOverrides,
+		folderIDs ...string,
 	) (*types.Knowledge, error)
 	// CreateKnowledgeFromURL creates knowledge from a URL.
 	// When fileName or fileType is provided (or the URL path has a known file extension),
@@ -209,6 +215,11 @@ type KnowledgeService interface {
 	SearchKnowledge(ctx context.Context, keyword string, offset, limit int, fileTypes []string) ([]*types.Knowledge, bool, int64, error)
 	// SearchKnowledgeForScopes searches knowledge within the given (tenant_id, kb_id) scopes (e.g. for shared agent context).
 	SearchKnowledgeForScopes(ctx context.Context, scopes []types.KnowledgeSearchScope, keyword string, offset, limit int, fileTypes []string) ([]*types.Knowledge, bool, int64, error)
+
+	// M4-fix2: ListKnowledgeIDsByFolderIDs returns knowledge IDs assigned to any
+	// of the given folders (folder_id IN (...)). Exposed on the service so the
+	// agent's knowledge_search tool can resolve a folder_id to its subtree files.
+	ListKnowledgeIDsByFolderIDs(ctx context.Context, kbID string, folderIDs []string) ([]string, error)
 }
 
 // KnowledgeRepository defines the interface for knowledge repositories.
@@ -288,4 +299,24 @@ type KnowledgeRepository interface {
 	GetKnowledgeTags(ctx context.Context, knowledgeIDs []string) (map[string][]*types.KnowledgeTag, error)
 	// DeleteKnowledgeTagRelations deletes all tag relations for a knowledge entry.
 	DeleteKnowledgeTagRelations(ctx context.Context, knowledgeID string) error
+
+	// M4: folder-scoped queries (for scoped retrieval and summary generation).
+	// ListKnowledgeIDsByFolderID returns knowledge IDs directly assigned to a
+	// single folder. folderID="" matches root-level files (folder_id = '').
+	ListKnowledgeIDsByFolderID(ctx context.Context, kbID, folderID string) ([]string, error)
+	// ListKnowledgeIDsByFolderIDs returns knowledge IDs assigned to any of the
+	// given folders (folder_id IN (...)).
+	ListKnowledgeIDsByFolderIDs(ctx context.Context, kbID string, folderIDs []string) ([]string, error)
+	// ListByFolderIDs returns the full knowledge rows for files in any of the
+	// given folders (used by folder summary generation).
+	ListByFolderIDs(ctx context.Context, kbID string, folderIDs []string) ([]*types.Knowledge, error)
+	// UpdateFolderID updates the folder assignment of a knowledge entry.
+	// folderID="" moves it back to the root level.
+	UpdateFolderID(ctx context.Context, knowledgeID, folderID string) error
+	// ListFolderDuplicates returns files sharing the same file_hash across more
+	// than one distinct folder (M4 governance panel).
+	ListFolderDuplicates(ctx context.Context, kbID string) ([]*types.FolderDuplicateInfo, error)
+	// LatestFileChangeTime returns the most recent updated_at of files directly
+	// assigned to a folder (used to detect stale folder summaries).
+	LatestFileChangeTime(ctx context.Context, kbID, folderID string) (*time.Time, error)
 }

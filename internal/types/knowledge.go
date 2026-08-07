@@ -106,6 +106,9 @@ type KnowledgeListFilter struct {
 	UpdatedFrom time.Time
 	// UpdatedTo, when non-zero, keeps rows with updated_at <= UpdatedTo.
 	UpdatedTo time.Time
+	// FolderIDs filters by folder membership. Empty = no folder filter.
+	// The special value "__root__" matches files with folder_id = '' (root level).
+	FolderIDs []string
 }
 
 // Knowledge represents a knowledge entity in the system.
@@ -152,6 +155,9 @@ type Knowledge struct {
 	FileHash string `json:"file_hash"`
 	// File path of the knowledge
 	FilePath string `json:"file_path"`
+	// M4: primary folder assignment. Empty string = root / unassigned.
+	// One file belongs to at most one folder (orthogonal to Tags which are many-to-many).
+	FolderID string `json:"folder_id" gorm:"type:varchar(36);default:''"`
 	// Storage size of the knowledge
 	StorageSize int64 `json:"storage_size"`
 	// Metadata of the knowledge
@@ -449,6 +455,11 @@ type KnowledgeCheckParams struct {
 	FileType string
 	FileSize int64
 	FileHash string
+	// FolderID scopes file-hash deduplication to a single folder (M4).
+	// Empty string = root level. When set, duplicate detection only matches
+	// files within the same folder, so the same file may exist in different
+	// folders without being treated as a conflict.
+	FolderID string
 	// URL parameters
 	URL string
 	// Text passage parameters

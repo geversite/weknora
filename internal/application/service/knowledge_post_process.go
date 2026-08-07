@@ -19,13 +19,16 @@ import (
 // KnowledgePostProcessService acts as an orchestrator for all post-processing tasks
 // after a document has been parsed and split into chunks (including multimodal OCR/Caption).
 type KnowledgePostProcessService struct {
-	knowledgeRepo interfaces.KnowledgeRepository
-	kbService     interfaces.KnowledgeBaseService
-	chunkService  interfaces.ChunkService
-	taskEnqueuer  interfaces.TaskEnqueuer
-	pendingRepo   interfaces.TaskPendingOpsRepository
-	redisClient   *redis.Client
-	spanTracker   SpanTracker
+	knowledgeRepo     interfaces.KnowledgeRepository
+	kbService         interfaces.KnowledgeBaseService
+	chunkService      interfaces.ChunkService
+	taskEnqueuer      interfaces.TaskEnqueuer
+	pendingRepo       interfaces.TaskPendingOpsRepository
+	redisClient       *redis.Client
+	spanTracker       SpanTracker
+	folderSummaryRepo interfaces.FolderSummaryRepository
+	summarySvc        interfaces.FolderSummaryService
+	folderRepo        interfaces.KnowledgeFolderRepository
 }
 
 func NewKnowledgePostProcessService(
@@ -36,15 +39,21 @@ func NewKnowledgePostProcessService(
 	pendingRepo interfaces.TaskPendingOpsRepository,
 	redisClient *redis.Client,
 	spanTracker SpanTracker,
+	folderSummaryRepo interfaces.FolderSummaryRepository,
+	summarySvc interfaces.FolderSummaryService,
+	folderRepo interfaces.KnowledgeFolderRepository,
 ) interfaces.TaskHandler {
 	return &KnowledgePostProcessService{
-		knowledgeRepo: knowledgeRepo,
-		kbService:     kbService,
-		chunkService:  chunkService,
-		taskEnqueuer:  taskEnqueuer,
-		pendingRepo:   pendingRepo,
-		redisClient:   redisClient,
-		spanTracker:   spanTracker,
+		knowledgeRepo:     knowledgeRepo,
+		kbService:         kbService,
+		chunkService:      chunkService,
+		taskEnqueuer:      taskEnqueuer,
+		pendingRepo:       pendingRepo,
+		redisClient:       redisClient,
+		spanTracker:       spanTracker,
+		folderSummaryRepo: folderSummaryRepo,
+		summarySvc:        summarySvc,
+		folderRepo:        folderRepo,
 	}
 }
 
@@ -364,6 +373,18 @@ func (s *KnowledgePostProcessService) Handle(ctx context.Context, task *asynq.Ta
 				})
 			}
 			enqueuedQuestionCount = s.enqueueQuestionGenerationTasks(ctx, payload, eff.QuestionGenerationConfig, attempt, questionChunks)
+		}
+	}
+
+	// 4b. M4: if this file is assigned to a folder under folder governance,
+	// trigger a (debounced) folder summary refresh so the folder-level synopsis
+	// tracks the new content. Fire-and-forget: failures only degrade the
+	// summary freshness, never the upload/post-process outcome.
+	if s.summarySvc != nil && kb.IsFolderGovernanceEnabled() && knowledge.FolderID != "" {
+		if folder, err := s.folderRepo.GetByID(ctx, knowledge.FolderID); err == nil && folder != nil {
+			s.summarySvc.ScheduleRefreshForFolderAndAncestors(ctx, folder)
+		} else if err != nil {
+			logger.Warnf(ctx, "[KnowledgePostProcess] folder %s not found: %v", knowledge.FolderID, err)
 		}
 	}
 

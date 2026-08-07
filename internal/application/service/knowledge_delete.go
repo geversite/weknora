@@ -206,6 +206,14 @@ func (s *knowledgeService) DeleteKnowledge(ctx context.Context, id string) error
 	recordKBActivity(ctx, s.audit, tenantID, knowledge.KnowledgeBaseID, types.AuditActionKnowledgeDeleted,
 		"knowledge", knowledge.ID, types.AuditOutcomeSuccess,
 		map[string]any{"title": knowledge.Title, "type": knowledge.Type})
+
+	// M4: if the deleted file belonged to a folder, refresh that folder's
+	// summary (debounced) so it tracks the removal. Fire-and-forget.
+	if s.folderSummarySvc != nil && knowledge.FolderID != "" {
+		if folder, err := s.folderRepo.GetByID(ctx, knowledge.FolderID); err == nil {
+			s.folderSummarySvc.ScheduleRefreshForFolderAndAncestors(ctx, folder)
+		}
+	}
 	return nil
 }
 

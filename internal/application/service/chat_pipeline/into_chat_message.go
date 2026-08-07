@@ -15,11 +15,19 @@ import (
 // PluginIntoChatMessage handles the transformation of search results into chat messages
 type PluginIntoChatMessage struct {
 	messageService interfaces.MessageService
+	folderRepo     interfaces.KnowledgeFolderRepository // M4: folder context injection
+	summaryRepo    interfaces.FolderSummaryRepository   // M4: folder summary lookup
 }
 
 // NewPluginIntoChatMessage creates and registers a new PluginIntoChatMessage instance
-func NewPluginIntoChatMessage(eventManager *EventManager, messageService interfaces.MessageService) *PluginIntoChatMessage {
-	res := &PluginIntoChatMessage{messageService: messageService}
+func NewPluginIntoChatMessage(eventManager *EventManager, messageService interfaces.MessageService,
+	folderRepo interfaces.KnowledgeFolderRepository, summaryRepo interfaces.FolderSummaryRepository,
+) *PluginIntoChatMessage {
+	res := &PluginIntoChatMessage{
+		messageService: messageService,
+		folderRepo:     folderRepo,
+		summaryRepo:    summaryRepo,
+	}
 	eventManager.Register(res)
 	return res
 }
@@ -125,10 +133,30 @@ func (p *PluginIntoChatMessage) OnEvent(ctx context.Context,
 	if chatManage.FAQPriorityEnabled && len(faqResults) > 0 {
 		allResults = append(faqResults, docResults...)
 	}
+	// M4-fix2: resolve each result's FolderID to its materialized path so
+	// <document folder="..."> can be rendered. Best-effort.
+	p.populateFolderPaths(ctx, allResults)
 	docHeader := buildDocumentHeader(allResults)
 	if docHeader != "" {
 		contextsBuilder.WriteString(docHeader)
 		contextsBuilder.WriteString("\n")
+	}
+
+	// M4: inject folder-level summaries for folders hit by retrieval, giving
+	// the LLM sub-domain context (folder_contexts). Best-effort.
+	if folderCtx := p.buildFolderContexts(ctx, allResults); folderCtx != "" {
+		contextsBuilder.WriteString(folderCtx)
+		contextsBuilder.WriteString("\n")
+	}
+
+	// M4-fix2: when retrieval returns zero hits, inject a folder overview so the
+	// LLM understands what sub-domains exist in the KB and can guide the user
+	// (e.g. "we have /产品线A/ — try narrowing to that folder"). Best-effort.
+	if len(allResults) == 0 {
+		if folderOverview := p.buildFolderOverview(ctx, chatManage.KnowledgeBaseIDs); folderOverview != "" {
+			contextsBuilder.WriteString(folderOverview)
+			contextsBuilder.WriteString("\n")
+		}
 	}
 
 	// Build contexts string based on FAQ priority strategy
@@ -237,11 +265,110 @@ func (p *PluginIntoChatMessage) persistRenderedContent(ctx context.Context, chat
 // buildDocumentHeader generates a document metadata section listing each unique
 // knowledge document (by KnowledgeID) with its title and description.
 // Returns an empty string when no meaningful metadata is available.
+// populateFolderPaths resolves each result's FolderID to its materialized
+// path (e.g. "/产品线A/协议规范/") using a batched, per-KB lookup (M4-fix2).
+// It's best-effort: lookup failures leave FolderPath empty and the <document>
+// tag simply omits the folder attribute.
+func (p *PluginIntoChatMessage) populateFolderPaths(ctx context.Context, results []*types.SearchResult) {
+	if p.folderRepo == nil || len(results) == 0 {
+		return
+	}
+	tenantID := types.MustTenantIDFromContext(ctx)
+
+	// Build distinct folder_id -> kb_id mapping.
+	folderToKB := make(map[string]string)
+	for _, r := range results {
+		if r.FolderID == "" {
+			continue
+		}
+		kbID := r.KnowledgeBaseID
+		if kbID == "" {
+			// KnowledgeBaseID may not be set on SearchResult; leave folder
+			// unresolved rather than guessing.
+			continue
+		}
+		folderToKB[r.FolderID] = kbID
+	}
+	if len(folderToKB) == 0 {
+		return
+	}
+
+	// Group folder IDs by KB for one ListByKB call each.
+	byKB := make(map[string][]string)
+	for folderID, kbID := range folderToKB {
+		byKB[kbID] = append(byKB[kbID], folderID)
+	}
+
+	// Map folder_id -> path across the involved KBs.
+	pathByFolder := make(map[string]string, len(folderToKB))
+	for kbID, folderIDs := range byKB {
+		folders, err := p.folderRepo.ListByKB(ctx, tenantID, kbID)
+		if err != nil {
+			pipelineWarn(ctx, "IntoChatMessage", "folder_path_lookup_failed", map[string]interface{}{
+				"kb_id": kbID, "err": err.Error(),
+			})
+			continue
+		}
+		want := make(map[string]struct{}, len(folderIDs))
+		for _, id := range folderIDs {
+			want[id] = struct{}{}
+		}
+		for _, f := range folders {
+			if _, ok := want[f.ID]; ok {
+				pathByFolder[f.ID] = f.Path
+			}
+		}
+	}
+
+	for _, r := range results {
+		if p, ok := pathByFolder[r.FolderID]; ok {
+			r.FolderPath = p
+		}
+	}
+}
+
+// buildFolderOverview renders a compact folder outline of the given KBs so the
+// LLM has structural awareness even when retrieval returns zero hits (M4-fix2).
+// Best-effort — returns "" when no KBs / no folders are available.
+func (p *PluginIntoChatMessage) buildFolderOverview(ctx context.Context, kbIDs []string) string {
+	if p.folderRepo == nil || len(kbIDs) == 0 {
+		return ""
+	}
+	tenantID := types.MustTenantIDFromContext(ctx)
+
+	var b strings.Builder
+	b.WriteString("<folder_overview>\n")
+	written := false
+	for _, kbID := range kbIDs {
+		folders, err := p.folderRepo.ListByKB(ctx, tenantID, kbID)
+		if err != nil || len(folders) == 0 {
+			continue
+		}
+		written = true
+		b.WriteString(fmt.Sprintf("<kb id=\"%s\">\n", html.EscapeString(kbID)))
+		// Keep it shallow & token-efficient: root-level dirs plus one level down.
+		for _, f := range folders {
+			if f.Depth > 2 {
+				continue
+			}
+			indent := strings.Repeat("  ", f.Depth)
+			b.WriteString(fmt.Sprintf("%s- %s\n", indent, html.EscapeString(f.Name)))
+		}
+		b.WriteString("</kb>\n")
+	}
+	b.WriteString("</folder_overview>")
+	if !written {
+		return ""
+	}
+	return b.String()
+}
+
 func buildDocumentHeader(results []*types.SearchResult) string {
 	type docMeta struct {
 		title       string
 		description string
 		metadata    string
+		folder      string // M4-fix2: materialized path of the file's folder
 	}
 
 	seen := make(map[string]struct{})
@@ -268,6 +395,7 @@ func buildDocumentHeader(results []*types.SearchResult) string {
 			title:       title,
 			description: r.KnowledgeDescription,
 			metadata:    r.KnowledgeCustomMetadata,
+			folder:      r.FolderPath,
 		})
 	}
 
@@ -278,7 +406,13 @@ func buildDocumentHeader(results []*types.SearchResult) string {
 	var b strings.Builder
 	b.WriteString("<documents>\n")
 	for _, d := range docs {
-		b.WriteString("<document>\n")
+		// M4-fix2: include the file's folder path as an attribute so the LLM
+		// can reason about which folder each document lives in.
+		if d.folder != "" {
+			b.WriteString(fmt.Sprintf("<document folder=\"%s\">\n", html.EscapeString(d.folder)))
+		} else {
+			b.WriteString("<document>\n")
+		}
 		b.WriteString(fmt.Sprintf("<title>%s</title>\n", html.EscapeString(d.title)))
 		if d.description != "" {
 			b.WriteString(fmt.Sprintf("<description>%s</description>\n", html.EscapeString(d.description)))
@@ -289,6 +423,80 @@ func buildDocumentHeader(results []*types.SearchResult) string {
 		b.WriteString("</document>\n")
 	}
 	b.WriteString("</documents>")
+	return b.String()
+}
+
+// buildFolderContexts collects folder_ids from search results and injects the
+// folders' summaries as <folder_contexts> XML (M4). Returns "" when no folders
+// with summaries are hit.
+func (p *PluginIntoChatMessage) buildFolderContexts(ctx context.Context, results []*types.SearchResult) string {
+	if p.folderRepo == nil || p.summaryRepo == nil {
+		return ""
+	}
+	seen := make(map[string]struct{})
+	var folderIDs []string
+	// M4-fix2: track which knowledge files were hit per folder so <folder_contexts>
+	// can map each summary back to the concrete documents that surfaced it.
+	hitsByFolder := make(map[string][]*types.SearchResult)
+	for _, r := range results {
+		if r.FolderID == "" {
+			continue
+		}
+		if _, ok := seen[r.FolderID]; !ok {
+			seen[r.FolderID] = struct{}{}
+			folderIDs = append(folderIDs, r.FolderID)
+		}
+		hitsByFolder[r.FolderID] = append(hitsByFolder[r.FolderID], r)
+	}
+	if len(folderIDs) == 0 {
+		return ""
+	}
+	summaries, err := p.summaryRepo.GetByFolderIDs(ctx, folderIDs)
+	if err != nil || len(summaries) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("<folder_contexts>\n")
+	for _, fs := range summaries {
+		if fs == nil || fs.Content == "" {
+			continue
+		}
+		folder, ferr := p.folderRepo.GetByID(ctx, fs.FolderID)
+		if ferr != nil || folder == nil {
+			continue
+		}
+		b.WriteString("<folder>\n")
+		b.WriteString(fmt.Sprintf("<name>%s</name>\n", html.EscapeString(folder.Name)))
+		b.WriteString(fmt.Sprintf("<path>%s</path>\n", html.EscapeString(folder.Path)))
+		b.WriteString(fmt.Sprintf("<summary>%s</summary>\n", html.EscapeString(fs.Content)))
+		// M4-fix2: list the concrete files that hit this folder so the LLM can
+		// tie the summary to specific documents.
+		if hits := hitsByFolder[folder.ID]; len(hits) > 0 {
+			b.WriteString("<hit_documents>\n")
+			docSeen := make(map[string]struct{})
+			for _, hit := range hits {
+				if hit.KnowledgeID == "" {
+					continue
+				}
+				if _, ok := docSeen[hit.KnowledgeID]; ok {
+					continue
+				}
+				docSeen[hit.KnowledgeID] = struct{}{}
+				title := hit.KnowledgeTitle
+				if title == "" {
+					title = hit.KnowledgeFilename
+				}
+				if title == "" {
+					continue
+				}
+				b.WriteString(fmt.Sprintf("<doc knowledge_id=\"%s\" title=\"%s\" />\n",
+					html.EscapeString(hit.KnowledgeID), html.EscapeString(title)))
+			}
+			b.WriteString("</hit_documents>\n")
+		}
+		b.WriteString("</folder>\n")
+	}
+	b.WriteString("</folder_contexts>")
 	return b.String()
 }
 

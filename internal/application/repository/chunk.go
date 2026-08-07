@@ -529,6 +529,14 @@ func (r *chunkRepository) DeleteChunksByKnowledgeID(ctx context.Context, tenantI
 	).Delete(&types.Chunk{}).Error
 }
 
+// DeleteByFolderAndType deletes folder_summary chunks for a folder (M4).
+// Used to clear old summary chunks before regenerating the folder summary.
+func (r *chunkRepository) DeleteByFolderAndType(ctx context.Context, folderID string, chunkType types.ChunkType) error {
+	return r.db.WithContext(ctx).Where(
+		"folder_id = ? AND chunk_type = ?", folderID, string(chunkType),
+	).Delete(&types.Chunk{}).Error
+}
+
 // ListImageInfoByKnowledgeIDs returns non-empty image_info values for the given knowledge IDs.
 // No chunk_type filter — collects from text, image_ocr, and image_caption chunks.
 func (r *chunkRepository) ListImageInfoByKnowledgeIDs(

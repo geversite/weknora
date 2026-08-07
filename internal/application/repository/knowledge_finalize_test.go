@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS knowledges (
     file_size BIGINT,
     file_path TEXT,
     file_hash VARCHAR(64),
+    folder_id VARCHAR(36) DEFAULT '',
     storage_size BIGINT NOT NULL DEFAULT 0,
     metadata TEXT,
     tag_id VARCHAR(36),

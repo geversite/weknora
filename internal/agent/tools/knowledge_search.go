@@ -96,6 +96,10 @@ Each chunk has a short cN source ID and belongs to a dN document ID. Results rep
       },
       "minItems": 0,
       "maxItems": 10
+    },
+    "folder_id": {
+      "type": "string",
+      "description": "Optional (M4-fix2): restrict the search to files within this folder, inclusive of subfolders. Get the folder_id from browse_folders or the <folders> section in the runtime context. Use this when the user explicitly asks to search within a specific folder."
     }
   },
   "required": ["queries"]
@@ -106,6 +110,7 @@ Each chunk has a short cN source ID and belongs to a dN document ID. Results rep
 type KnowledgeSearchInput struct {
 	Queries          []string `json:"queries"`
 	KnowledgeBaseIDs []string `json:"knowledge_base_ids,omitempty"`
+	FolderID         string   `json:"folder_id,omitempty"`
 }
 
 // searchResultWithMeta wraps search result with metadata about which query matched it
@@ -126,7 +131,8 @@ type KnowledgeSearchTool struct {
 	knowledgeBaseService interfaces.KnowledgeBaseService
 	knowledgeService     interfaces.KnowledgeService
 	chunkService         interfaces.ChunkService
-	searchTargets        types.SearchTargets // Pre-computed unified search targets
+	folderService        interfaces.KnowledgeFolderService // M4-fix2: folder-scoped search
+	searchTargets        types.SearchTargets               // Pre-computed unified search targets
 	rerankModel          rerank.Reranker
 	chatModel            chat.Chat      // Optional chat model for LLM-based reranking
 	config               *config.Config // Global config for fallback values
@@ -140,6 +146,7 @@ func NewKnowledgeSearchTool(
 	knowledgeBaseService interfaces.KnowledgeBaseService,
 	knowledgeService interfaces.KnowledgeService,
 	chunkService interfaces.ChunkService,
+	folderService interfaces.KnowledgeFolderService,
 	searchTargets types.SearchTargets,
 	rerankModel rerank.Reranker,
 	chatModel chat.Chat,
@@ -150,6 +157,7 @@ func NewKnowledgeSearchTool(
 		knowledgeBaseService: knowledgeBaseService,
 		knowledgeService:     knowledgeService,
 		chunkService:         chunkService,
+		folderService:        folderService,
 		searchTargets:        searchTargets,
 		rerankModel:          rerankModel,
 		chatModel:            chatModel,
@@ -232,6 +240,27 @@ func (t *KnowledgeSearchTool) Execute(ctx context.Context, args json.RawMessage)
 
 	logger.Infof(ctx, "[Tool][KnowledgeSearch] Queries: %v", queries)
 
+	// M4-fix2: optional folder-scoped search. When the user names a specific
+	// folder, restrict retrieval to that folder's subtree (inclusive). This
+	// resolves folder_id → knowledge IDs once, then constrains every search
+	// target below. A missing/unresolvable folder degrades to a notice rather
+	// than erroring the whole call.
+	var folderKBID string
+	var folderKnowledgeIDs []string
+	if input.FolderID != "" {
+		if t.folderService == nil {
+			return &types.ToolResult{Success: false, Error: "folder_id is not supported in this deployment"}, nil
+		}
+		kbID, ids, ferr := t.resolveFolderScope(ctx, input.FolderID)
+		if ferr != nil {
+			return &types.ToolResult{Success: false, Error: "failed to resolve folder scope: " + ferr.Error()}, nil
+		}
+		folderKBID = kbID
+		folderKnowledgeIDs = ids
+		logger.Infof(ctx, "[Tool][KnowledgeSearch] Folder-scoped search: folder_id=%s kb=%s knowledge_ids=%d",
+			input.FolderID, folderKBID, len(folderKnowledgeIDs))
+	}
+
 	// Search parameters: fall back to global config, then to hardcoded defaults.
 	// We used to read tenant.ConversationConfig here as the first source of
 	// truth, but that field was removed when the chat pipeline moved to
@@ -279,7 +308,7 @@ func (t *KnowledgeSearchTool) Execute(ctx context.Context, args json.RawMessage)
 	kbTypeMap := t.getKnowledgeBaseTypes(ctx, kbIDs)
 
 	allResults := t.concurrentSearchByTargets(ctx, queries, searchTargets,
-		topK, vectorThreshold, keywordThreshold, kbTypeMap)
+		topK, vectorThreshold, keywordThreshold, kbTypeMap, folderKBID, folderKnowledgeIDs)
 	logger.Infof(ctx, "[Tool][KnowledgeSearch] Concurrent search completed: %d raw results", len(allResults))
 
 	// Note: HybridSearch now uses RRF (Reciprocal Rank Fusion) which produces normalized scores
@@ -437,6 +466,8 @@ func (t *KnowledgeSearchTool) concurrentSearchByTargets(
 	topK int,
 	vectorThreshold, keywordThreshold float64,
 	kbTypeMap map[string]string,
+	folderKBID string, // M4-fix2: KB the folder belongs to ("" = no folder scope)
+	folderKnowledgeIDs []string, // M4-fix2: resolved subtree knowledge IDs
 ) []*searchResultWithMeta {
 	// Batch-fetch KB records for embedding model grouping
 	kbIDs := searchTargets.GetAllKnowledgeBaseIDs()
@@ -546,6 +577,10 @@ func (t *KnowledgeSearchTool) concurrentSearchByTargets(
 							VectorThreshold:  vectorThreshold,
 							KeywordThreshold: keywordThreshold,
 						}
+						// M4-fix2: folder scope narrows every searched KB.
+						if folderKBID != "" {
+							searchParams.KnowledgeIDs = append(searchParams.KnowledgeIDs, folderKnowledgeIDs...)
+						}
 						kbResults, err := t.knowledgeBaseService.HybridSearch(ctx, fullKBIDs[0], searchParams)
 						if err != nil {
 							logger.Warnf(ctx, "[Tool][KnowledgeSearch] Combined search failed for KBs %v: %v", fullKBIDs, err)
@@ -585,6 +620,11 @@ func (t *KnowledgeSearchTool) concurrentSearchByTargets(
 							TagIDs:           st.TagIDs,
 							ScopeTagIDs:      st.ScopeTagIDs,
 						}
+						// M4-fix2: folder scope intersects with any explicit
+						// KnowledgeIDs so retrieval stays within the folder.
+						if folderKBID != "" {
+							searchParams.KnowledgeIDs = mergeKnowledgeIDs(searchParams.KnowledgeIDs, folderKnowledgeIDs)
+						}
 						kbResults, err := t.knowledgeBaseService.HybridSearch(ctx, st.KnowledgeBaseID, searchParams)
 						if err != nil {
 							logger.Warnf(ctx, "[Tool][KnowledgeSearch] Failed to search KB %s: %v", st.KnowledgeBaseID, err)
@@ -610,6 +650,62 @@ func (t *KnowledgeSearchTool) concurrentSearchByTargets(
 	}
 	wg.Wait()
 	return allResults
+}
+
+// resolveFolderScope resolves a folder_id to its owning KB and the knowledge
+// IDs of the whole subtree (folder + descendants). The subtree is derived by
+// path-prefix matching over the flattened folder tree, mirroring the backend's
+// materialized-path semantics used by resolveFolderScope in the chat pipeline.
+func (t *KnowledgeSearchTool) resolveFolderScope(ctx context.Context, folderID string) (string, []string, error) {
+	folder, err := t.folderService.GetByID(ctx, folderID)
+	if err != nil || folder == nil {
+		return "", nil, fmt.Errorf("folder %s not found", folderID)
+	}
+	kbID := folder.KnowledgeBaseID
+
+	tree, err := t.folderService.ListTree(ctx, kbID)
+	if err != nil {
+		return "", nil, err
+	}
+	var subtreeIDs []string
+	if tree != nil {
+		prefix := folder.Path
+		for _, node := range tree.Nodes {
+			if strings.HasPrefix(node.Path, prefix) {
+				subtreeIDs = append(subtreeIDs, node.ID)
+			}
+		}
+	}
+	if len(subtreeIDs) == 0 {
+		return kbID, nil, nil
+	}
+	ids, err := t.knowledgeService.ListKnowledgeIDsByFolderIDs(ctx, kbID, subtreeIDs)
+	if err != nil {
+		return "", nil, err
+	}
+	return kbID, ids, nil
+}
+
+// mergeKnowledgeIDs returns the intersection of the two ID sets (the explicit
+// KnowledgeIDs already on a target intersected with the folder subtree IDs), so
+// a folder scope never broadens an explicitly-selected set.
+func mergeKnowledgeIDs(explicit, folder []string) []string {
+	if len(explicit) == 0 {
+		out := make([]string, 0, len(folder))
+		out = append(out, folder...)
+		return out
+	}
+	set := make(map[string]bool, len(folder))
+	for _, id := range folder {
+		set[id] = true
+	}
+	out := make([]string, 0, len(explicit))
+	for _, id := range explicit {
+		if set[id] {
+			out = append(out, id)
+		}
+	}
+	return out
 }
 
 // rerankResults applies reranking to all search results (including FAQ entries)

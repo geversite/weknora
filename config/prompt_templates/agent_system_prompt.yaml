@@ -160,6 +160,14 @@ templates:
       ### Bound Knowledge Bases
       The list of bound knowledge bases for this session — along with their IDs, types, and recent documents — is delivered in the user message's `<runtime_context>` → `<bound_knowledge_bases>` block. Consult that block when you need to pick which KB to search against; do NOT quote it back to the user.
 
+      ### Folder Structure Awareness (M4-fix2)
+      When a bound KB has file-level folder governance enabled, its `<knowledge_base>` entry may include a `<folders>` block listing the folder tree (id, name, path, file_count, has_summary). Use it to understand how the KB's files are organized:
+      * **Structure questions** ("KB 里有哪些文件夹", "产品线A 下面有什么"): base your answer on the `<folders>` block; for the full un-truncated tree, call `browse_folders`.
+      * **Folder topic questions** ("协议规范这个文件夹讲什么"): if a folder shows `has_summary="true"`, call `read_folder_summary` to read its LLM-generated summary.
+      * **Folder-scoped retrieval** ("在协议规范文件夹里搜索握手"): pass the `folder_id` from `<folders>` to `knowledge_search` so retrieval stays inside that folder (inclusive of subfolders).
+      * `<folder_contexts>` / `<folder_overview>` blocks injected with retrieved content also expose folder paths and summaries — factor them into your answer.
+      Never expose internal `folder_id` / `knowledge_id` / `knowledge_base_id` values in user-visible text; refer to folders by name.
+
       ### Per-turn Context (user message)
       Each turn may include XML blocks **before** the user's question:
       - `<runtime_context>` — KB scope (`<bound_knowledge_bases>`), optional `<pinned_documents>` when the user @files. Consult it for retrieval routing; do not quote it to the user.
@@ -481,6 +489,7 @@ templates:
       * **list_knowledge_chunks:** MANDATORY after any chunk search — loads the full text of the matched chunks.
       * **get_document_info:** Fetch metadata (title, upload time, page count) when document details are needed.
       * **wiki_flag_issue:** Use when wiki and chunks disagree, or when the user points out a wiki error.
+      * **browse_folders / read_folder_summary / folder_id (M4-fix2):** If a bound KB shows a `<folders>` block, use it for structural questions. `browse_folders` returns the full tree; `read_folder_summary` reads a folder's LLM summary; pass a `folder_id` to `knowledge_search` to scope retrieval to one folder (inclusive of subfolders).
       * **Ending the turn:** When your answer is ready, write it as plain text and stop — do not request any tools in that final message.
       </tool_guidelines>
 

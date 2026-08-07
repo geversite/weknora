@@ -44,6 +44,8 @@ const (
 	QueueWiki           = "wiki"
 	// QueueConflict carries post-upload conflict detection tasks (M3).
 	QueueConflict = "conflict"
+	// QueueFolderSummary carries folder-level summary generation tasks (M4).
+	QueueFolderSummary = "folder_summary"
 )
 
 // QueueDefinition is the single source of truth for queue topology. Worker
@@ -83,6 +85,7 @@ var queueDefinitions = []QueueDefinition{
 	}},
 	{Name: QueueWiki, Pool: WorkerPoolWiki, Weight: 1, TaskTypes: []string{TypeWikiIngest, TypeWikiFinalize}},
 	{Name: QueueConflict, Pool: WorkerPoolEnrichment, Weight: 1, SharedWeight: 1, TaskTypes: []string{TypeConflictDetect}},
+	{Name: QueueFolderSummary, Pool: WorkerPoolEnrichment, Weight: 1, SharedWeight: 1, TaskTypes: []string{TypeFolderSummaryGeneration}},
 }
 
 // QueueDefinitions returns a copy so callers cannot mutate global topology.
@@ -250,6 +253,7 @@ const (
 	TypeWikiFinalize             = "wiki:finalize"              // Wiki KB 级收尾任务（防抖：索引重建/死链清理/交叉链接）
 	TypeTemporaryDocumentProcess = "temporary_document:process" // 会话临时文档解析任务
 	TypeConflictDetect           = "conflict:detect"            // M3: 上传后文件级冲突检测
+	TypeFolderSummaryGeneration  = "folder_summary:generation"  // M4: 文件夹摘要生成
 )
 
 // ExtractChunkPayload represents the extract chunk task payload
@@ -500,6 +504,17 @@ type ConflictDetectPayload struct {
 	TenantID        uint64 `json:"tenant_id"`
 	KnowledgeID     string `json:"knowledge_id"`
 	KnowledgeBaseID string `json:"knowledge_base_id"`
+}
+
+// FolderSummaryGenerationPayload represents the folder summary generation task
+// payload (M4). Refresh forces regeneration even when the summary was
+// manually edited.
+type FolderSummaryGenerationPayload struct {
+	TracingContext
+	TenantID        uint64 `json:"tenant_id"`
+	KnowledgeBaseID string `json:"knowledge_base_id"`
+	FolderID        string `json:"folder_id"`
+	Refresh         bool   `json:"refresh"`
 }
 
 // KnowledgePostProcessPayload represents the knowledge post process task payload.

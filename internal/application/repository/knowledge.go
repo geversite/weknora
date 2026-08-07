@@ -104,6 +104,31 @@ func applyKnowledgeListFilter(query *gorm.DB, filter types.KnowledgeListFilter) 
 			filter.TagIDs,
 		)
 	}
+	// M4: folder filter. "__root__" matches root-level files (folder_id = '');
+	// any other value matches that folder directly.
+	if len(filter.FolderIDs) > 0 {
+		var folderIDs []string
+		hasRoot := false
+		for _, fid := range filter.FolderIDs {
+			if fid == types.FolderRootID {
+				hasRoot = true
+			} else {
+				folderIDs = append(folderIDs, fid)
+			}
+		}
+		var orConds []string
+		var args []interface{}
+		if len(folderIDs) > 0 {
+			orConds = append(orConds, "folder_id IN (?)")
+			args = append(args, folderIDs)
+		}
+		if hasRoot {
+			orConds = append(orConds, "(folder_id = '' OR folder_id IS NULL)")
+		}
+		if len(orConds) > 0 {
+			query = query.Where("("+strings.Join(orConds, " OR ")+")", args...)
+		}
+	}
 	if filter.Keyword != "" {
 		// Case-insensitive (LOWER … LIKE LOWER) so keyword search matches
 		// regardless of the stored casing — consistent with the sibling
@@ -250,6 +275,9 @@ func (r *knowledgeRepository) CheckKnowledgeExists(
 			if params.FileType != "" {
 				duplicateQuery = duplicateQuery.Where("LOWER(file_type) = ?", strings.ToLower(params.FileType))
 			}
+			// M4: scope dedup to the target folder so the same file may exist
+			// in different folders without conflict. Empty folder_id = root level.
+			duplicateQuery = scopedByFolder(duplicateQuery, params.FolderID)
 			err := duplicateQuery.First(&knowledge).Error
 			if err != nil {
 				if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -270,6 +298,8 @@ func (r *knowledgeRepository) CheckKnowledgeExists(
 			if params.FileType != "" {
 				duplicateQuery = duplicateQuery.Where("LOWER(file_type) = ?", strings.ToLower(params.FileType))
 			}
+			// M4: scope dedup to the target folder.
+			duplicateQuery = scopedByFolder(duplicateQuery, params.FolderID)
 			err := duplicateQuery.First(&knowledge).Error
 			if err != nil {
 				if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -307,6 +337,18 @@ func (r *knowledgeRepository) CheckKnowledgeExists(
 
 	// No valid parameters, default to not existing
 	return false, nil, nil
+}
+
+// scopedByFolder narrows a file-dedup query to a single folder (M4). An empty
+// folder_id means the root level (folder_id IS NULL OR ”). When folder_id is
+// non-empty, only files assigned to exactly that folder are considered
+// duplicates, so the same content may exist in different folders without
+// conflict.
+func scopedByFolder(query *gorm.DB, folderID string) *gorm.DB {
+	if folderID == "" {
+		return query.Where("(folder_id = '' OR folder_id IS NULL)")
+	}
+	return query.Where("folder_id = ?", folderID)
 }
 
 // AminusB returns the IDs of knowledge in A that have no counterpart in B,
@@ -884,4 +926,109 @@ func (r *knowledgeRepository) ListIDsByTagIDs(
 		Distinct("knowledges.id").
 		Pluck("knowledges.id", &ids).Error
 	return ids, err
+}
+
+// ListKnowledgeIDsByFolderID returns knowledge IDs directly assigned to a
+// single folder. folderID="" matches root-level files (folder_id = ”).
+func (r *knowledgeRepository) ListKnowledgeIDsByFolderID(ctx context.Context, kbID, folderID string) ([]string, error) {
+	var ids []string
+	err := r.db.WithContext(ctx).Table("knowledges").
+		Where("knowledge_base_id = ? AND folder_id = ? AND deleted_at IS NULL", kbID, folderID).
+		Pluck("id", &ids).Error
+	return ids, err
+}
+
+// ListKnowledgeIDsByFolderIDs returns knowledge IDs assigned to any of the
+// given folders (folder_id IN ...).
+func (r *knowledgeRepository) ListKnowledgeIDsByFolderIDs(ctx context.Context, kbID string, folderIDs []string) ([]string, error) {
+	if len(folderIDs) == 0 {
+		return nil, nil
+	}
+	var ids []string
+	err := r.db.WithContext(ctx).Table("knowledges").
+		Where("knowledge_base_id = ? AND folder_id IN ? AND deleted_at IS NULL", kbID, folderIDs).
+		Pluck("id", &ids).Error
+	return ids, err
+}
+
+// ListByFolderIDs returns the full knowledge rows for files in any of the
+// given folders (used by folder summary generation).
+func (r *knowledgeRepository) ListByFolderIDs(ctx context.Context, kbID string, folderIDs []string) ([]*types.Knowledge, error) {
+	if len(folderIDs) == 0 {
+		return nil, nil
+	}
+	var knowledge []*types.Knowledge
+	err := r.db.WithContext(ctx).
+		Where("knowledge_base_id = ? AND folder_id IN ? AND deleted_at IS NULL", kbID, folderIDs).
+		Find(&knowledge).Error
+	return knowledge, err
+}
+
+// UpdateFolderID updates the folder assignment of a knowledge entry.
+// folderID="" moves it back to the root level.
+func (r *knowledgeRepository) UpdateFolderID(ctx context.Context, knowledgeID, folderID string) error {
+	return r.db.WithContext(ctx).Model(&types.Knowledge{}).
+		Where("id = ?", knowledgeID).
+		Update("folder_id", folderID).Error
+}
+
+// ListFolderDuplicates returns files sharing the same file_hash across more
+// than one distinct folder (M4 governance panel).
+func (r *knowledgeRepository) ListFolderDuplicates(ctx context.Context, kbID string) ([]*types.FolderDuplicateInfo, error) {
+	type row struct {
+		FileHash    string
+		FileName    string
+		FolderID    string
+		FolderPath  string
+		KnowledgeID string
+	}
+	var rows []row
+	err := r.db.WithContext(ctx).Table("knowledges").
+		Select("knowledges.file_hash, knowledges.file_name, knowledges.folder_id, knowledges.id AS knowledge_id, knowledge_folders.path AS folder_path").
+		Joins("LEFT JOIN knowledge_folders ON knowledge_folders.id = knowledges.folder_id").
+		Where("knowledges.knowledge_base_id = ? AND knowledges.deleted_at IS NULL AND knowledges.file_hash != ''", kbID).
+		Where("knowledges.file_hash IN (SELECT file_hash FROM knowledges WHERE knowledge_base_id = ? AND deleted_at IS NULL AND file_hash != '' GROUP BY file_hash HAVING COUNT(DISTINCT folder_id) > 1)", kbID).
+		Order("knowledges.file_hash ASC").
+		Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	grouped := make(map[string]*types.FolderDuplicateInfo)
+	var order []string
+	for _, rw := range rows {
+		info, ok := grouped[rw.FileHash]
+		if !ok {
+			info = &types.FolderDuplicateInfo{FileHash: rw.FileHash, FileName: rw.FileName}
+			grouped[rw.FileHash] = info
+			order = append(order, rw.FileHash)
+		}
+		if rw.FolderPath != "" {
+			info.FolderPaths = append(info.FolderPaths, rw.FolderPath)
+		}
+		if rw.KnowledgeID != "" {
+			info.KnowledgeIDs = append(info.KnowledgeIDs, rw.KnowledgeID)
+		}
+	}
+	result := make([]*types.FolderDuplicateInfo, 0, len(order))
+	for _, k := range order {
+		result = append(result, grouped[k])
+	}
+	return result, nil
+}
+
+// LatestFileChangeTime returns the most recent updated_at of files directly
+// assigned to a folder (used to detect stale folder summaries).
+func (r *knowledgeRepository) LatestFileChangeTime(ctx context.Context, kbID, folderID string) (*time.Time, error) {
+	var latest time.Time
+	err := r.db.WithContext(ctx).Table("knowledges").
+		Select("MAX(updated_at)").
+		Where("knowledge_base_id = ? AND folder_id = ? AND deleted_at IS NULL", kbID, folderID).
+		Scan(&latest).Error
+	if err != nil {
+		return nil, err
+	}
+	if latest.IsZero() {
+		return nil, nil
+	}
+	return &latest, nil
 }

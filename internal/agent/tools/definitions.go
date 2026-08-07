@@ -35,6 +35,9 @@ const (
 	// ToolPushFiles pushes knowledge base files as downloadable links (M2).
 	// Not part of DefaultAllowedTools(); must be explicitly enabled.
 	ToolPushFiles = "push_files"
+	// Folder tools (M4-fix2): browse the KB folder tree and read folder summaries.
+	ToolBrowseFolders     = "browse_folders"
+	ToolReadFolderSummary = "read_folder_summary"
 )
 
 // AvailableTool defines a simple tool metadata used by settings APIs.
@@ -71,6 +74,8 @@ func AvailableToolDefinitions() []AvailableTool {
 		{Name: ToolWikiReadIssue, Label: "查看Wiki问题", Description: "查看特定的Wiki页面问题详情"},
 		{Name: ToolWikiUpdateIssue, Label: "更新Wiki问题状态", Description: "更新特定的Wiki页面问题状态"},
 		{Name: ToolPushFiles, Label: "推送文件", Description: "生成知识库文件的下载链接并呈现给用户"},
+		{Name: ToolBrowseFolders, Label: "浏览文件夹", Description: "列出知识库的文件夹树结构"},
+		{Name: ToolReadFolderSummary, Label: "读取文件夹摘要", Description: "读取指定文件夹的LLM摘要"},
 	}
 }
 
@@ -87,5 +92,9 @@ func DefaultAllowedTools() []string {
 		ToolDatabaseQuery,
 		ToolDataAnalysis,
 		ToolDataSchema,
+		// M4-fix2: folder tools. browse_folders degrades gracefully to a notice
+		// for KBs without folder governance, so they are safe to default on.
+		ToolBrowseFolders,
+		ToolReadFolderSummary,
 	}
 }

@@ -20,6 +20,11 @@ type IndexingStrategy struct {
 	// ConflictDetectEnabled enables post-upload content conflict detection
 	// between files within the same KB (M3). Default false; enabled per KB.
 	ConflictDetectEnabled bool `yaml:"conflict_detect_enabled" json:"conflict_detect_enabled"`
+	// FolderGovernanceEnabled enables file-level folder governance (M4):
+	// folder tree, folder summaries, scoped retrieval. Default false; per KB.
+	// It does NOT produce indexing requirements by itself, so it is excluded
+	// from HasAnyIndexing / IsZero / NeedsChunks / NeedsEmbedding.
+	FolderGovernanceEnabled bool `yaml:"folder_governance_enabled" json:"folder_governance_enabled"`
 }
 
 // DefaultIndexingStrategy returns the default strategy matching the legacy behavior:

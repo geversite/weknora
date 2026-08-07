@@ -333,6 +333,12 @@ func (s *chunkService) DeleteChunksByKnowledgeID(ctx context.Context, knowledgeI
 	return nil
 }
 
+// DeleteByFolderAndType deletes folder_summary chunks for a folder (M4).
+// Used to clear old summary chunks before regenerating the folder summary.
+func (s *chunkService) DeleteByFolderAndType(ctx context.Context, folderID string, chunkType types.ChunkType) error {
+	return s.chunkRepository.DeleteByFolderAndType(ctx, folderID, chunkType)
+}
+
 func (s *chunkService) DeleteByKnowledgeList(ctx context.Context, ids []string) error {
 	logger.Info(ctx, "Start deleting all chunks by knowledge IDs")
 	logger.Infof(ctx, "Knowledge IDs: %v", ids)

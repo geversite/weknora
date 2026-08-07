@@ -25,8 +25,15 @@ import (
 func (s *knowledgeService) CreateKnowledgeFromFile(ctx context.Context,
 	kbID string, file *multipart.FileHeader, metadata map[string]string, enableMultimodel *bool, customFileName string, tagIDs []string, channel string,
 	processOverrides *types.KnowledgeProcessOverrides,
+	folderIDs ...string,
 ) (*types.Knowledge, error) {
 	logger.Info(ctx, "Start creating knowledge from file")
+
+	// M4: optional target folder (first variadic arg wins).
+	folderID := ""
+	if len(folderIDs) > 0 {
+		folderID = folderIDs[0]
+	}
 
 	// Use custom filename if provided, otherwise use original filename
 	fileName := file.Filename
@@ -85,6 +92,9 @@ func (s *knowledgeService) CreateKnowledgeFromFile(ctx context.Context,
 		FileType: getFileType(fileName),
 		FileSize: file.Size,
 		FileHash: hash,
+		// M4: scope dedup to the target folder so the same file may exist in
+		// different folders without conflict.
+		FolderID: folderID,
 	})
 	if err != nil {
 		logger.Errorf(ctx, "Failed to check knowledge existence: %v", err)
@@ -149,6 +159,7 @@ func (s *knowledgeService) CreateKnowledgeFromFile(ctx context.Context,
 		UpdatedAt:        time.Now(),
 		EmbeddingModelID: kb.EmbeddingModelID,
 		Metadata:         metadataJSON,
+		FolderID:         folderID,
 	}
 
 	if processOverrides != nil {

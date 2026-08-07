@@ -78,6 +78,9 @@ type ChunkRepository interface {
 	DeleteChunksByKnowledgeID(ctx context.Context, tenantID uint64, knowledgeID string) error
 	// DeleteByKnowledgeList deletes all chunks for a knowledge list
 	DeleteByKnowledgeList(ctx context.Context, tenantID uint64, knowledgeIDs []string) error
+	// DeleteByFolderAndType deletes folder_summary chunks for a folder
+	// (M4). Used to clear old summary chunks before regenerating.
+	DeleteByFolderAndType(ctx context.Context, folderID string, chunkType types.ChunkType) error
 	// ListImageInfoByKnowledgeIDs returns non-empty (knowledge_id, image_info) pairs for image cleanup.
 	ListImageInfoByKnowledgeIDs(ctx context.Context, tenantID uint64, knowledgeIDs []string) ([]ChunkImageInfo, error)
 	// MoveChunksByKnowledgeID updates knowledge_base_id for all chunks of a knowledge item
@@ -155,6 +158,9 @@ type ChunkService interface {
 	DeleteByKnowledgeList(ctx context.Context, ids []string) error
 	// ListChunkByParentID lists chunks by parent id
 	ListChunkByParentID(ctx context.Context, tenantID uint64, parentID string) ([]*types.Chunk, error)
+	// DeleteByFolderAndType deletes folder_summary chunks for a folder
+	// (before regenerating the folder summary).
+	DeleteByFolderAndType(ctx context.Context, folderID string, chunkType types.ChunkType) error
 	// GetRepository gets the chunk repository
 	GetRepository() ChunkRepository
 	// DeleteGeneratedQuestion deletes a single generated question from a chunk by question ID

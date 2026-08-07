@@ -27,6 +27,7 @@ const (
 	spaceDocument
 	spaceDocumentRef // "knowledgeID|title" stored refs; only the ID is durable
 	spaceKnowledgeBase
+	spaceFolder // M4-fix2: folder_id identities from the folder tree
 	spaceWeb
 )
 
@@ -41,6 +42,7 @@ var sourceKeySpaces = map[string]sourceKeySpace{
 	"source_refs":    spaceDocumentRef,
 	"knowledge_base": spaceKnowledgeBase, "knowledge_base_id": spaceKnowledgeBase,
 	"knowledge_base_ids": spaceKnowledgeBase, "kb_id": spaceKnowledgeBase, "kb_ids": spaceKnowledgeBase,
+	"folder_id": spaceFolder, "folder_ids": spaceFolder, // M4-fix2
 	"url": spaceWeb, "urls": spaceWeb,
 }
 
@@ -148,6 +150,18 @@ var toolHandlePolicies = map[string]toolHandlePolicy{
 	// "url"/"knowledge_id" with unrelated semantics.
 	"read_skill":           {},
 	"execute_skill_script": {},
+	// M4-fix2 folder tools. browse_folders accepts a KB id and its output is a
+	// folder outline (text) — compact source IDs but never render structure.
+	"browse_folders": {
+		sourceIDKeys: map[string]struct{}{"knowledge_base_id": {}},
+		sourceOutput: true,
+	},
+	// read_folder_summary takes a folder_id (compacted) and returns free-text
+	// summary output; mine it for no source keys beyond the folder ID.
+	"read_folder_summary": {
+		sourceIDKeys: map[string]struct{}{"folder_id": {}},
+		sourceOutput: true,
+	},
 }
 
 // HasToolPolicy reports whether a tool has an explicit model-handle policy.

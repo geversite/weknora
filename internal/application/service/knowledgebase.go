@@ -50,6 +50,8 @@ type knowledgeBaseService struct {
 	audit           interfaces.AuditLogService
 	referenceRepo   interfaces.ReferenceEventRepository    // Repository for citation event cleanup
 	conflictRepo    interfaces.KnowledgeConflictRepository // Repository for M3 conflict cleanup
+	folderRepo      interfaces.KnowledgeFolderRepository   // M4: file-level folder cleanup
+	summaryRepo     interfaces.FolderSummaryRepository     // M4: folder summary cleanup
 }
 
 // NewKnowledgeBaseService creates a new knowledge base service
@@ -74,6 +76,8 @@ func NewKnowledgeBaseService(repo interfaces.KnowledgeBaseRepository,
 	audit interfaces.AuditLogService,
 	referenceRepo interfaces.ReferenceEventRepository,
 	conflictRepo interfaces.KnowledgeConflictRepository,
+	folderRepo interfaces.KnowledgeFolderRepository,
+	summaryRepo interfaces.FolderSummaryRepository,
 ) interfaces.KnowledgeBaseService {
 	return &knowledgeBaseService{
 		repo:            repo,
@@ -97,6 +101,8 @@ func NewKnowledgeBaseService(repo interfaces.KnowledgeBaseRepository,
 		syncLogRepo:     syncLogRepo,
 		dsScheduler:     dsScheduler,
 		audit:           audit,
+		folderRepo:      folderRepo,
+		summaryRepo:     summaryRepo,
 	}
 }
 
@@ -977,6 +983,18 @@ func (s *knowledgeBaseService) ProcessKBDelete(ctx context.Context, t *asynq.Tas
 	if s.conflictRepo != nil {
 		if err := s.conflictRepo.DeleteByKB(ctx, kbID); err != nil {
 			logger.Warnf(ctx, "Failed to delete conflicts for KB %s: %v", kbID, err)
+		}
+	}
+
+	// M4: delete folder summaries and the folder tree for this KB.
+	if s.summaryRepo != nil {
+		if err := s.summaryRepo.DeleteByKB(ctx, kbID); err != nil {
+			logger.Warnf(ctx, "Failed to delete folder summaries for KB %s: %v", kbID, err)
+		}
+	}
+	if s.folderRepo != nil {
+		if err := s.folderRepo.DeleteByKB(ctx, kbID); err != nil {
+			logger.Warnf(ctx, "Failed to delete folders for KB %s: %v", kbID, err)
 		}
 	}
 

@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
+	"slices"
+	"sort"
 	"strconv"
 
 	"github.com/Tencent/WeKnora/internal/agent"
@@ -115,6 +117,8 @@ type agentService struct {
 	tenantService         interfaces.TenantService
 	storageResolver       interfaces.StorageBackendResolver
 	toolApprovalGate      approval.MCPApproval
+	folderService         interfaces.KnowledgeFolderService // M4-fix2: folder tree awareness
+	folderSummaryService  interfaces.FolderSummaryService   // M4-fix2: read_folder_summary tool
 }
 
 // NewAgentService creates a new agent service
@@ -136,6 +140,8 @@ func NewAgentService(
 	tenantService interfaces.TenantService,
 	storageResolver interfaces.StorageBackendResolver,
 	toolApprovalGate approval.MCPApproval,
+	folderService interfaces.KnowledgeFolderService,
+	folderSummaryService interfaces.FolderSummaryService,
 ) interfaces.AgentService {
 	return &agentService{
 		cfg:                   cfg,
@@ -155,6 +161,8 @@ func NewAgentService(
 		tenantService:         tenantService,
 		storageResolver:       storageResolver,
 		toolApprovalGate:      toolApprovalGate,
+		folderService:         folderService,
+		folderSummaryService:  folderSummaryService,
 	}
 }
 
@@ -511,6 +519,9 @@ func (s *agentService) registerTools(
 			tools.ToolWikiDeletePage:    true,
 			tools.ToolWikiReadIssue:     true,
 			tools.ToolWikiUpdateIssue:   true,
+			// M4-fix2: folder tools also require a KB in scope.
+			tools.ToolBrowseFolders:     true,
+			tools.ToolReadFolderSummary: true,
 		}
 
 		// If no knowledge and no web search, also disable todo_write (not useful for simple chat)
@@ -525,6 +536,24 @@ func (s *agentService) registerTools(
 		}
 		allowedTools = filteredTools
 		logger.Infof(ctx, "Pure Agent Mode: Knowledge base tools filtered out, remaining: %v", allowedTools)
+	}
+
+	// M4-fix2: folder tools are always available to knowledge-scoped agents.
+	// They are harmless for KBs without folder governance (they degrade to a
+	// notice), and they pair with the auto-injected <folders> context block.
+	// Enforce their presence even for agents whose saved AllowedTools predate
+	// the folder feature, so a KB with folders always exposes them.
+	if hasKnowledge && s.folderService != nil {
+		added := false
+		for _, t := range []string{tools.ToolBrowseFolders, tools.ToolReadFolderSummary} {
+			if !slices.Contains(allowedTools, t) {
+				allowedTools = append(allowedTools, t)
+				added = true
+			}
+		}
+		if added {
+			logger.Infof(ctx, "M4-fix2: enforced folder tools in allowedTools: %v", allowedTools)
+		}
 	}
 
 	// If web search is enabled, add web_search to allowedTools
@@ -613,6 +642,7 @@ func (s *agentService) registerTools(
 				s.knowledgeBaseService,
 				s.knowledgeService,
 				s.chunkService,
+				s.folderService, // M4-fix2: folder-scoped search
 				config.SearchTargets,
 				rerankModel,
 				chatModel,
@@ -635,6 +665,21 @@ func (s *agentService) registerTools(
 			}
 			tenantID := firstSearchTargetTenant(config.SearchTargets)
 			toolToRegister = tools.NewPushFilesTool(s.knowledgeService, s.fileService, config.SearchTargets, tenantID)
+
+		// M4-fix2: folder awareness tools. Always registered; they degrade
+		// gracefully for KBs without folder governance.
+		case tools.ToolBrowseFolders:
+			if s.folderService == nil {
+				logger.Warnf(ctx, "browse_folders tool requires a folder service, skipping registration")
+				continue
+			}
+			toolToRegister = tools.NewBrowseFoldersTool(s.folderService, s.knowledgeBaseService)
+		case tools.ToolReadFolderSummary:
+			if s.folderService == nil || s.folderSummaryService == nil {
+				logger.Warnf(ctx, "read_folder_summary tool requires folder + summary services, skipping registration")
+				continue
+			}
+			toolToRegister = tools.NewReadFolderSummaryTool(s.folderService, s.folderSummaryService)
 		case tools.ToolDatabaseQuery:
 			toolToRegister = tools.NewDatabaseQueryTool(s.db, config.SearchTargets)
 		case tools.ToolWebSearch:
@@ -842,6 +887,16 @@ func (s *agentService) getKnowledgeBaseInfos(ctx context.Context, kbIDs []string
 		if kbType == "" {
 			kbType = "document" // Default type
 		}
+
+		// M4-fix2: folder tree awareness. Only queried when the KB has folder
+		// governance enabled; otherwise Folders stays empty and <folders> is not
+		// rendered in the system prompt. Best-effort — a tree lookup failure must
+		// not block prompt construction.
+		var folders []agent.FolderBriefInfo
+		if kb.IsFolderGovernanceEnabled() && s.folderService != nil {
+			folders = s.buildFolderBriefInfos(ctx, kb)
+		}
+
 		kbInfos = append(kbInfos, &agent.KnowledgeBaseInfo{
 			ID:           kb.ID,
 			Name:         kb.Name,
@@ -850,10 +905,62 @@ func (s *agentService) getKnowledgeBaseInfos(ctx context.Context, kbIDs []string
 			DocCount:     docCount,
 			Capabilities: kbRetrievalCapabilities(kb),
 			RecentDocs:   recentDocs,
+			Folders:      folders,
 		})
 	}
 
 	return kbInfos, nil
+}
+
+// folderBriefMaxDepth and folderBriefMaxCount bound the number of folder nodes
+// injected into the system prompt so a large KB (100+ folders) stays
+// token-efficient. Drops empty folders and any node deeper than 3 levels; the
+// agent can call browse_folders for the full, unfiltered tree.
+const (
+	folderBriefMaxDepth = 3
+	folderBriefMaxCount = 50
+)
+
+// buildFolderBriefInfos renders the folder tree of a KB as a compact, bounded
+// slice of FolderBriefInfo for the system prompt.
+func (s *agentService) buildFolderBriefInfos(ctx context.Context, kb *types.KnowledgeBase) []agent.FolderBriefInfo {
+	tree, err := s.folderService.ListTree(ctx, kb.ID)
+	if err != nil {
+		logger.Warnf(ctx, "M4-fix2: failed to list folder tree for KB %s: %v", kb.ID, err)
+		return nil
+	}
+	if tree == nil || len(tree.Nodes) == 0 {
+		return nil
+	}
+	// Collect non-empty, shallow-enough nodes, then sort by file_count desc so
+	// the most content-bearing folders are the most likely to make the cut.
+	collector := func(nodes []types.KnowledgeFolderNode) []agent.FolderBriefInfo {
+		out := make([]agent.FolderBriefInfo, 0, len(nodes))
+		for _, n := range nodes {
+			if n.Depth > folderBriefMaxDepth {
+				continue
+			}
+			// Empty folders that have no children are noise; skip them.
+			if n.FileCount == 0 && !n.HasChildren {
+				continue
+			}
+			out = append(out, agent.FolderBriefInfo{
+				ID:            n.ID,
+				Name:          n.Name,
+				Path:          n.Path,
+				Depth:         n.Depth,
+				FileCount:     n.FileCount,
+				SummaryStatus: n.SummaryStatus,
+			})
+		}
+		return out
+	}
+	infos := collector(tree.Nodes)
+	if len(infos) > folderBriefMaxCount {
+		sort.SliceStable(infos, func(i, j int) bool { return infos[i].FileCount > infos[j].FileCount })
+		infos = infos[:folderBriefMaxCount]
+	}
+	return infos
 }
 
 // kbRetrievalCapabilities reports which retrieval surfaces a KB exposes.

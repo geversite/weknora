@@ -25,6 +25,8 @@ type PluginSearch struct {
 	sessionService        interfaces.SessionService
 	webSearchStateService interfaces.WebSearchStateService
 	webSearchProviderRepo interfaces.WebSearchProviderRepository
+	folderRepo            interfaces.KnowledgeFolderRepository
+	repo                  interfaces.KnowledgeRepository
 }
 
 func NewPluginSearch(eventManager *EventManager,
@@ -37,6 +39,8 @@ func NewPluginSearch(eventManager *EventManager,
 	sessionService interfaces.SessionService,
 	webSearchStateService interfaces.WebSearchStateService,
 	webSearchProviderRepo interfaces.WebSearchProviderRepository,
+	folderRepo interfaces.KnowledgeFolderRepository,
+	repo interfaces.KnowledgeRepository,
 ) *PluginSearch {
 	res := &PluginSearch{
 		knowledgeBaseService:  knowledgeBaseService,
@@ -48,6 +52,8 @@ func NewPluginSearch(eventManager *EventManager,
 		sessionService:        sessionService,
 		webSearchStateService: webSearchStateService,
 		webSearchProviderRepo: webSearchProviderRepo,
+		folderRepo:            folderRepo,
+		repo:                  repo,
 	}
 	eventManager.Register(res)
 	return res
@@ -390,7 +396,7 @@ func (p *PluginSearch) searchByTargets(
 			var fullKBIDs []string
 			var knowledgeTargets []*types.SearchTarget
 			for _, t := range targets {
-				if t.Type == types.SearchTargetTypeKnowledgeBase && len(t.TagIDs) == 0 {
+				if t.Type == types.SearchTargetTypeKnowledgeBase && len(t.TagIDs) == 0 && len(t.FolderIDs) == 0 {
 					fullKBIDs = append(fullKBIDs, t.KnowledgeBaseID)
 				} else {
 					knowledgeTargets = append(knowledgeTargets, t)
@@ -461,6 +467,80 @@ func (p *PluginSearch) searchByTargets(
 }
 
 // searchSingleTarget performs hybrid retrieval inside one constrained target.
+// resolveFolderScope converts a target's FolderIDs into KnowledgeIDs.
+// If the target has both FolderIDs and KnowledgeIDs, the folder-resolved IDs are
+// merged (union) with the explicitly-selected KnowledgeIDs. If only FolderIDs
+// are present, returns all knowledge in the folder subtree.
+func (p *PluginSearch) resolveFolderScope(ctx context.Context, t *types.SearchTarget) ([]string, error) {
+	if len(t.FolderIDs) == 0 {
+		return nil, nil
+	}
+	if p.folderRepo == nil || p.repo == nil {
+		// governance not wired; treat as no-op scope (degrade to full KB)
+		return nil, nil
+	}
+	tenantID := types.MustTenantIDFromContext(ctx)
+
+	var folderIDs []string
+	for _, fid := range t.FolderIDs {
+		if fid == types.FolderRootID {
+			continue // root handled separately
+		}
+		folderIDs = append(folderIDs, fid)
+	}
+
+	var resolved []string
+	seen := make(map[string]bool)
+	if len(folderIDs) > 0 {
+		subtree, err := p.folderRepo.GetSubtree(ctx, tenantID, t.KnowledgeBaseID, folderIDs)
+		if err != nil {
+			return nil, err
+		}
+		var allFolderIDs []string
+		for _, f := range subtree {
+			allFolderIDs = append(allFolderIDs, f.ID)
+		}
+		ids, err := p.repo.ListKnowledgeIDsByFolderIDs(ctx, t.KnowledgeBaseID, allFolderIDs)
+		if err != nil {
+			return nil, err
+		}
+		for _, id := range ids {
+			if !seen[id] {
+				seen[id] = true
+				resolved = append(resolved, id)
+			}
+		}
+	}
+	// root-level files
+	for _, fid := range t.FolderIDs {
+		if fid != types.FolderRootID {
+			continue
+		}
+		ids, err := p.repo.ListKnowledgeIDsByFolderID(ctx, t.KnowledgeBaseID, "")
+		if err != nil {
+			return nil, err
+		}
+		for _, id := range ids {
+			if !seen[id] {
+				seen[id] = true
+				resolved = append(resolved, id)
+			}
+		}
+	}
+
+	// merge with explicitly-selected knowledge (union semantics): folder
+	// scoping adds its files to any explicitly-selected files, per design.
+	if len(t.KnowledgeIDs) > 0 {
+		for _, id := range t.KnowledgeIDs {
+			if !seen[id] {
+				seen[id] = true
+				resolved = append(resolved, id)
+			}
+		}
+	}
+	return resolved, nil
+}
+
 func (p *PluginSearch) searchSingleTarget(
 	ctx context.Context,
 	chatManage *types.ChatManage,
@@ -470,8 +550,28 @@ func (p *PluginSearch) searchSingleTarget(
 	mu *sync.Mutex,
 	results *[]*types.SearchResult,
 ) {
-	if t.Type == types.SearchTargetTypeKnowledge && len(t.KnowledgeIDs) == 0 {
+	if t.Type == types.SearchTargetTypeKnowledge && len(t.KnowledgeIDs) == 0 && len(t.FolderIDs) == 0 {
 		return
+	}
+
+	// M4: resolve FolderIDs → KnowledgeIDs (inclusive of subfolders) so the
+	// retrieval is scoped to the folder's files. When both KnowledgeIDs and
+	// FolderIDs are present we take their intersection; otherwise folder
+	// resolution becomes the sole filter. Thresholds are disabled because an
+	// explicit folder scope must not be wiped out by recall thresholds.
+	knowledgeIDs, err := p.resolveFolderScope(ctx, t)
+	if err != nil {
+		pipelineWarn(ctx, "Search", "folder_scope_resolve_error", map[string]interface{}{
+			"kb_id":       t.KnowledgeBaseID,
+			"folder_ids":  t.FolderIDs,
+			"target_type": t.Type,
+			"error":       err.Error(),
+		})
+		knowledgeIDs = nil
+	}
+	if len(knowledgeIDs) > 0 {
+		t.KnowledgeIDs = knowledgeIDs
+		t.DisableRecallThresholds = true
 	}
 
 	vectorThreshold, keywordThreshold := t.RecallThresholds(
@@ -495,7 +595,7 @@ func (p *PluginSearch) searchSingleTarget(
 		ScopeTagIDs:           t.ScopeTagIDs,
 		SkipContextEnrichment: true,
 	}
-	if t.Type == types.SearchTargetTypeKnowledge {
+	if t.Type == types.SearchTargetTypeKnowledge || len(t.FolderIDs) > 0 {
 		params.KnowledgeIDs = t.KnowledgeIDs
 	}
 	res, err := p.knowledgeBaseService.HybridSearch(ctx, t.KnowledgeBaseID, params)

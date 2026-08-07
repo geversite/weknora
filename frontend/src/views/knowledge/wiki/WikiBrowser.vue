@@ -210,7 +210,16 @@
               <span class="wiki-nav-text">{{ $t('knowledgeEditor.wikiBrowser.indexTitle') }}</span>
             </div>
 
-            <div class="wiki-sidebar-divider" v-if="indexAvailable"></div>
+            <!-- M4-fix1: 文件夹治理系统页面入口 -->
+            <div v-if="props.folderGovernanceEnabled"
+              :class="['wiki-nav-item', { active: activeSystemView === 'governance' }]" @click="switchToGovernanceView">
+              <t-icon name="folder" class="wiki-nav-icon" />
+              <span class="wiki-nav-text">{{ $t('knowledge.folderGovernance') }}</span>
+              <t-badge v-if="governanceIssueCount > 0" :count="governanceIssueCount" size="small" />
+            </div>
+
+            <div class="wiki-sidebar-divider"
+              v-if="indexAvailable || props.folderGovernanceEnabled"></div>
 
             <!-- Tab bar + tree share one horizontal inset so the "new folder"
                  action lines up with the folder rows below. -->
@@ -614,6 +623,34 @@
               </div>
             </template>
 
+            <!-- M4-fix1: 文件夹治理系统视图 -->
+            <template v-else-if="activeSystemView === 'governance'">
+              <div class="wiki-reader-header">
+                <h2 class="wiki-reader-title">{{ $t('knowledge.folderGovernance') }}</h2>
+                <div class="wiki-reader-meta">
+                  <t-button size="small" variant="outline" :loading="governanceLoading" @click="loadGovernance">
+                    <template #icon><t-icon name="refresh" /></template>
+                    {{ $t('common.refresh') }}
+                  </t-button>
+                </div>
+              </div>
+              <div v-if="governanceLoading && !governanceMarkdown" class="wiki-reader-empty">
+                <p class="wiki-empty-title">{{ $t('knowledgeEditor.wikiBrowser.loading') }}</p>
+              </div>
+              <template v-else-if="governanceMarkdown">
+                <div class="wiki-reader-body" v-html="renderedGovernanceMarkdown"></div>
+                <div v-if="props.canEdit" class="governance-summary-actions">
+                  <t-button size="small" variant="outline" :loading="batchRefreshing" @click="refreshAllStaleSummaries">
+                    <template #icon><t-icon name="refresh" /></template>
+                    {{ $t('knowledge.refreshStaleSummaries') }}
+                  </t-button>
+                </div>
+              </template>
+              <div v-else-if="!governanceLoading" class="wiki-reader-empty">
+                <p class="wiki-empty-title">{{ $t('knowledge.governanceEmpty') }}</p>
+              </div>
+            </template>
+
             <!-- No page selected -->
             <div v-else class="wiki-reader-empty">
               <div class="wiki-empty-icon">
@@ -779,6 +816,11 @@ import {
 } from './wikiDirectoryState'
 import { getKnowledgeDetails } from '@/api/knowledge-base'
 import { createSessions } from '@/api/chat'
+import {
+  getGovernanceReport,
+  refreshFolderSummary,
+  type GovernanceReport,
+} from '@/api/knowledge-folder'
 import ChatView from '@/views/chat/index.vue'
 import {
   listWikiPages,
@@ -792,6 +834,7 @@ import {
   deleteWikiPage,
   getWikiPage,
   getWikiIndex,
+  getWikiGovernance,
   getWikiGraph,
   getWikiStats,
   searchWikiPages,
@@ -821,6 +864,8 @@ const props = defineProps<{
   // 对应后端 g.OwnedWikiKBOrAdmin() 守卫（KB creator OR Admin+ OR
   // org-share editor）。父组件没传时按 false 兜底，避免漏 gate。
   canEdit?: boolean
+  // M4-fix1: 文件夹治理启用时，在 wiki 侧边栏展示"治理"入口
+  folderGovernanceEnabled?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -916,6 +961,13 @@ const touchedDirectories = ref<Set<string>>(new Set())
 const indexMarkdown = ref('')
 const indexLoading = ref(false)
 const indexAvailable = ref(false)
+// M4-fix1: 文件夹治理系统视图状态
+const governanceMarkdown = ref('')
+const governanceLoading = ref(false)
+const governanceIssueCount = ref(0)
+const batchRefreshing = ref(false)
+// 结构化治理报告（用于批量"刷新过期摘要"），与 wiki 系统页面内容同源
+const governanceReport = ref<GovernanceReport | null>(null)
 // Per-section pagination cursor. Empty string = not yet loaded; empty
 // cursor AFTER a load = that section is exhausted. `indexSectionIdx`
 // tracks which section in INDEX_SECTION_ORDER is "next to load" — we
@@ -939,7 +991,7 @@ const INDEX_SECTION_ORDER = [
 // activeSystemView lets the reader toggle between a regular wiki page and the
 // virtual index overview. Entering the index clears the selected page, and
 // picking a page clears the system view flag.
-const activeSystemView = ref<'' | 'index'>('')
+const activeSystemView = ref<'' | 'index' | 'governance'>('')
 
 // When the user types into the search box we leave pagination mode and
 // show a flat result list instead. Bucketed state is preserved behind
@@ -1114,7 +1166,7 @@ const navHistory = ref<WikiPage[]>([])
 // navHistory rather than widening its element type — navHistory is
 // consumed everywhere as `WikiPage[]` and that contract stays cleaner
 // if the system-view sentinel lives in its own ref.
-const navFromSystemView = ref<'' | 'index'>('')
+const navFromSystemView = ref<'' | 'index' | 'governance'>('')
 
 // typeOrder drives the order of groups in the sidebar. Keep in sync
 // with WIKI_PAGE_TYPES on the backend; unknown types fall through to
@@ -1970,6 +2022,9 @@ const backLabel = computed(() => {
   if (navFromSystemView.value === 'index') {
     return t('knowledgeEditor.wikiBrowser.indexTitle')
   }
+  if (navFromSystemView.value === 'governance') {
+    return t('knowledge.folderGovernance')
+  }
   return ''
 })
 
@@ -1978,6 +2033,12 @@ const backLabel = computed(() => {
 const renderedIndexMarkdown = computed(() => {
   if (!indexMarkdown.value) return ''
   return renderMarkdown(indexMarkdown.value)
+})
+
+// Rendered markdown for the governance system view (M4-fix1).
+const renderedGovernanceMarkdown = computed(() => {
+  if (!governanceMarkdown.value) return ''
+  return renderMarkdown(governanceMarkdown.value)
 })
 
 // True while another section or page is available to load. Starts true
@@ -2601,6 +2662,72 @@ async function openIndexView() {
   // Observer is mounted/unmounted from a watch on activeSystemView
   // + indexSentinelRef below, so nothing else to do here — entering
   // the view is a render-time concern.
+}
+
+// loadGovernance fetches the folder governance report as a wiki system
+// page (markdown) plus the structured report used by bulk actions.
+async function loadGovernance() {
+  if (governanceLoading.value && !governanceMarkdown.value) return
+  governanceLoading.value = true
+  try {
+    const govRes = await getWikiGovernance(props.knowledgeBaseId)
+    const body: any = (govRes as any).data || (govRes as any)
+    const content: string = body?.content || ''
+    if (content) {
+      governanceMarkdown.value = content
+    }
+    // 结构化报告：用于侧边栏 issue badge + 批量刷新过期摘要
+    try {
+      const reportRes = await getGovernanceReport(props.knowledgeBaseId)
+      const report = (reportRes as any).data || (reportRes as any)
+      governanceReport.value = report
+      const staleCount = report?.stale_summaries?.length ?? 0
+      const emptyCount = report?.empty_folders?.length ?? 0
+      const imbalancedCount = report?.imbalanced_folders?.length ?? 0
+      const dupCount = report?.duplicate_files?.length ?? 0
+      const deepCount = report?.deep_folders?.length ?? 0
+      governanceIssueCount.value = staleCount + emptyCount + imbalancedCount + dupCount + deepCount
+    } catch (e) {
+      console.error('Failed to load governance report:', e)
+    }
+  } catch (e) {
+    console.error('Failed to load wiki governance:', e)
+  } finally {
+    governanceLoading.value = false
+  }
+}
+
+// switchToGovernanceView switches the reader into the governance system view.
+async function switchToGovernanceView() {
+  selectedPage.value = null
+  activeSystemView.value = 'governance'
+  if (!governanceMarkdown.value) {
+    await loadGovernance()
+  }
+}
+
+// refreshAllStaleSummaries triggers a regeneration for every folder whose
+// summary is stale (from the structured report).
+async function refreshAllStaleSummaries() {
+  const stale = governanceReport.value?.stale_summaries || []
+  if (stale.length === 0) {
+    MessagePlugin.info(t('knowledge.noStaleSummaries'))
+    return
+  }
+  batchRefreshing.value = true
+  try {
+    for (const item of stale) {
+      try {
+        await refreshFolderSummary(props.knowledgeBaseId, item.folder_id)
+      } catch (e) {
+        console.error('Failed to refresh summary for folder', item.folder_id, e)
+      }
+    }
+    MessagePlugin.success(t('knowledge.refreshStaleSummariesSuccess'))
+    await loadGovernance()
+  } finally {
+    batchRefreshing.value = false
+  }
 }
 
 function appendIndexDirectoryLines(items: WikiIndexEntryDTO[]): string {
@@ -3350,7 +3477,7 @@ const GROW_FRONTIER_CONCURRENCY = 6
 // interesting neighborhood"). We keep them visible and individually
 // expandable (double-click / shift-click / ⊕ all still work), but they
 // don't participate in batch expansion.
-const GRAPH_SYSTEM_PAGE_TYPES = new Set(['index'])
+const GRAPH_SYSTEM_PAGE_TYPES = new Set(['index', 'governance'])
 
 function isFrontierCandidate(
   node: { slug: string; page_type: string; link_count: number },
@@ -3519,6 +3646,7 @@ function goBack() {
     navFromSystemView.value = ''
     selectedPage.value = null
     if (view === 'index') openIndexView()
+    if (view === 'governance') switchToGovernanceView()
   }
 }
 

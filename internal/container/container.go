@@ -174,6 +174,8 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(repository.NewWikiPageRepository))
 	must(container.Provide(repository.NewTaskPendingOpsRepository))
 	must(container.Provide(repository.NewTaskDeadLetterRepository))
+	must(container.Provide(repository.NewKnowledgeFolderRepository))
+	must(container.Provide(repository.NewFolderSummaryRepository))
 
 	// MCP manager for managing MCP client connections
 	logger.Debugf(ctx, "[Container] Registering MCP manager...")
@@ -222,6 +224,11 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(service.NewWikiIngestService, dig.Name("wikiIngest")))
 	must(container.Provide(service.NewWikiLintService))
 	must(container.Provide(service.NewEmbedChannelService))
+
+	// M4: folder governance services (folder tree + folder summaries)
+	must(container.Provide(service.NewFolderSummaryService,
+		dig.As(new(interfaces.FolderSummaryService), new(interfaces.FolderSummaryTaskService))))
+	must(container.Provide(service.NewKnowledgeFolderService, dig.As(new(interfaces.KnowledgeFolderService))))
 
 	// Web search service (needed by AgentService)
 	logger.Debugf(ctx, "[Container] Registering web search registry and providers...")
@@ -379,6 +386,7 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	// Wiki page handler
 	must(container.Provide(handler.NewWikiPageHandler))
 	must(container.Provide(handler.NewKnowledgeConflictHandler))
+	must(container.Provide(handler.NewKnowledgeFolderHandler))
 	// IM integration
 	logger.Debugf(ctx, "[Container] Registering IM integration...")
 	must(container.Provide(imPkg.NewService))

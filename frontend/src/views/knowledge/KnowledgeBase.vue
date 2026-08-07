@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch, reactive, computed, nextTick } from "vue";
-import { MessagePlugin } from "tdesign-vue-next";
+import { MessagePlugin, DialogPlugin } from "tdesign-vue-next";
 import DocContent from "@/components/doc-content.vue";
 import useKnowledgeBase from '@/hooks/useKnowledgeBase';
 import { useRoute, useRouter } from 'vue-router';
@@ -42,6 +42,8 @@ import DocumentListView from './components/DocumentListView.vue';
 import DocumentCardView from './components/DocumentCardView.vue';
 import DocumentBatchBar from './components/DocumentBatchBar.vue';
 import KbUploadSourceDropdown from './components/KbUploadSourceDropdown.vue';
+import FolderView, { type FolderStructureItem } from './components/FolderView.vue';
+import { createFolder } from '@/api/knowledge-folder';
 import TagEditDialog from './components/TagEditDialog.vue';
 import BatchTagDialog from './components/BatchTagDialog.vue';
 import KbTagManageDrawer from './components/KbTagManageDrawer.vue';
@@ -68,6 +70,7 @@ const kbLoading = ref(false);
 const docListLoading = ref(true);
 const isFAQ = computed(() => (kbInfo.value?.type || '') === 'faq');
 const isWiki = computed(() => !!kbInfo.value?.indexing_strategy?.wiki_enabled);
+const folderGovernanceEnabled = computed(() => !!kbInfo.value?.indexing_strategy?.folder_governance_enabled);
 const validTabs = ['documents', 'wiki', 'graph'] as const
 type KbTab = typeof validTabs[number]
 const initTab = validTabs.includes(route.query.tab as any) ? (route.query.tab as KbTab) : 'documents'
@@ -403,16 +406,27 @@ const moveSubmitting = ref(false);
 let movePollTimer: ReturnType<typeof setInterval> | null = null;
 
 // View mode (grid / list) — persisted per browser
-type DocViewMode = 'grid' | 'list';
+type DocViewMode = 'grid' | 'list' | 'folder';
 const VIEW_MODE_KEY = 'weknora.kb.docs.viewMode';
 const initViewMode = (): DocViewMode => {
   try {
-    return localStorage.getItem(VIEW_MODE_KEY) === 'list' ? 'list' : 'grid';
+    const v = localStorage.getItem(VIEW_MODE_KEY);
+    if (v === 'list' || v === 'folder') return v;
+    return 'grid';
   } catch { return 'grid'; }
 };
 const viewMode = ref<DocViewMode>(initViewMode());
 watch(viewMode, (v) => {
   try { localStorage.setItem(VIEW_MODE_KEY, v); } catch { /* ignore */ }
+});
+
+// M4-fix1: 文件夹视图引用 + 当前文件夹 ID（操作入口统一到右上角下拉时感知当前路径）
+const folderViewRef = ref<InstanceType<typeof FolderView> | null>(null);
+const currentFolderId = computed(() => {
+  if (viewMode.value === 'folder') {
+    return folderViewRef.value?.currentFolderId ?? '';
+  }
+  return '';
 });
 
 // Multi-select state — shared between grid and list views.
@@ -1443,7 +1457,7 @@ const showUploadResultMessages = (
 
 const executeUploadBatch = async (
   files: File[],
-  options: { processConfig?: KnowledgeProcessOverrides; tagIds?: string[] } = {},
+  options: { processConfig?: KnowledgeProcessOverrides; tagIds?: string[]; folderId?: string } = {},
 ) => {
   const targetKbId = kbId.value;
   if (!targetKbId || files.length === 0) {
@@ -1468,7 +1482,11 @@ const executeUploadBatch = async (
         tag_ids?: string[]
         fileName?: string
         process_config?: KnowledgeProcessOverrides
+        folder_id?: string
       } = { file, tag_ids: tagIdsToUpload };
+      if (options.folderId !== undefined && options.folderId !== '') {
+        uploadData.folder_id = options.folderId;
+      }
 
       const fileName = getFolderUploadFileName(file);
       if (fileName) uploadData.fileName = fileName;
@@ -1562,7 +1580,72 @@ const executeUrlImport = async (
   }
 };
 
-const handleUploadConfirmResult = async (result: UploadConfirmResult) => {
+// M4: 文件夹视图内上传文件（携带目标 folder_id）
+// M4-fix1：文件夹视图下"上传文件夹"——保留文件夹结构，在当前文件夹下重建子文件夹树
+const handleUploadSourceFolderStructure = async (items: FolderStructureItem[]) => {
+  if (!ensureDocumentKbReady()) return;
+  if (items.length === 0) return;
+
+  const parentId = currentFolderId.value;
+  const kb = kbId.value;
+
+  // 1. 解析相对路径，提取所有子文件夹层级（最后一段是文件名，跳过）
+  const folderPaths = new Set<string>();
+  for (const item of items) {
+    const parts = item.relativePath.split('/');
+    if (parts.length > 1) {
+      for (let i = 1; i < parts.length; i++) {
+        folderPaths.add(parts.slice(0, i).join('/'));
+      }
+    }
+  }
+
+  // 2. 在当前文件夹下创建子文件夹树（先父后子，串行）
+  const folderIdByPath = new Map<string, string>();
+  folderIdByPath.set('', parentId);
+  const sortedPaths = Array.from(folderPaths).sort((a, b) =>
+    a.split('/').length - b.split('/').length,
+  );
+  try {
+    for (const path of sortedPaths) {
+      const parts = path.split('/');
+      const name = parts[parts.length - 1];
+      const parentPath = parts.slice(0, -1).join('/');
+      const parentFolderId = folderIdByPath.get(parentPath) || parentId;
+      const res = await createFolder(kb, { parent_id: parentFolderId, name });
+      folderIdByPath.set(path, res.id);
+    }
+  } catch (e: any) {
+    MessagePlugin.error(e?.message || t('knowledge.createFolderFailed'));
+    return;
+  }
+
+  // 3. 将文件上传到对应子文件夹（控制并发，避免压垮后端）。
+  //    重建一个不含 webkitRelativePath 的 File，避免 executeUploadBatch 里的
+  //    getFolderUploadFileName 重复拼接子目录路径。
+  const tasks: Array<{ file: File; folderId: string }> = [];
+  for (const item of items) {
+    const parts = item.relativePath.split('/');
+    const fileName = parts[parts.length - 1];
+    const folderPath = parts.slice(0, -1).join('/');
+    const targetFolderId = folderIdByPath.get(folderPath) || parentId;
+    const flatFile = new File([item.file], fileName, { type: item.file.type });
+    tasks.push({ file: flatFile, folderId: targetFolderId });
+  }
+  // 分批并发上传
+  const BATCH_SIZE = 5;
+  for (let i = 0; i < tasks.length; i += BATCH_SIZE) {
+    const batch = tasks.slice(i, i + BATCH_SIZE);
+    await Promise.all(
+      batch.map((task) => executeUploadBatch([task.file], { folderId: task.folderId })),
+    );
+  }
+
+  // 4. 刷新文件夹视图
+  folderViewRef.value?.refresh();
+};
+
+const handleUploadConfirmResult = async (result: UploadConfirmResult, opts?: { folderId?: string }) => {
   if (result.mode === 'manual') {
     return;
   }
@@ -1580,7 +1663,8 @@ const handleUploadConfirmResult = async (result: UploadConfirmResult) => {
     if (hasFolderPaths) {
       MessagePlugin.info(t('knowledgeBase.uploadingFolder', { total: files.length }));
     }
-    await executeUploadBatch(files, { processConfig, tagIds });
+    // M4-fix1：透传 folderId，确保文件夹视图下上传的文件落入当前文件夹
+    await executeUploadBatch(files, { processConfig, tagIds, folderId: opts?.folderId });
   }
 
   for (const url of urls) {
@@ -1588,7 +1672,7 @@ const handleUploadConfirmResult = async (result: UploadConfirmResult) => {
   }
 };
 
-const openUploadConfirmDialog = async (files: File[], urls: string[] = []) => {
+const openUploadConfirmDialog = async (files: File[], urls: string[] = [], opts?: { folderId?: string }) => {
   if (!kbInfo.value) return;
   if (files.length === 0 && urls.length === 0) return;
   try {
@@ -1601,7 +1685,7 @@ const openUploadConfirmDialog = async (files: File[], urls: string[] = []) => {
       acceptFileTypes: acceptFileTypes.value,
       supportedFileTypes: [...supportedFileTypes.value],
     });
-    await handleUploadConfirmResult(result);
+    await handleUploadConfirmResult(result, { folderId: opts?.folderId });
   } catch {
     // cancelled
   }
@@ -1610,12 +1694,13 @@ const openUploadConfirmDialog = async (files: File[], urls: string[] = []) => {
 const handleUploadSourceFiles = (files: File[]) => {
   if (!ensureDocumentKbReady()) return;
   if (files.length === 0) return;
-  openUploadConfirmDialog(files);
+  // M4-fix1：文件夹视图下，上传确认携带当前 folder_id
+  openUploadConfirmDialog(files, [], { folderId: currentFolderId.value });
 };
 
 const handleUploadSourceUrl = (url: string) => {
   if (!ensureDocumentKbReady()) return;
-  openUploadConfirmDialog([], [url]);
+  openUploadConfirmDialog([], [url], { folderId: currentFolderId.value });
 };
 
 const handleManualCreate = () => {
@@ -1624,7 +1709,34 @@ const handleManualCreate = () => {
     mode: 'create',
     kbId: kbId.value,
     status: 'draft',
+    folderId: currentFolderId.value,  // M4-fix1：文件夹视图下感知当前路径
     onSuccess: manualEditorSuccess,
+  });
+};
+
+// M4-fix1 新增：文件夹视图下"新建文件夹"
+const handleCreateFolder = () => {
+  if (!ensureDocumentKbReady()) return;
+  const parentId = currentFolderId.value;
+  DialogPlugin.prompt({
+    header: t('knowledge.createFolder'),
+    label: t('knowledge.folderName'),
+    confirmBtn: t('common.confirm'),
+    cancelBtn: t('common.cancel'),
+    onConfirm: async ({ value }) => {
+      const name = (value || '').trim();
+      if (!name) {
+        MessagePlugin.warning(t('knowledge.folderNamePlaceholder'));
+        return;
+      }
+      try {
+        await createFolder(kbId.value, { parent_id: parentId, name });
+        MessagePlugin.success(t('knowledge.createFolderSuccess'));
+        folderViewRef.value?.refresh();
+      } catch (e: any) {
+        MessagePlugin.error(e?.message || t('knowledge.createFolderFailed'));
+      }
+    },
   });
 };
 
@@ -2110,6 +2222,7 @@ async function createNewSession(value: string): Promise<void> {
                   </span>
                 </t-tooltip>
               </template>
+              <!-- M4-fix1：移除独立的"文件夹治理"面包屑 tab，治理信息融入 wiki -->
               <span v-else class="breadcrumb-current">{{ $t('knowledgeEditor.document.title') }}</span>
             </h2>
             <!-- 标题行右侧的动作锚点：聚拢"信息"和"设置"两个圆形按钮。 -->
@@ -2143,11 +2256,12 @@ async function createNewSession(value: string): Promise<void> {
       <!-- Wiki Browser / Graph (shown when wiki or graph tab is active) -->
       <div v-if="isWiki && (activeKbTab === 'wiki' || activeKbTab === 'graph')" class="wiki-main-area">
         <WikiBrowser v-if="kbId" :knowledge-base-id="kbId" :view="activeKbTab === 'graph' ? 'graph' : 'browser'"
-          :can-edit="canEdit" @open-source-doc="openSourceDoc" @status-change="onWikiStatusChange"
+          :can-edit="canEdit" :folder-governance-enabled="folderGovernanceEnabled"
+          @open-source-doc="openSourceDoc" @status-change="onWikiStatusChange"
           @view-graph="onViewWikiInGraph" />
       </div>
 
-      <template v-if="activeKbTab === 'documents' || !isWiki">
+      <template v-if="(activeKbTab === 'documents' || !isWiki)">
         <div class="knowledge-main">
           <div class="tag-content">
             <div class="doc-card-area">
@@ -2304,13 +2418,21 @@ async function createNewSession(value: string): Promise<void> {
                         <t-icon name="view-list" size="16px" />
                       </button>
                     </t-tooltip>
+                    <t-tooltip v-if="folderGovernanceEnabled" :content="$t('knowledgeBase.viewModeFolder')" placement="top">
+                      <button type="button" class="doc-view-toggle-btn" :class="{ active: viewMode === 'folder' }"
+                        @click="viewMode = 'folder'" :aria-pressed="viewMode === 'folder'">
+                        <t-icon name="folder" size="16px" />
+                      </button>
+                    </t-tooltip>
                   </div>
                   <div v-if="canEdit" class="doc-filter-actions">
                     <KbUploadSourceDropdown ref="uploadSourceRef" :accept-file-types="acceptFileTypes"
-                      :supported-file-types="[...supportedFileTypes]" include-manual trigger-icon="file-add"
+                      :supported-file-types="[...supportedFileTypes]" include-manual
+                      :include-folder-create="viewMode === 'folder'" trigger-icon="file-add"
                       trigger-class="content-bar-icon-btn" data-guide="kb-detail-add-doc"
                       :tooltip="t('knowledgeBase.addDocument')" placement="bottom-right" @files="handleUploadSourceFiles"
-                      @url="handleUploadSourceUrl" @manual="handleManualCreate" />
+                      @folder-structure="handleUploadSourceFolderStructure" @url="handleUploadSourceUrl"
+                      @manual="handleManualCreate" @create-folder="handleCreateFolder" />
                   </div>
                 </div>
               </div>
@@ -2381,6 +2503,14 @@ async function createNewSession(value: string): Promise<void> {
                     @move-confirm="handleMoveConfirm"
                     @update:move-mode="(mode: any) => moveMode = mode"
                     @reset-move-state="moveMenuMode = 'normal'" />
+                </template>
+                <!-- M4: 文件夹视图（操作入口统一到右上角下拉，M4-fix1） -->
+                <template v-else-if="viewMode === 'folder'">
+                  <FolderView
+                    ref="folderViewRef"
+                    :kb-id="kbId"
+                    :can-edit="canEdit"
+                    @open-file="(file: any) => openKnowledgeItem(file)" />
                 </template>
                 <template v-else-if="!docListLoading">
                   <div class="doc-empty-state">

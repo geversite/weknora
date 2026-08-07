@@ -99,6 +99,25 @@ type KnowledgeBaseInfo struct {
 	// significantly more reliable than running probing searches.
 	Capabilities []string
 	RecentDocs   []RecentDocInfo // Recently added documents (up to 10)
+
+	// Folders is a compact snapshot of the KB's file-level folder tree
+	// (M4-fix2). Populated only when FolderGovernanceEnabled is true; gives the
+	// agent structural awareness of how files are organized. Each node is
+	// token-efficient: name, path, file count, and summary status only.
+	Folders []FolderBriefInfo
+}
+
+// FolderBriefInfo is a compact folder node rendered into the system prompt.
+// Designed to be token-efficient: only the fields an agent needs to understand
+// KB structure (name, path, file count) and to decide whether to read the
+// folder's summary (SummaryStatus).
+type FolderBriefInfo struct {
+	ID            string
+	Name          string
+	Path          string
+	Depth         int
+	FileCount     int64
+	SummaryStatus string // none / pending / processing / completed / failed
 }
 
 // PlaceholderDefinition defines a placeholder exposed to UI/configuration
@@ -193,6 +212,35 @@ func formatKnowledgeBaseList(kbInfos []*KnowledgeBaseInfo) string {
 				b.WriteString("</recent_documents>\n")
 			}
 		}
+
+		// M4-fix2: folder tree snapshot. Rendered between <recent_documents>
+		// and the closing tag so the agent sees how the KB's files are
+		// organized. Empty folders and deep (>3) folders are omitted to keep
+		// token cost bounded (see visibleFolders filtering in
+		// getKnowledgeBaseInfos).
+		if len(kb.Folders) > 0 {
+			b.WriteString("<folders>\n")
+			for _, f := range kb.Folders {
+				summaryAttr := ""
+				switch f.SummaryStatus {
+				case "completed":
+					summaryAttr = ` has_summary="true"`
+				case "pending", "processing":
+					summaryAttr = ` has_summary="pending"`
+				}
+				b.WriteString(fmt.Sprintf(
+					"<folder id=\"%s\" name=\"%s\" path=\"%s\" depth=\"%d\" file_count=\"%d\"%s />\n",
+					escapeXMLAttr(f.ID),
+					escapeXMLAttr(f.Name),
+					escapeXMLAttr(f.Path),
+					f.Depth,
+					f.FileCount,
+					summaryAttr,
+				))
+			}
+			b.WriteString("</folders>\n")
+		}
+
 		b.WriteString("</knowledge_base>\n")
 	}
 	b.WriteString("</knowledge_bases>")

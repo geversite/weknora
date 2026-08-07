@@ -66,10 +66,16 @@ import { useI18n } from 'vue-i18n'
 import { MessagePlugin, Icon as TIcon } from 'tdesign-vue-next'
 import { filterUploadFiles } from '../utils/uploadSources'
 
+export interface FolderStructureItem {
+  file: File
+  relativePath: string
+}
+
 const props = withDefaults(defineProps<{
   acceptFileTypes?: string
   supportedFileTypes?: string[]
   includeManual?: boolean
+  includeFolderCreate?: boolean  // M4-fix1 新增：文件夹视图下显示"新建文件夹"
   triggerIcon?: string
   triggerClass?: string
   dataGuide?: string
@@ -79,6 +85,7 @@ const props = withDefaults(defineProps<{
   acceptFileTypes: '',
   supportedFileTypes: () => [],
   includeManual: false,
+  includeFolderCreate: false,
   triggerIcon: 'file-add',
   triggerClass: '',
   dataGuide: '',
@@ -88,8 +95,10 @@ const props = withDefaults(defineProps<{
 
 const emit = defineEmits<{
   files: [files: File[]]
+  folderStructure: [items: FolderStructureItem[]]  // M4-fix1 新增
   url: [url: string]
   manual: []
+  createFolder: []  // M4-fix1 新增
 }>()
 
 const { t } = useI18n()
@@ -126,6 +135,14 @@ const dropdownOptions = computed(() => {
       prefixIcon: () => h(TIcon, { name: 'edit', size: '16px' }),
     })
   }
+  // M4-fix1 新增：文件夹视图下的"新建文件夹"选项
+  if (props.includeFolderCreate) {
+    options.push({
+      content: t('knowledge.createFolder'),
+      value: 'createFolder',
+      prefixIcon: () => h(TIcon, { name: 'folder-add', size: '16px' }),
+    })
+  }
   return options
 })
 
@@ -143,6 +160,9 @@ const handleActionSelect = (data: { value: string }) => {
       break
     case 'manualCreate':
       emit('manual')
+      break
+    case 'createFolder':
+      emit('createFolder')
       break
     default:
       break
@@ -170,6 +190,32 @@ const handleFilesChange = (event: Event, fromFolder: boolean) => {
   const input = event.target as HTMLInputElement
   const files = input.files
   if (!files || files.length === 0) return
+
+  if (fromFolder) {
+    // 文件夹上传：解析 webkitRelativePath，保留文件夹结构（M4-fix1）
+    const items: FolderStructureItem[] = Array.from(files).map((file) => ({
+      file,
+      relativePath: (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name,
+    }))
+
+    const result = filterUploadFiles(items.map((i) => i.file), {
+      supportedFileTypes: props.supportedFileTypes,
+      fromFolder: true,
+      multiFile: items.length > 1,
+    })
+
+    if (!notifyFilterResult(result, 'knowledgeBase.allFilesSkippedNoEngine')) {
+      input.value = ''
+      return
+    }
+
+    emit('folderStructure', result.validFiles.map((f) => ({
+      file: f,
+      relativePath: items.find((i) => i.file === f)?.relativePath || f.name,
+    })))
+    input.value = ''
+    return
+  }
 
   const result = filterUploadFiles(files, {
     supportedFileTypes: props.supportedFileTypes,

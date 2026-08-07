@@ -336,6 +336,8 @@ func RegisterWikiPageRoutes(r *gin.RouterGroup, wikiHandler *handler.WikiPageHan
 
 		// Special pages
 		wikiRead.GET("/index", g.Viewer(), g.KBAccessRead("kb_id"), wikiHandler.GetIndex)
+		// M4-fix1: folder governance as a wiki system page
+		wikiRead.GET("/governance", g.Viewer(), g.KBAccessRead("kb_id"), wikiHandler.GetGovernance)
 
 		// Graph and stats
 		wikiRead.GET("/graph", g.Viewer(), g.KBAccessRead("kb_id"), wikiHandler.GetGraph)
@@ -351,4 +353,38 @@ func RegisterWikiPageRoutes(r *gin.RouterGroup, wikiHandler *handler.WikiPageHan
 		wikiRead.GET("/issues", g.Viewer(), g.KBAccessRead("kb_id"), wikiHandler.ListIssues)
 		wiki.PUT("/issues/:issue_id/status", g.OwnedWikiKBOrAdmin(), g.KBAccessWrite("kb_id"), wikiHandler.UpdateIssueStatus)
 	}
+}
+
+// RegisterKnowledgeFolderRoutes registers file-level folder governance (M4) routes.
+// Registered under /knowledge-bases/:id (plural), matching the rest of the KB API.
+func RegisterKnowledgeFolderRoutes(r *gin.RouterGroup, folderHandler *handler.KnowledgeFolderHandler, g *rbacGuards) {
+	folder := g.apiKeyGroup(r.Group("/knowledge-bases/:id/folders"), apiKeyIngest(apiKeyFullAccess()))
+	folderRead := folder.With(apiKeyRetrieve(apiKeyFullAccess()))
+	{
+		// Folder tree CRUD
+		folderRead.GET("", g.Viewer(), g.KBAccessRead("id"), folderHandler.ListFolders)
+		folder.POST("", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), folderHandler.CreateFolder)
+		folder.PUT("/:folder_id", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), folderHandler.UpdateFolder)
+		folder.DELETE("/:folder_id", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), folderHandler.DeleteFolder)
+
+		// Move files into a folder (multi-file)
+		folder.POST("/:folder_id/files", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), folderHandler.MoveFilesToFolder)
+
+		// Folder summaries
+		folderRead.GET("/:folder_id/summary", g.Viewer(), g.KBAccessRead("id"), folderHandler.GetFolderSummary)
+		folder.POST("/:folder_id/summary/generate", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), folderHandler.GenerateFolderSummary)
+		folder.POST("/:folder_id/summary/refresh", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), folderHandler.RefreshFolderSummary)
+		folder.PUT("/:folder_id/summary", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), folderHandler.EditFolderSummary)
+
+		// Governance panel
+		folderRead.GET("/governance", g.Viewer(), g.KBAccessRead("id"), folderHandler.GetGovernanceReport)
+	}
+
+	// Folder content list (folder-view core API): children folders + files
+	folderContent := g.apiKeyGroup(r.Group("/knowledge-bases/:id/folder-content"), apiKeyRetrieve(apiKeyFullAccess()))
+	folderContent.GET("", g.Viewer(), g.KBAccessRead("id"), folderHandler.ListFolderContent)
+
+	// Move a single knowledge entry to a folder
+	move := g.apiKeyGroup(r.Group("/knowledge-bases/:id/knowledge"), apiKeyIngest(apiKeyFullAccess()))
+	move.POST("/:knowledge_id/move", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), folderHandler.MoveKnowledgeToFolder)
 }

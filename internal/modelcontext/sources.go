@@ -35,10 +35,11 @@ type webMeta struct {
 type sourceRegistry struct {
 	citationsEnabled bool
 
-	chunks *handleTable[ChunkReference]
-	docs   *handleTable[struct{}]
-	kbs    *handleTable[struct{}]
-	webs   *handleTable[webMeta]
+	chunks  *handleTable[ChunkReference]
+	docs    *handleTable[struct{}]
+	kbs     *handleTable[struct{}]
+	folders *handleTable[struct{}] // M4-fix2
+	webs    *handleTable[webMeta]
 }
 
 func newSourceRegistry(citationsEnabled ...bool) *sourceRegistry {
@@ -51,6 +52,7 @@ func newSourceRegistry(citationsEnabled ...bool) *sourceRegistry {
 		chunks:           newHandleTable[ChunkReference]("c", 0, 1),
 		docs:             newHandleTable[struct{}]("d", 0, 1),
 		kbs:              newHandleTable[struct{}]("b", 0, 1),
+		folders:          newHandleTable[struct{}]("f", 0, 1),
 		webs:             newHandleTable[webMeta]("w", 0, 1),
 	}
 }
@@ -125,6 +127,20 @@ func (r *sourceRegistry) RegisterKnowledgeBase(id string) string {
 		return knownHandle(r.kbs, id)
 	}
 	return r.kbs.register(id, id, struct{}{}, nil)
+}
+
+// RegisterFolder registers a folder_id as a compact model-facing handle
+// (M4-fix2). Folder IDs are opaque durable identities shared between the
+// folder tools and knowledge_search, so they round-trip as short handles.
+func (r *sourceRegistry) RegisterFolder(id string) string {
+	id = strings.TrimSpace(id)
+	if r == nil || id == "" {
+		return ""
+	}
+	if shortSourceHandleRE.MatchString(id) {
+		return knownHandle(r.folders, id)
+	}
+	return r.folders.register(id, id, struct{}{}, nil)
 }
 
 func (r *sourceRegistry) RegisterWeb(rawURL, title string) string {
@@ -463,6 +479,11 @@ func (r *sourceRegistry) registerSourceIDByKey(key, value string) {
 		r.RegisterDocument(strings.TrimSpace(strings.SplitN(value, "|", 2)[0]))
 	case spaceKnowledgeBase:
 		r.RegisterKnowledgeBase(value)
+	case spaceFolder:
+		// M4-fix2: folder IDs are opaque durable identities passed between
+		// browse_folders / read_folder_summary / knowledge_search. Register so
+		// they compact to short handles the model can reuse.
+		r.RegisterFolder(value)
 	case spaceWeb:
 		// Only public web pages become web references. Internal schemes
 		// (res://, storage providers) must never enter the web handle space,

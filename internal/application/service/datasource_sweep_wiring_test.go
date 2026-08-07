@@ -59,6 +59,7 @@ func (k *sweepFakeKS) CreateKnowledgeFromFile(
 	ctx context.Context, kbID string, file *multipart.FileHeader, metadata map[string]string,
 	enableMultimodel *bool, customFileName string, tagIDs []string, channel string,
 	processOverrides *types.KnowledgeProcessOverrides,
+	folderIDs ...string,
 ) (*types.Knowledge, error) {
 	k.events = append(k.events, "create:"+customFileName)
 	if k.createErr != nil {

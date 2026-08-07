@@ -37,6 +37,11 @@ const (
 	ChunkTypeTableColumn ChunkType = "table_column"
 	// ChunkTypeWikiPage 表示 Wiki 页面同步的 Chunk，用于将 wiki 页面接入现有检索管线
 	ChunkTypeWikiPage ChunkType = "wiki_page"
+	// ChunkTypeFolderSummary represents a folder-level summary chunk (M4).
+	// Its FolderID field points to the folder; KnowledgeID is empty.
+	// Indexed into the vector store so "ask about a sub-domain" can hit
+	// the folder-level synopsis.
+	ChunkTypeFolderSummary ChunkType = "folder_summary"
 )
 
 // ChunkStatus 定义了不同状态的 Chunk
@@ -121,6 +126,9 @@ type Chunk struct {
 	KnowledgeID string `json:"knowledge_id"`
 	// ID of the knowledge base, for quick location
 	KnowledgeBaseID string `json:"knowledge_base_id"`
+	// M4: folder_id is set for folder_summary chunks (points to knowledge_folders.id).
+	// Empty for normal chunks. Used to associate summary chunks with folders.
+	FolderID string `json:"folder_id"               gorm:"type:varchar(36);index;default:''"`
 	// Optional tag ID for categorization within a knowledge base (used for FAQ)
 	TagID string `json:"tag_id"                   gorm:"type:varchar(36);index"`
 	// Actual text content of the chunk

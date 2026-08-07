@@ -39,6 +39,12 @@ var (
 	ErrDuplicateURL = errors.New("URL already exists")
 	// ErrImageNotParse is returned when trying to update image information without enabling multimodel
 	ErrImageNotParse = errors.New("image not parse without enable multimodel")
+	// M4 folder governance error sentinels
+	ErrFolderNotFound        = errors.New("folder not found")
+	ErrInvalidFolderName     = errors.New("invalid folder name")
+	ErrInvalidFolderParent   = errors.New("invalid folder parent")
+	ErrKnowledgeNotInKB      = errors.New("knowledge not in knowledge base")
+	ErrFolderSummaryNotReady = errors.New("folder summary not ready")
 )
 
 // knowledgeService implements the knowledge service interface
@@ -78,9 +84,12 @@ type knowledgeService struct {
 	// pipeline. Best-effort: a nil tracker (test harness) is safely
 	// handled because the public surface is the SpanTracker interface,
 	// which has a no-op fallback. See knowledge_span_tracker.go.
-	spanTracker  SpanTracker
-	audit        interfaces.AuditLogService
-	conflictRepo interfaces.KnowledgeConflictRepository // M3 conflict cleanup
+	spanTracker       SpanTracker
+	audit             interfaces.AuditLogService
+	conflictRepo      interfaces.KnowledgeConflictRepository // M3 conflict cleanup
+	folderSummaryRepo interfaces.FolderSummaryRepository     // M4: folder summary lookup
+	folderSummarySvc  interfaces.FolderSummaryService        // M4: folder summary refresh
+	folderRepo        interfaces.KnowledgeFolderRepository   // M4: folder lookup
 }
 
 const (
@@ -119,36 +128,42 @@ func NewKnowledgeService(
 	spanTracker SpanTracker,
 	audit interfaces.AuditLogService,
 	conflictRepo interfaces.KnowledgeConflictRepository,
+	folderSummaryRepo interfaces.FolderSummaryRepository,
+	folderSummarySvc interfaces.FolderSummaryService,
+	folderRepo interfaces.KnowledgeFolderRepository,
 ) (interfaces.KnowledgeService, error) {
 	return &knowledgeService{
-		config:          config,
-		repo:            repo,
-		kbService:       kbService,
-		tenantRepo:      tenantRepo,
-		tenantService:   tenantService,
-		documentReader:  documentReader,
-		chunkService:    chunkService,
-		chunkRepo:       chunkRepo,
-		tagRepo:         tagRepo,
-		tagService:      tagService,
-		fileSvc:         fileSvc,
-		storageResolver: storageResolver,
-		resourceCatalog: resourceCatalog,
-		modelService:    modelService,
-		task:            task,
-		taskInspector:   taskInspector,
-		graphEngine:     graphEngine,
-		retrieveEngine:  retrieveEngine,
-		ownership:       ownership,
-		redisClient:     redisClient,
-		kbShareService:  kbShareService,
-		imageResolver:   imageResolver,
-		wikiRepo:        wikiRepo,
-		wikiService:     wikiService,
-		taskPendingRepo: taskPendingRepo,
-		spanTracker:     spanTracker,
-		audit:           audit,
-		conflictRepo:    conflictRepo,
+		config:            config,
+		repo:              repo,
+		kbService:         kbService,
+		tenantRepo:        tenantRepo,
+		tenantService:     tenantService,
+		documentReader:    documentReader,
+		chunkService:      chunkService,
+		chunkRepo:         chunkRepo,
+		tagRepo:           tagRepo,
+		tagService:        tagService,
+		fileSvc:           fileSvc,
+		storageResolver:   storageResolver,
+		resourceCatalog:   resourceCatalog,
+		modelService:      modelService,
+		task:              task,
+		taskInspector:     taskInspector,
+		graphEngine:       graphEngine,
+		retrieveEngine:    retrieveEngine,
+		ownership:         ownership,
+		redisClient:       redisClient,
+		kbShareService:    kbShareService,
+		imageResolver:     imageResolver,
+		wikiRepo:          wikiRepo,
+		wikiService:       wikiService,
+		taskPendingRepo:   taskPendingRepo,
+		spanTracker:       spanTracker,
+		audit:             audit,
+		conflictRepo:      conflictRepo,
+		folderSummaryRepo: folderSummaryRepo,
+		folderSummarySvc:  folderSummarySvc,
+		folderRepo:        folderRepo,
 	}, nil
 }
 
@@ -495,6 +510,13 @@ func (s *knowledgeService) GetKnowledgeByID(ctx context.Context, id string) (*ty
 // GetKnowledgeByIDOnly retrieves knowledge by ID without tenant filter (for permission resolution).
 func (s *knowledgeService) GetKnowledgeByIDOnly(ctx context.Context, id string) (*types.Knowledge, error) {
 	return s.repo.GetKnowledgeByIDOnly(ctx, id)
+}
+
+// ListKnowledgeIDsByFolderIDs returns knowledge IDs assigned to any of the
+// given folders (M4-fix2). Used by the agent's knowledge_search tool to
+// resolve a folder_id into the files it should search within.
+func (s *knowledgeService) ListKnowledgeIDsByFolderIDs(ctx context.Context, kbID string, folderIDs []string) ([]string, error) {
+	return s.repo.ListKnowledgeIDsByFolderIDs(ctx, kbID, folderIDs)
 }
 
 // GetOwningKBCreatorID walks knowledge_id -> kb_id -> KB.CreatorID for

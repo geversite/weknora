@@ -736,6 +736,12 @@ func (kb *KnowledgeBase) IsConflictDetectEnabled() bool {
 	return kb != nil && kb.IndexingStrategy.ConflictDetectEnabled
 }
 
+// IsFolderGovernanceEnabled reports whether file-level folder governance is
+// enabled for this knowledge base (M4). Default false; enabled per KB.
+func (kb *KnowledgeBase) IsFolderGovernanceEnabled() bool {
+	return kb != nil && kb.IndexingStrategy.FolderGovernanceEnabled
+}
+
 // NeedsEmbeddingModel returns true if any enabled pipeline requires an embedding model.
 // Currently only vector and keyword search need embeddings.
 func (kb *KnowledgeBase) NeedsEmbeddingModel() bool {
