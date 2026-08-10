@@ -136,6 +136,21 @@
                             </t-checkbox>
                             <p class="indexing-check-desc">{{ $t('knowledgeEditor.indexing.folderGovernanceDesc') }}</p>
                           </div>
+                          <div
+                            class="indexing-check-item"
+                            :class="{ 'is-checked': formData.indexingStrategy.userFeedbackEnabled, 'is-disabled': isIndexingLocked || !formData.indexingStrategy.wikiEnabled }"
+                            @click="toggleUserFeedback"
+                          >
+                            <t-checkbox
+                              :checked="formData.indexingStrategy.userFeedbackEnabled"
+                              :disabled="isIndexingLocked || !formData.indexingStrategy.wikiEnabled"
+                              class="indexing-check-box"
+                            >
+                              {{ $t('knowledgeEditor.indexing.userFeedbackTitle') }}
+                              <span class="indexing-new-badge">NEW</span>
+                            </t-checkbox>
+                            <p class="indexing-check-desc">{{ $t('knowledgeEditor.indexing.userFeedbackDesc') }}</p>
+                          </div>
                         </div>
                         <p v-if="isIndexingLocked" class="form-tip locked-tip">
                           {{ $t('knowledgeEditor.indexing.lockedTip') }}
@@ -853,6 +868,7 @@ const initFormData = (type: 'document' | 'faq' = 'document') => {
       graphEnabled: false,
       conflictEnabled: false,
       folderGovernanceEnabled: false,
+      userFeedbackEnabled: false,
     },
     // Vector-store binding. Empty string means "use the env-configured
     // store"; create mode defaults to that, edit mode loads the
@@ -980,6 +996,7 @@ const loadKBData = async (kbIdOverride?: string) => {
         graphEnabled: kb.indexing_strategy?.graph_enabled ?? false,
         conflictEnabled: kb.indexing_strategy?.conflict_detect_enabled ?? false,
         folderGovernanceEnabled: kb.indexing_strategy?.folder_governance_enabled ?? false,
+        userFeedbackEnabled: kb.indexing_strategy?.user_feedback_enabled ?? false,
       },
       // Vector-store binding. vectorStoreId is editor-only state; it
       // is only included in the create request, never the update
@@ -1072,6 +1089,13 @@ const toggleFolderGovernance = () => {
   if (!formData.value) return
   if (isIndexingLocked.value) return
   formData.value.indexingStrategy.folderGovernanceEnabled = !formData.value.indexingStrategy.folderGovernanceEnabled
+}
+
+const toggleUserFeedback = () => {
+  if (!formData.value) return
+  if (isIndexingLocked.value) return
+  if (!formData.value.indexingStrategy.wikiEnabled) return // 需先开启 Wiki
+  formData.value.indexingStrategy.userFeedbackEnabled = !formData.value.indexingStrategy.userFeedbackEnabled
 }
 
 const handleChunkingConfigUpdate = (config: any) => {
@@ -1357,6 +1381,7 @@ const buildSubmitData = () => {
       graph_enabled: formData.value.indexingStrategy?.graphEnabled ?? false,
       conflict_detect_enabled: formData.value.indexingStrategy?.conflictEnabled ?? false,
       folder_governance_enabled: formData.value.indexingStrategy?.folderGovernanceEnabled ?? false,
+      user_feedback_enabled: formData.value.indexingStrategy?.userFeedbackEnabled ?? false,
     }
   }
 
@@ -1462,6 +1487,7 @@ const doSubmit = async () => {
           graph_enabled: formData.value.indexingStrategy?.graphEnabled ?? false,
           conflict_detect_enabled: formData.value.indexingStrategy?.conflictEnabled ?? false,
           folder_governance_enabled: formData.value.indexingStrategy?.folderGovernanceEnabled ?? false,
+          user_feedback_enabled: formData.value.indexingStrategy?.userFeedbackEnabled ?? false,
         }
       }
       await updateKnowledgeBase(kbId, {

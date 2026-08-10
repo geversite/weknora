@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Tencent/WeKnora/internal/application/service"
 	"github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/event"
 	"github.com/Tencent/WeKnora/internal/logger"
@@ -894,7 +895,7 @@ func (h *Handler) executeQA(reqCtx *qaRequestContext, mode qaMode, generateTitle
 
 				logger.Infof(streamCtx.asyncCtx, "Knowledge QA service completed for session: %s", sessionID)
 				updateCtx := context.WithValue(streamCtx.asyncCtx, types.TenantIDContextKey, reqCtx.session.TenantID)
-				h.completeAssistantMessage(updateCtx, streamCtx.assistantMessage, reqCtx.query)
+				h.completeAssistantMessage(updateCtx, streamCtx.assistantMessage, reqCtx.query, reqCtx.knowledgeBaseIDs)
 				streamCtx.eventBus.Emit(streamCtx.asyncCtx, event.Event{
 					Type:      event.EventAgentComplete,
 					SessionID: sessionID,
@@ -930,7 +931,7 @@ func (h *Handler) executeQA(reqCtx *qaRequestContext, mode qaMode, generateTitle
 					context.WithoutCancel(streamCtx.asyncCtx),
 					types.TenantIDContextKey, reqCtx.session.TenantID,
 				)
-				h.completeAssistantMessage(updateCtx, streamCtx.assistantMessage, reqCtx.query)
+				h.completeAssistantMessage(updateCtx, streamCtx.assistantMessage, reqCtx.query, reqCtx.knowledgeBaseIDs)
 				logger.Infof(streamCtx.asyncCtx, "Agent QA service completed for session: %s", sessionID)
 			}
 		}()
@@ -1342,7 +1343,10 @@ func appendQuickAnswerReasoning(msg *types.Message, content string) {
 
 // completeAssistantMessage marks an assistant message as complete, updates it,
 // and asynchronously indexes the Q&A pair into the chat history knowledge base.
-func (h *Handler) completeAssistantMessage(ctx context.Context, assistantMessage *types.Message, userQuery string) {
+// feedbackKBIDs scopes the M5 user-feedback pipeline to the KBs that were part
+// of this request (they are passed explicitly because agent runs do not always
+// populate assistantMessage.KnowledgeReferences).
+func (h *Handler) completeAssistantMessage(ctx context.Context, assistantMessage *types.Message, userQuery string, feedbackKBIDs ...[]string) {
 	assistantMessage.UpdatedAt = time.Now()
 	assistantMessage.IsCompleted = true
 	_ = h.messageService.UpdateMessage(ctx, assistantMessage)
@@ -1365,4 +1369,99 @@ func (h *Handler) completeAssistantMessage(ctx context.Context, assistantMessage
 	// RecordReferenceEvents is internally async/non-blocking.
 	tenantID := types.MustTenantIDFromContext(ctx)
 	h.messageService.RecordReferenceEvents(ctx, tenantID, assistantMessage)
+
+	// M5: asynchronously scan the user message for new factual info and append
+	// it to the relevant wiki page(s). The pipeline itself checks each KB's
+	// UserFeedbackEnabled flag and silently returns when disabled.
+	if h.feedbackService != nil && userQuery != "" {
+		userID, _ := types.UserIDFromContext(ctx)
+		// Prefer the explicitly provided KB scope; fall back to the KB IDs
+		// recovered from the message's citation/retrieval references; when
+		// both are empty (e.g. kb_selection_mode=all agents), fall back to the
+		// tenant's KBs that have feedback enabled so agent runs still work.
+		kbIDs := referencedKBIDs(assistantMessage)
+		if len(feedbackKBIDs) > 0 && len(feedbackKBIDs[0]) > 0 {
+			kbIDs = feedbackKBIDs[0]
+		}
+		logger.Infof(ctx, "M5 feedback: msg=%s feedbackKBIDs=%v", assistantMessage.ID, kbIDs)
+
+		base := service.FeedbackParams{
+			TenantID:     tenantID,
+			UserQuery:    userQuery,
+			AssistantMsg: assistantMessage,
+			UserID:       userID,
+			SessionID:    assistantMessage.SessionID,
+			MessageID:    assistantMessage.ID,
+		}
+		if len(kbIDs) > 0 {
+			for _, kbID := range kbIDs {
+				if kbID == "" {
+					continue
+				}
+				p := base
+				p.KnowledgeBaseID = kbID
+				go h.feedbackService.RunFeedbackPipeline(bgCtx, p)
+			}
+			return
+		}
+
+		// No explicit scope — resolve feedback-enabled KBs for the tenant so
+		// agent runs with kb_selection_mode=all still feed back to the KBs
+		// they can touch. Only feedback-enabled KBs are returned (the pipeline
+		// would short-circuit the others anyway).
+		go func() {
+			allowed, err := h.feedbackKBIDsForTenant(bgCtx)
+			if err != nil {
+				logger.Warnf(bgCtx, "M5 feedback: failed to resolve tenant feedback KBs: %v", err)
+				return
+			}
+			logger.Infof(bgCtx, "M5 feedback: resolved %d tenant feedback KBs: %v", len(allowed), allowed)
+			for _, kbID := range allowed {
+				p := base
+				p.KnowledgeBaseID = kbID
+				go h.feedbackService.RunFeedbackPipeline(bgCtx, p)
+			}
+		}()
+	}
+}
+
+// feedbackKBIDsForTenant returns the IDs of the current tenant's KBs that have
+// the M5 user-feedback feature enabled. Used to scope the feedback pipeline
+// when a request does not carry an explicit knowledge-base list (e.g. agents
+// configured with kb_selection_mode=all).
+func (h *Handler) feedbackKBIDsForTenant(ctx context.Context) ([]string, error) {
+	tenantID := types.MustTenantIDFromContext(ctx)
+	kbs, err := h.knowledgebaseService.ListKnowledgeBasesByTenantID(ctx, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	var ids []string
+	for _, kb := range kbs {
+		if kb != nil && kb.IsUserFeedbackEnabled() {
+			ids = append(ids, kb.ID)
+		}
+	}
+	return ids, nil
+}
+
+// referencedKBIDs returns the unique knowledge-base IDs referenced by an
+// assistant message (from its citation/retrieval results). Used to scope the
+// M5 feedback pipeline to the KBs actually involved in the answer.
+func referencedKBIDs(msg *types.Message) []string {
+	if msg == nil {
+		return nil
+	}
+	seen := make(map[string]struct{})
+	var ids []string
+	for _, r := range msg.KnowledgeReferences {
+		if r == nil || r.KnowledgeBaseID == "" {
+			continue
+		}
+		if _, ok := seen[r.KnowledgeBaseID]; ok {
+			continue
+		}
+		seen[r.KnowledgeBaseID] = struct{}{}
+		ids = append(ids, r.KnowledgeBaseID)
+	}
+	return ids
 }

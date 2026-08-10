@@ -4,6 +4,7 @@ import (
 	stderrors "errors"
 	"net/http"
 
+	"github.com/Tencent/WeKnora/internal/application/service"
 	"github.com/Tencent/WeKnora/internal/config"
 	"github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/infrastructure/docparser"
@@ -31,6 +32,7 @@ type Handler struct {
 	modelService         interfaces.ModelService // Service for model management (VLM access)
 	attachmentProcessor  *AttachmentProcessor    // Processor for file attachments
 	temporaryDocuments   interfaces.TemporaryDocumentService
+	feedbackService      service.FeedbackPipelineService // M5: async user-feedback-to-wiki pipeline (nil = disabled)
 }
 
 // NewHandler creates a new instance of Handler with all necessary dependencies
@@ -51,6 +53,7 @@ func NewHandler(
 	documentReader interfaces.DocumentReader,
 	imageResolver *docparser.ImageResolver,
 	temporaryDocuments interfaces.TemporaryDocumentService,
+	feedbackService service.FeedbackPipelineService,
 ) *Handler {
 	return &Handler{
 		sessionService:       sessionService,
@@ -67,6 +70,7 @@ func NewHandler(
 		storageResolver:      storageResolver,
 		modelService:         modelService,
 		temporaryDocuments:   temporaryDocuments,
+		feedbackService:      feedbackService,
 		attachmentProcessor: NewAttachmentProcessor(
 			fileService,
 			documentReader,

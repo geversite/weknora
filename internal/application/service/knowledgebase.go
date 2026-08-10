@@ -144,6 +144,10 @@ func (s *knowledgeBaseService) CreateKnowledgeBase(ctx context.Context,
 		kb.CreatorID = uid
 	}
 	kb.EnsureDefaults()
+	// M5: user feedback requires wiki to be enabled.
+	if kb.IndexingStrategy.UserFeedbackEnabled && !kb.IndexingStrategy.WikiEnabled {
+		return nil, errors.New("user feedback cannot be enabled without wiki indexing")
+	}
 	applyTenantDefaultStorageProvider(ctx, kb)
 	if err := s.applyAndValidateStorageBackend(ctx, kb); err != nil {
 		return nil, err
@@ -545,6 +549,10 @@ func (s *knowledgeBaseService) UpdateKnowledgeBase(ctx context.Context,
 		if config.IndexingStrategy != nil {
 			if !config.IndexingStrategy.HasAnyIndexing() {
 				return nil, errors.New("at least one indexing strategy must be enabled")
+			}
+			// M5: user feedback requires wiki to be enabled.
+			if config.IndexingStrategy.UserFeedbackEnabled && !config.IndexingStrategy.WikiEnabled {
+				return nil, errors.New("user feedback cannot be enabled without wiki indexing")
 			}
 			kb.IndexingStrategy = *config.IndexingStrategy
 			// Ensure WikiConfig exists when wiki indexing is enabled so that

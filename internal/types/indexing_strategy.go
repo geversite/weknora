@@ -25,6 +25,12 @@ type IndexingStrategy struct {
 	// It does NOT produce indexing requirements by itself, so it is excluded
 	// from HasAnyIndexing / IsZero / NeedsChunks / NeedsEmbedding.
 	FolderGovernanceEnabled bool `yaml:"folder_governance_enabled" json:"folder_governance_enabled"`
+	// UserFeedbackEnabled enables the M5 automatic user-feedback-to-wiki
+	// pipeline. When true, every user message is scanned for new factual
+	// info and, if found, appended to the relevant wiki page automatically.
+	// Requires WikiEnabled. Default false. It does NOT produce indexing
+	// requirements by itself, so it is excluded from the indexing helpers.
+	UserFeedbackEnabled bool `yaml:"user_feedback_enabled" json:"user_feedback_enabled"`
 }
 
 // DefaultIndexingStrategy returns the default strategy matching the legacy behavior:
@@ -57,6 +63,12 @@ func (s IndexingStrategy) HasAnyIndexing() bool {
 // IsZero returns true if the strategy has no pipelines enabled (zero value).
 func (s IndexingStrategy) IsZero() bool {
 	return !s.VectorEnabled && !s.KeywordEnabled && !s.WikiEnabled && !s.GraphEnabled
+}
+
+// IsUserFeedbackEnabled reports whether the M5 feedback pipeline is active.
+// Implies WikiEnabled (feedback cannot run without wiki).
+func (s IndexingStrategy) IsUserFeedbackEnabled() bool {
+	return s.UserFeedbackEnabled && s.WikiEnabled
 }
 
 // Value implements the driver.Valuer interface for GORM serialization.

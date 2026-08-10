@@ -742,6 +742,12 @@ func (kb *KnowledgeBase) IsFolderGovernanceEnabled() bool {
 	return kb != nil && kb.IndexingStrategy.FolderGovernanceEnabled
 }
 
+// IsUserFeedbackEnabled reports whether the M5 automatic user-feedback-to-wiki
+// pipeline is active for this knowledge base. Default false; requires Wiki.
+func (kb *KnowledgeBase) IsUserFeedbackEnabled() bool {
+	return kb != nil && kb.IndexingStrategy.IsUserFeedbackEnabled()
+}
+
 // NeedsEmbeddingModel returns true if any enabled pipeline requires an embedding model.
 // Currently only vector and keyword search need embeddings.
 func (kb *KnowledgeBase) NeedsEmbeddingModel() bool {

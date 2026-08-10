@@ -1,0 +1,15 @@
+# config/builtin_models.yaml — declarative built-in models.
+#
+# Auto-loaded on application startup. Re-edit + restart to apply changes.
+# Env placeholders (${NAME}) are resolved from .env at startup.
+
+builtin_models:
+  - id: builtin-qwen-chat
+    type: KnowledgeQA
+    source: remote
+    is_default: true
+    name: ${DASHSCOPE_MODEL_NAME}
+    parameters:
+      base_url: ${DASHSCOPE_BASE_URL}
+      api_key: ${DASHSCOPE_API_KEY}
+      provider: aliyun

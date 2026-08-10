@@ -443,6 +443,10 @@
                                     $t('knowledgeEditor.wikiBrowser.issueOutdated') }}</t-tag>
                                 <t-tag v-else theme="primary" variant="light" size="small">{{
                                   $t('knowledgeEditor.wikiBrowser.issueAttention') }}</t-tag>
+                                <t-tag v-if="isUserFeedbackIssue(issue)" theme="success" variant="light" size="small"
+                                  icon="chat-filled">
+                                  {{ $t('knowledgeEditor.wikiBrowser.issueUserFeedback') }}
+                                </t-tag>
                               </div>
                               <div class="wiki-issue-popup-desc">
                                 {{ issue.description }}
@@ -691,6 +695,9 @@
               <t-tag v-else theme="primary" variant="light" size="small">{{
                 $t('knowledgeEditor.wikiBrowser.issueAttention')
               }}</t-tag>
+              <t-tag v-if="isUserFeedbackIssue(issue)" theme="success" variant="light" size="small" icon="chat-filled">
+                {{ $t('knowledgeEditor.wikiBrowser.issueUserFeedback') }}
+              </t-tag>
             </div>
             <div class="wiki-issue-popup-desc">
               <div style="font-weight: 500; margin-bottom: 4px; color: var(--td-brand-color); cursor: pointer;"
@@ -802,6 +809,7 @@ import { useRouter, useRoute } from 'vue-router'
 import { useMenuStore } from '@/stores/menu'
 import { useSettingsStore } from '@/stores/settings'
 import { useI18n } from 'vue-i18n'
+import i18n from '@/i18n'
 import { marked } from 'marked'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { RecycleScroller } from 'vue-virtual-scroller'
@@ -1549,6 +1557,27 @@ function renderMarkdown(content: string): string {
     const display = pipeIdx > 0 ? inner.substring(pipeIdx + 1).trim() : slugDisplayName(slug)
     return `<a href="#" class="wiki-content-link" data-slug="${slug}">${display}</a>`
   })
+
+  // M5: render the auto-appended "用户补充" blockquote as a distinct feedback
+  // panel. The pipeline writes:
+  //   ## 用户补充
+  //   > [反哺 @ session-... msg-... by user-... · date]
+  //   > <the contributed fact>
+  // We wrap the whole section in a highlighted container so admins can spot
+  // and audit/revert auto-contributed content quickly.
+  preprocessed = preprocessed.replace(
+    /(##\s*用户补充\s*\n)((?:>.*\n?)+)/g,
+    (_match, heading: string, quoteBody: string) => {
+      const quoted = quoteBody
+        .split('\n')
+        .map(l => l.replace(/^>\s?/, ''))
+        .join('\n')
+        .trim()
+      return `${heading}<div class="wiki-feedback-panel"><div class="wiki-feedback-panel-header">💬 ${
+        i18n.global.t('knowledgeEditor.wikiBrowser.userFeedbackPanelTitle')
+      }</div><blockquote class="wiki-feedback-quote">${quoted}</blockquote></div>\n`
+    }
+  )
 
   const html = marked.parse(preprocessed, { breaks: true, async: false }) as string
   return sanitizeMarkdownHTML(html)
@@ -3763,6 +3792,14 @@ function slugDisplayName(slug: string): string {
   return parts.length > 1 ? parts.slice(1).join('/') : slug
 }
 
+// isUserFeedbackIssue reports whether an issue was auto-created by the M5
+// user-feedback pipeline (its ReportedBy carries the pipeline prefix). Such
+// issues are audit markers: an auto-appended "用户补充" section that an admin
+// may review, revert, or close.
+function isUserFeedbackIssue(issue: WikiPageIssue): boolean {
+  return typeof issue?.reported_by === 'string' && issue.reported_by.startsWith('user-feedback-pipeline:')
+}
+
 // ─── Graph Rendering (interactive SVG force-directed graph) ───
 // Features: drag nodes, pan canvas, zoom, hover highlight, click to open drawer, legend
 
@@ -5793,6 +5830,36 @@ onUnmounted(() => {
     border-left: 4px solid var(--td-component-border);
     border-radius: 0 4px 4px 0;
     color: var(--td-text-color-secondary);
+  }
+
+  // M5: auto-contributed "用户补充" section — highlighted so admins can audit.
+  :deep(.wiki-feedback-panel) {
+    margin: 10px 0 14px;
+    padding: 4px 14px 6px;
+    background: rgba(7, 192, 95, 0.06);
+    border: 1px solid rgba(7, 192, 95, 0.28);
+    border-radius: 8px;
+  }
+
+  :deep(.wiki-feedback-panel-header) {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 8px 0;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--td-brand-color);
+  }
+
+  :deep(.wiki-feedback-quote) {
+    margin: 0;
+    padding: 0 12px;
+    background: transparent;
+    border-left: 3px solid rgba(7, 192, 95, 0.4);
+    border-radius: 0;
+    color: var(--td-text-color-secondary);
+    font-size: 13px;
+    white-space: pre-wrap;
   }
 
   :deep(code) {

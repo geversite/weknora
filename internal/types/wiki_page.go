@@ -785,3 +785,76 @@ type WikiPageLite struct {
 	Aliases  StringArray `json:"aliases,omitempty"`
 	OutLinks StringArray `json:"out_links,omitempty"`
 }
+
+// WikiUserFeedback is the conversation-level provenance for content
+// contributed through the M5 automatic user-feedback pipeline. Stored
+// inside WikiPage.PageMetadata["user_feedback"]. Distinct from
+// SourceRefs / ChunkRefs which carry document-level provenance.
+type WikiUserFeedback struct {
+	Contributions []WikiFeedbackContribution `json:"contributions,omitempty"`
+}
+
+// WikiFeedbackContribution records one automatic feedback append to a wiki
+// page: who said it, in which conversation, what summary, and the audit
+// issue (if any) that records it for later review / revert.
+type WikiFeedbackContribution struct {
+	ID                string    `json:"id"`             // "fb-<uuid>"
+	SectionAnchor     string    `json:"section_anchor"` // "## 用户补充"
+	SourceSessionID   string    `json:"source_session_id"`
+	SourceMessageID   string    `json:"source_message_id"`
+	ContributorUserID string    `json:"contributor_user_id"`
+	ContributedAt     time.Time `json:"contributed_at"`
+	Summary           string    `json:"summary"`
+	IssueID           string    `json:"issue_id,omitempty"` // 关联的审计 issue
+}
+
+// wikiUserFeedbackKey is the PageMetadata JSON key under which the feedback
+// provenance is stored. Kept private so callers go through AppendUserFeedback
+// / UserFeedbackFromMetadata.
+const wikiUserFeedbackKey = "user_feedback"
+
+// AppendUserFeedback adds a contribution record to the page's metadata.
+// Best-effort: a nil/empty PageMetadata is initialized. It merges into the
+// existing JSON map (preserving any other keys) and only touches the
+// "user_feedback" key.
+func AppendUserFeedback(page *WikiPage, c WikiFeedbackContribution) {
+	if page == nil {
+		return
+	}
+	var meta map[string]json.RawMessage
+	if len(page.PageMetadata) > 0 {
+		_ = json.Unmarshal(page.PageMetadata, &meta)
+	}
+	if meta == nil {
+		meta = map[string]json.RawMessage{}
+	}
+	var fb WikiUserFeedback
+	if raw, ok := meta[wikiUserFeedbackKey]; ok {
+		_ = json.Unmarshal(raw, &fb)
+	}
+	fb.Contributions = append(fb.Contributions, c)
+	fbRaw, _ := json.Marshal(fb)
+	meta[wikiUserFeedbackKey] = fbRaw
+	page.PageMetadata, _ = json.Marshal(meta)
+}
+
+// UserFeedbackFromMetadata reads the feedback provenance block out of a
+// page's metadata. Returns nil when the block is absent.
+func UserFeedbackFromMetadata(page *WikiPage) *WikiUserFeedback {
+	if page == nil || len(page.PageMetadata) == 0 {
+		return nil
+	}
+	var meta map[string]json.RawMessage
+	if err := json.Unmarshal(page.PageMetadata, &meta); err != nil {
+		return nil
+	}
+	raw, ok := meta[wikiUserFeedbackKey]
+	if !ok {
+		return nil
+	}
+	var fb WikiUserFeedback
+	if err := json.Unmarshal(raw, &fb); err != nil {
+		return nil
+	}
+	return &fb
+}

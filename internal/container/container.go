@@ -230,6 +230,9 @@ func BuildContainer(container *dig.Container) *dig.Container {
 		dig.As(new(interfaces.FolderSummaryService), new(interfaces.FolderSummaryTaskService))))
 	must(container.Provide(service.NewKnowledgeFolderService, dig.As(new(interfaces.KnowledgeFolderService))))
 
+	// M5: automatic user-feedback-to-wiki pipeline
+	must(container.Provide(service.NewFeedbackPipelineService))
+
 	// Web search service (needed by AgentService)
 	logger.Debugf(ctx, "[Container] Registering web search registry and providers...")
 	must(container.Provide(infra_web_search.NewRegistry))
