@@ -515,6 +515,10 @@ type FolderSummaryGenerationPayload struct {
 	KnowledgeBaseID string `json:"knowledge_base_id"`
 	FolderID        string `json:"folder_id"`
 	Refresh         bool   `json:"refresh"`
+	// ForceSyncWiki bypasses the wiki-side manual_edit protection (M6).
+	// When true, the wiki projection page is updated even if it was
+	// hand-edited by a user, and both sides' manual_edit flags are cleared.
+	ForceSyncWiki bool `json:"force_sync_wiki"`
 }
 
 // KnowledgePostProcessPayload represents the knowledge post process task payload.

@@ -489,6 +489,10 @@
                         <t-icon name="edit" />
                       </button>
                     </t-tooltip>
+                    <t-tooltip v-if="props.canEdit && !editingPage && selectedPage?.page_type === 'folder_summary'"
+                      :content="$t('knowledgeEditor.wikiBrowser.folderSummaryEditHint')" placement="top">
+                      <t-icon name="info-circle" class="wiki-folder-summary-hint-icon" />
+                    </t-tooltip>
                     <t-popconfirm v-if="props.canEdit" theme="danger"
                       :content="$t('knowledgeEditor.wikiBrowser.deletePageConfirm', { title: selectedPage.title })"
                       @confirm="confirmDeletePage">
@@ -1179,7 +1183,7 @@ const navFromSystemView = ref<'' | 'index' | 'governance'>('')
 // typeOrder drives the order of groups in the sidebar. Keep in sync
 // with WIKI_PAGE_TYPES on the backend; unknown types fall through to
 // the "other" bucket at the bottom of groupedPages.
-const typeOrder = ['summary', 'entity', 'concept', 'synthesis', 'comparison']
+const typeOrder = ['summary', 'folder_summary', 'entity', 'concept', 'synthesis', 'comparison']
 
 // Entity and concept pages look and behave alike, so the sidebar merges all
 // non-summary content types under a single "knowledge" tab and distinguishes
@@ -1188,8 +1192,9 @@ const typeOrder = ['summary', 'entity', 'concept', 'synthesis', 'comparison']
 const KNOWLEDGE_TAB = 'knowledge'
 const KNOWLEDGE_TYPES = ['entity', 'concept', 'synthesis', 'comparison']
 // CONTENT_TABS are the sidebar tabs in display order: the merged knowledge tab
-// first, then summary. Each tab maps to its own bucket keyed by the tab id.
-const CONTENT_TABS = [KNOWLEDGE_TAB, 'summary']
+// first, then summary, then folder_summary. Each tab maps to its own bucket
+// keyed by the tab id.
+const CONTENT_TABS = [KNOWLEDGE_TAB, 'summary', 'folder_summary']
 
 // tabPageTypes maps a sidebar tab onto the comma-separated page_type filter the
 // backend expects. The knowledge tab folds every non-summary content type into
@@ -2013,6 +2018,7 @@ function getTypeLabel(type: string): string {
   const map: Record<string, string> = {
     knowledge: t('knowledgeEditor.wikiBrowser.filterKnowledge'),
     summary: t('knowledgeEditor.wikiBrowser.filterSummary'),
+    folder_summary: '📁 文件夹摘要',
     entity: t('knowledgeEditor.wikiBrowser.filterEntity'),
     concept: t('knowledgeEditor.wikiBrowser.filterConcept'),
     synthesis: t('knowledgeEditor.wikiBrowser.filterSynthesis'),
@@ -2031,6 +2037,7 @@ function getPageIcon(page: WikiPage): string {
     synthesis: 'relativity',
     comparison: 'view-module',
     summary: 'file',
+    folder_summary: 'folder',
   }
   return map[page.page_type] || 'file'
 }
@@ -3831,7 +3838,7 @@ const graphSelectedSlug = ref<string | null>(null)
 
 // Color map for node types
 const nodeColorMap: Record<string, string> = {
-  summary: '#0052d9', entity: '#2ba471', concept: '#e37318',
+  summary: '#0052d9', folder_summary: '#7b4feb', entity: '#2ba471', concept: '#e37318',
   synthesis: '#0594fa', comparison: '#d54941', index: '#8c8c8c',
 }
 

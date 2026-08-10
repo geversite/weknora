@@ -166,6 +166,13 @@ func (s *wikiPageService) UpdatePage(ctx context.Context, page *types.WikiPage) 
 	existing.OutLinks = s.parseOutLinks(existing.Content)
 	normalizeWikiHierarchy(existing)
 
+	// [M6] When a user hand-edits a folder-summary projection page, set the
+	// wiki-side manual_edit flag so future auto-syncs are suppressed.
+	if contentChanged && page.PageType == types.WikiPageTypeFolderSummary &&
+		types.WikiEditSourceFromContext(ctx) == types.WikiEditSourceUser {
+		types.SetFolderSummaryPageManualEdit(existing, true)
+	}
+
 	if contentChanged {
 		// The new version is authored by whoever is driving this write.
 		existing.LastEditSource = types.WikiEditSourceFromContext(ctx)
@@ -442,6 +449,7 @@ func (s *wikiPageService) GetIndex(ctx context.Context, kbID string) (*types.Wik
 // bucket.
 var wikiIndexContentPageTypes = []string{
 	types.WikiPageTypeSummary,
+	types.WikiPageTypeFolderSummary, // [M6] folder summary projection pages
 	types.WikiPageTypeEntity,
 	types.WikiPageTypeConcept,
 	types.WikiPageTypeSynthesis,
@@ -582,7 +590,17 @@ func (s *wikiPageService) GetGraph(ctx context.Context, req *types.WikiGraphRequ
 	if err != nil {
 		return nil, err
 	}
-	return computeGraphSubset(pages, req)
+
+	// [M6] Exclude folder-summary projection pages from the knowledge graph.
+	// They are read-only views, not nodes in the cross-link network.
+	filtered := make([]*types.WikiPage, 0, len(pages))
+	for _, p := range pages {
+		if p.PageType == types.WikiPageTypeFolderSummary {
+			continue
+		}
+		filtered = append(filtered, p)
+	}
+	return computeGraphSubset(filtered, req)
 }
 
 // computeGraphSubset is the pure I/O-free core of GetGraph. It takes the
@@ -1838,6 +1856,11 @@ func (s *wikiPageService) InjectCrossLinks(ctx context.Context, kbID string, aff
 			continue
 		}
 		if p.PageType == types.WikiPageTypeIndex {
+			continue
+		}
+		// [M6] Skip folder-summary projection pages — they are read-only
+		// views and must not participate in the cross-link network.
+		if p.PageType == types.WikiPageTypeFolderSummary {
 			continue
 		}
 

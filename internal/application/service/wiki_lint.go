@@ -164,16 +164,20 @@ func (s *WikiLintService) RunLint(ctx context.Context, kbID string) (*WikiLintRe
 
 			// Check 2: Broken links — outlinks pointing at slugs that
 			// don't exist in the live set.
-			for _, outLink := range page.OutLinks {
-				if !slugSet[outLink] {
-					issues = append(issues, WikiLintIssue{
-						Type:        LintIssueBrokenLink,
-						Severity:    SeverityError,
-						PageSlug:    page.Slug,
-						TargetSlug:  outLink,
-						Description: fmt.Sprintf("Page '%s' links to [[%s]] which does not exist", page.Title, outLink),
-						AutoFixable: true,
-					})
+			// [M6] Skip folder-summary projection pages — they are
+			// read-only views and do not participate in the link network.
+			if page.PageType != types.WikiPageTypeFolderSummary {
+				for _, outLink := range page.OutLinks {
+					if !slugSet[outLink] {
+						issues = append(issues, WikiLintIssue{
+							Type:        LintIssueBrokenLink,
+							Severity:    SeverityError,
+							PageSlug:    page.Slug,
+							TargetSlug:  outLink,
+							Description: fmt.Sprintf("Page '%s' links to [[%s]] which does not exist", page.Title, outLink),
+							AutoFixable: true,
+						})
+					}
 				}
 			}
 

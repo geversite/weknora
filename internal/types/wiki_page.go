@@ -126,6 +126,11 @@ const (
 	// NOT auto-created by ingest — Agent creates these via wiki_write_page tool
 	// when the user asks to compare entities, concepts, or approaches.
 	WikiPageTypeComparison = "comparison"
+	// WikiPageTypeFolderSummary represents a folder-summary projection page (M6).
+	// Created by the folder_summary_service when a folder summary is generated or
+	// refreshed. Read-only projections — not user-editable content, not
+	// auto-ingested, not part of the cross-link network.
+	WikiPageTypeFolderSummary = "folder_summary"
 )
 
 // WikiPageStatus constants
@@ -144,7 +149,8 @@ const (
 func IsValidWikiPageType(pageType string) bool {
 	switch pageType {
 	case WikiPageTypeSummary, WikiPageTypeEntity, WikiPageTypeConcept,
-		WikiPageTypeIndex, WikiPageTypeSynthesis, WikiPageTypeComparison:
+		WikiPageTypeIndex, WikiPageTypeSynthesis, WikiPageTypeComparison,
+		WikiPageTypeFolderSummary:
 		return true
 	default:
 		return false
@@ -857,4 +863,69 @@ func UserFeedbackFromMetadata(page *WikiPage) *WikiUserFeedback {
 		return nil
 	}
 	return &fb
+}
+
+// ---- M6: folder-summary projection page helpers ----
+
+// WikiFolderSummarySlugPrefix is the slug namespace for M6 folder-summary
+// projection pages. Keeps them isolated from doc-level "summary/<kid>" slugs
+// under the wiki_slug_handles.go bigram-similarity namespace partitioning.
+const WikiFolderSummarySlugPrefix = "folder_summary"
+
+// WikiFolderSummarySlug returns the stable slug for a folder's summary wiki
+// page. The slug is deterministic on folderID so the sync path can always
+// find the existing page via GetPageBySlug without an extra index.
+func WikiFolderSummarySlug(folderID string) string {
+	return WikiFolderSummarySlugPrefix + "/" + folderID
+}
+
+// IsFolderSummarySlug reports whether slug belongs to a folder-summary
+// projection page. Used by the cross-link injector and lint to skip these
+// pages (they are read-only projections, not user-editable content).
+func IsFolderSummarySlug(slug string) bool {
+	return strings.HasPrefix(slug, WikiFolderSummarySlugPrefix+"/")
+}
+
+// wikiFolderSummaryManualEditKey is the PageMetadata JSON key under which the
+// "user manually edited this projection page" flag is stored. Mirrors
+// folder_summaries.IsManualEdit for bidirectional protection.
+const wikiFolderSummaryManualEditKey = "manual_edit"
+
+// IsFolderSummaryPageManualEdit reports whether the wiki page has the
+// manual_edit flag set in its PageMetadata. Returns false on absent / nil
+// metadata. Used by the M6 sync path to suppress machine overwrites when
+// a user has hand-edited the projection page.
+func IsFolderSummaryPageManualEdit(page *WikiPage) bool {
+	if page == nil || len(page.PageMetadata) == 0 {
+		return false
+	}
+	var meta map[string]json.RawMessage
+	if err := json.Unmarshal(page.PageMetadata, &meta); err != nil {
+		return false
+	}
+	raw, ok := meta[wikiFolderSummaryManualEditKey]
+	if !ok {
+		return false
+	}
+	var v bool
+	_ = json.Unmarshal(raw, &v)
+	return v
+}
+
+// SetFolderSummaryPageManualEdit toggles the manual_edit flag in the page's
+// PageMetadata, preserving any other keys already present. Best-effort.
+func SetFolderSummaryPageManualEdit(page *WikiPage, v bool) {
+	if page == nil {
+		return
+	}
+	var meta map[string]json.RawMessage
+	if len(page.PageMetadata) > 0 {
+		_ = json.Unmarshal(page.PageMetadata, &meta)
+	}
+	if meta == nil {
+		meta = map[string]json.RawMessage{}
+	}
+	b, _ := json.Marshal(v)
+	meta[wikiFolderSummaryManualEditKey] = b
+	page.PageMetadata, _ = json.Marshal(meta)
 }

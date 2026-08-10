@@ -16,12 +16,13 @@ import (
 
 // folderService implements KnowledgeFolderService.
 type folderService struct {
-	folderRepo   interfaces.KnowledgeFolderRepository
-	summaryRepo  interfaces.FolderSummaryRepository
-	summarySvc   interfaces.FolderSummaryService
-	chunkService interfaces.ChunkService
-	kbService    interfaces.KnowledgeBaseService
-	repo         interfaces.KnowledgeRepository
+	folderRepo      interfaces.KnowledgeFolderRepository
+	summaryRepo     interfaces.FolderSummaryRepository
+	summarySvc      interfaces.FolderSummaryService
+	chunkService    interfaces.ChunkService
+	kbService       interfaces.KnowledgeBaseService
+	repo            interfaces.KnowledgeRepository
+	wikiPageService interfaces.WikiPageService // [M6] optional; nil on non-wiki deployments
 }
 
 func NewKnowledgeFolderService(
@@ -31,14 +32,16 @@ func NewKnowledgeFolderService(
 	chunkService interfaces.ChunkService,
 	kbService interfaces.KnowledgeBaseService,
 	repo interfaces.KnowledgeRepository,
+	wikiPageService interfaces.WikiPageService, // [M6]
 ) *folderService {
 	return &folderService{
-		folderRepo:   folderRepo,
-		summaryRepo:  summaryRepo,
-		summarySvc:   summarySvc,
-		chunkService: chunkService,
-		kbService:    kbService,
-		repo:         repo,
+		folderRepo:      folderRepo,
+		summaryRepo:     summaryRepo,
+		summarySvc:      summarySvc,
+		chunkService:    chunkService,
+		kbService:       kbService,
+		repo:            repo,
+		wikiPageService: wikiPageService,
 	}
 }
 
@@ -247,6 +250,14 @@ func (s *folderService) Delete(ctx context.Context, kbID, folderID string) error
 		}
 		if err := s.chunkService.DeleteByFolderAndType(ctx, sf.ID, types.ChunkTypeFolderSummary); err != nil {
 			return err
+		}
+		// [M6] 同步删除该文件夹对应的 wiki 摘要投影页
+		if s.wikiPageService != nil {
+			slug := types.WikiFolderSummarySlug(sf.ID)
+			if err := s.wikiPageService.DeletePage(ctx, kbID, slug); err != nil {
+				logger.Warnf(ctx, "[M6] failed to delete wiki folder-summary page %s: %v", slug, err)
+				// best-effort: continue cleanup
+			}
 		}
 		if err := s.folderRepo.Delete(ctx, sf.ID); err != nil {
 			return err

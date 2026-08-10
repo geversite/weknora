@@ -34,6 +34,7 @@ type folderSummaryService struct {
 	retrieveEngine     interfaces.RetrieveEngineRegistry
 	ownership          retriever.TenantStoreOwnership
 	task               interfaces.TaskEnqueuer
+	wikiPageService    interfaces.WikiPageService // [M6] optional; nil on non-wiki deployments
 }
 
 // NewFolderSummaryService builds the folder summary service. config is optional
@@ -52,6 +53,7 @@ func NewFolderSummaryService(
 	retrieveEngine interfaces.RetrieveEngineRegistry,
 	ownership retriever.TenantStoreOwnership,
 	task interfaces.TaskEnqueuer,
+	wikiPageService interfaces.WikiPageService, // [M6]
 ) *folderSummaryService {
 	return &folderSummaryService{
 		config:             config,
@@ -67,6 +69,7 @@ func NewFolderSummaryService(
 		retrieveEngine:     retrieveEngine,
 		ownership:          ownership,
 		task:               task,
+		wikiPageService:    wikiPageService,
 	}
 }
 
@@ -197,6 +200,11 @@ func (s *folderSummaryService) Edit(ctx context.Context, kbID, folderID string, 
 			if verr := s.vectorizeFolderSummary(ctx, kb, folder, summary); verr != nil {
 				logger.Warnf(ctx, "failed to vectorize manually-edited folder summary for %s: %v", folderID, verr)
 			}
+			// [M6] Sync the manual edit to the wiki projection page.
+			// summary.IsManualEdit=true propagates to set wiki side manual_edit too.
+			if err := s.syncFolderSummaryToWiki(ctx, kb, folder, summary, false); err != nil {
+				logger.Warnf(ctx, "[M6] failed to sync manual edit to wiki for folder %s: %v", folderID, err)
+			}
 		}
 	}
 	return summary, nil
@@ -238,6 +246,7 @@ func (s *folderSummaryService) enqueue(ctx context.Context, tenantID uint64, kbI
 		KnowledgeBaseID: kbID,
 		FolderID:        folderID,
 		Refresh:         refresh,
+		ForceSyncWiki:   refresh, // [M6] force refresh also bypasses wiki manual_edit protection
 	}
 	bytes, err := json.Marshal(payload)
 	if err != nil {
@@ -331,6 +340,12 @@ func (s *folderSummaryService) Handle(ctx context.Context, t *asynq.Task) error 
 	// (re)index the folder summary chunk into the vector store
 	if err := s.vectorizeFolderSummary(ctx, kb, folder, summary); err != nil {
 		logger.Errorf(ctx, "folder summary: vectorization failed for folder %s: %v", folder.ID, err)
+	}
+
+	// [M6] Sync the folder summary to the wiki as a projection page.
+	// Best-effort: failure here must not block the summary pipeline.
+	if err := s.syncFolderSummaryToWiki(ctx, kb, folder, summary, payload.ForceSyncWiki); err != nil {
+		logger.Warnf(ctx, "[M6] failed to sync folder summary to wiki for folder %s: %v", folder.ID, err)
 	}
 
 	s.setFolderStatus(ctx, folder.ID, types.FolderSummaryStatusCompleted)
@@ -477,4 +492,136 @@ func folderSummaryTaskOptions() []asynq.Option {
 		asynq.Timeout(10 * time.Minute),
 		asynq.ProcessIn(30 * time.Second),
 	}
+}
+
+// ---- M6: wiki projection sync ----
+
+// syncFolderSummaryToWiki projects a folder summary into the KB's wiki as a
+// read-only summary page (M6). The wiki page is a pure view: its content is
+// a verbatim copy of folder_summaries.content. Slug is deterministic on
+// folderID (folder_summary/<folderID>) so the sync path can find the existing
+// page without an extra index.
+//
+// Protection model (bidirectional IsManualEdit):
+//   - folder_summaries.IsManualEdit = true  → propagate the human edit and
+//     set wiki_pages.PageMetadata["manual_edit"]=true (Edit path)
+//   - wiki_pages.PageMetadata["manual_edit"] = true → skip automatic sync
+//     (user hand-edited the wiki page; don't clobber)
+//   - forceSyncWiki = true → user explicitly refreshed from FolderSummaryPanel;
+//     bypass protection and clear both sides' manual_edit flags
+//
+// KB type guard: only Wiki-type KBs have wiki routes mounted, so we skip
+// silently on non-wiki KBs to avoid creating unreachable rows.
+//
+// Failure semantics: this method MUST NOT return an error that blocks the
+// folder summary pipeline. The caller wraps it in best-effort logging.
+func (s *folderSummaryService) syncFolderSummaryToWiki(
+	ctx context.Context,
+	kb *types.KnowledgeBase,
+	folder *types.KnowledgeFolder,
+	summary *types.FolderSummary,
+	forceSyncWiki bool,
+) error {
+	if s.wikiPageService == nil {
+		return nil // wiki not configured on this deployment
+	}
+	if kb.Type != types.KnowledgeBaseTypeWiki {
+		return nil // only wiki KBs have wiki routes
+	}
+	if strings.TrimSpace(summary.Content) == "" {
+		return nil // nothing to project
+	}
+
+	slug := types.WikiFolderSummarySlug(folder.ID)
+	existing, err := s.wikiPageService.GetPageBySlug(ctx, kb.ID, slug)
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return fmt.Errorf("lookup existing wiki page: %w", err)
+	}
+
+	wikiManualEdit := types.IsFolderSummaryPageManualEdit(existing)
+
+	// Force refresh path: user explicitly clicked refresh in FolderSummaryPanel.
+	// Bypass protection and clear both sides' manual_edit flags.
+	if forceSyncWiki {
+		return s.upsertFolderSummaryWikiPage(ctx, kb, folder, summary, existing, false /* clear wiki manual_edit */)
+	}
+
+	// Bidirectional manual-edit protection.
+	if summary.IsManualEdit && !wikiManualEdit {
+		// Edit() path: propagate the human edit and lock both sides.
+		return s.upsertFolderSummaryWikiPage(ctx, kb, folder, summary, existing, true /* set wiki manual_edit */)
+	}
+	if !summary.IsManualEdit && wikiManualEdit {
+		// Wiki was hand-edited by a user; the wiki side wins. Skip machine
+		// sync until the user explicitly refreshes from FolderSummaryPanel.
+		logger.Infof(ctx, "[M6] wiki page %s is manually edited; skipping auto sync", slug)
+		return nil
+	}
+	if summary.IsManualEdit && wikiManualEdit {
+		// Both sides locked. Re-sync (Edit path, summary is the newer source).
+		return s.upsertFolderSummaryWikiPage(ctx, kb, folder, summary, existing, true)
+	}
+	// Neither side locked: normal auto-sync.
+	return s.upsertFolderSummaryWikiPage(ctx, kb, folder, summary, existing, false)
+}
+
+// upsertFolderSummaryWikiPage creates or updates the projection wiki page.
+// setManualEditFlag controls whether the wiki page's PageMetadata["manual_edit"]
+// is set to true (used when propagating a human edit from folder_summaries).
+func (s *folderSummaryService) upsertFolderSummaryWikiPage(
+	ctx context.Context,
+	kb *types.KnowledgeBase,
+	folder *types.KnowledgeFolder,
+	summary *types.FolderSummary,
+	existing *types.WikiPage,
+	setManualEditFlag bool,
+) error {
+	slug := types.WikiFolderSummarySlug(folder.ID)
+	title := fmt.Sprintf("📁 %s · 文件夹摘要", folder.Name)
+	oneLineSummary := fmt.Sprintf("文件夹 %s 的内容概述", folder.Path)
+
+	if existing == nil {
+		page := &types.WikiPage{
+			ID:              uuid.New().String(),
+			TenantID:        kb.TenantID,
+			KnowledgeBaseID: kb.ID,
+			Slug:            slug,
+			Title:           title,
+			PageType:        types.WikiPageTypeFolderSummary,
+			Status:          types.WikiPageStatusPublished,
+			Content:         summary.Content,
+			Summary:         oneLineSummary,
+			FolderID:        types.WikiFolderRootID, // 顶层
+			SourceRefs:      types.StringArray{},    // 文件夹摘要不绑定单一文档
+			PageMetadata:    nil,
+			LastEditSource:  types.WikiEditSourcePipeline,
+			Version:         1,
+		}
+		if setManualEditFlag {
+			types.SetFolderSummaryPageManualEdit(page, true)
+		}
+		if _, err := s.wikiPageService.CreatePage(ctx, page); err != nil {
+			return fmt.Errorf("create wiki page: %w", err)
+		}
+		logger.Infof(ctx, "[M6] created wiki folder-summary page %s for folder %s", slug, folder.ID)
+		return nil
+	}
+
+	// Update path: only write if content actually changed (avoid spurious
+	// version bumps). Use UpdatePage (which +1 version on content change).
+	if existing.Content == summary.Content && !setManualEditFlag {
+		return nil // no-op
+	}
+	existing.Title = title
+	existing.Content = summary.Content
+	existing.Summary = oneLineSummary
+	existing.LastEditSource = types.WikiEditSourcePipeline
+	if setManualEditFlag {
+		types.SetFolderSummaryPageManualEdit(existing, true)
+	}
+	if _, err := s.wikiPageService.UpdatePage(ctx, existing); err != nil {
+		return fmt.Errorf("update wiki page: %w", err)
+	}
+	logger.Infof(ctx, "[M6] updated wiki folder-summary page %s for folder %s", slug, folder.ID)
+	return nil
 }

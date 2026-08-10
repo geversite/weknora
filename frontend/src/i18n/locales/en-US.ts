@@ -2330,6 +2330,8 @@ export default {
       filterConcept: 'Concepts',
       filterSynthesis: 'Synthesis',
       filterComparison: 'Comparisons',
+      filterFolderSummary: 'Folder Summaries',
+      folderSummaryEditHint: 'This page is auto-synced from a folder summary. Editing will stop automatic sync; refresh from the folder summary panel to resume.',
       emptyTitle: 'No wiki pages yet',
       emptyDesc: 'Upload documents with Wiki enabled to auto-generate knowledge pages',
       selectPageHint: 'Select a page from the left to view its content',

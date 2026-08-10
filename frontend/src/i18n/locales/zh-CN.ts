@@ -3550,6 +3550,8 @@ export default {
       filterConcept: '概念',
       filterSynthesis: '综合',
       filterComparison: '对比',
+      filterFolderSummary: '文件夹摘要',
+      folderSummaryEditHint: '此页由文件夹摘要自动同步。您编辑后将停止自动同步，可在文件夹摘要面板点击刷新恢复。',
       emptyTitle: '暂无 Wiki 页面',
       emptyDesc: '上传文档并启用 Wiki 后将自动生成知识页面',
       selectPageHint: '从左侧选择一个页面查看内容',
