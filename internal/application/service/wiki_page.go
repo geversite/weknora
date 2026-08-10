@@ -591,16 +591,7 @@ func (s *wikiPageService) GetGraph(ctx context.Context, req *types.WikiGraphRequ
 		return nil, err
 	}
 
-	// [M6] Exclude folder-summary projection pages from the knowledge graph.
-	// They are read-only views, not nodes in the cross-link network.
-	filtered := make([]*types.WikiPage, 0, len(pages))
-	for _, p := range pages {
-		if p.PageType == types.WikiPageTypeFolderSummary {
-			continue
-		}
-		filtered = append(filtered, p)
-	}
-	return computeGraphSubset(filtered, req)
+	return computeGraphSubset(pages, req)
 }
 
 // computeGraphSubset is the pure I/O-free core of GetGraph. It takes the
@@ -1858,12 +1849,6 @@ func (s *wikiPageService) InjectCrossLinks(ctx context.Context, kbID string, aff
 		if p.PageType == types.WikiPageTypeIndex {
 			continue
 		}
-		// [M6] Skip folder-summary projection pages — they are read-only
-		// views and must not participate in the cross-link network.
-		if p.PageType == types.WikiPageTypeFolderSummary {
-			continue
-		}
-
 		newContent, changed := linkifyContent(p.Content, refs, p.Slug)
 		if !changed {
 			continue

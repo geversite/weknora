@@ -1922,7 +1922,7 @@ const defaultMaxCompletionTokens = ref(2048);
 const defaultTemperature = ref(0.7);
 
 // 知识库相关工具列表（用于 watch(hasKnowledgeBase) 从"无"变"有"时 seed 默认工具）
-const knowledgeBaseTools = ['grep_chunks', 'knowledge_search', 'list_knowledge_chunks', 'query_knowledge_graph', 'get_document_info', 'database_query'];
+const knowledgeBaseTools = ['grep_chunks', 'knowledge_search', 'list_knowledge_chunks', 'query_knowledge_graph', 'get_document_info', 'database_query', 'browse_folders', 'read_folder_summary'];
 
 // Wiki 读取类工具（用于 watch(agentMode) 切到 smart-reasoning 时 seed 默认工具）
 const wikiReadTools = ['wiki_search', 'wiki_read_page', 'wiki_read_source_doc', 'wiki_flag_issue'];
@@ -1956,6 +1956,9 @@ const allTools = computed(() => [
   { value: 'get_document_info', label: t('agentEditor.tools.getDocInfo'), description: t('agentEditor.tools.getDocInfoDesc'), group: 'rag' },
   { value: 'database_query', label: t('agentEditor.tools.dbQuery'), description: t('agentEditor.tools.dbQueryDesc'), group: 'rag' },
   { value: 'push_files', label: t('agentEditor.tools.pushFiles'), description: t('agentEditor.tools.pushFilesDesc'), group: 'rag' },
+  // 文件夹感知工具
+  { value: 'browse_folders', label: t('agentEditor.tools.browseFolders'), description: t('agentEditor.tools.browseFoldersDesc'), group: 'rag' },
+  { value: 'read_folder_summary', label: t('agentEditor.tools.readFolderSummary'), description: t('agentEditor.tools.readFolderSummaryDesc'), group: 'rag' },
   // Wiki 读取类（阅读、搜索、标记问题）
   { value: 'wiki_search', label: t('agentEditor.tools.wikiSearch'), description: t('agentEditor.tools.wikiSearchDesc'), group: 'wiki_read' },
   { value: 'wiki_read_page', label: t('agentEditor.tools.wikiReadPage'), description: t('agentEditor.tools.wikiReadPageDesc'), group: 'wiki_read' },

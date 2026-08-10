@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/application/service/retriever"
 	"github.com/Tencent/WeKnora/internal/config"
 	"github.com/Tencent/WeKnora/internal/logger"
@@ -237,6 +238,48 @@ func (s *folderSummaryService) IsStale(ctx context.Context, kbID, folderID strin
 	if snapshot.FileCount != currentCount {
 		return true, nil
 	}
+	// Parent-folder staleness: detect child-folder changes. A parent summary
+	// aggregates child summaries, so any child summary version bump or child
+	// count change invalidates the parent. This covers the gap where a parent
+	// had FileCount==0 and the FileCount check above could not detect child
+	// summary regeneration.
+	if snapshot.ChildFolderCount > 0 || snapshot.ChildSummaryVersions != nil {
+		tenantID := types.MustTenantIDFromContext(ctx)
+		children, cErr := s.folderRepo.ListChildren(ctx, tenantID, kbID, folderID)
+		if cErr != nil {
+			return false, cErr
+		}
+		if len(children) != snapshot.ChildFolderCount {
+			return true, nil
+		}
+		// check each child's current summary version against the snapshot
+		childIDs := make([]string, 0, len(children))
+		for _, c := range children {
+			childIDs = append(childIDs, c.ID)
+		}
+		currentSums, lerr := s.summaryRepo.GetByFolderIDs(ctx, childIDs)
+		if lerr != nil {
+			return false, lerr
+		}
+		currentVersions := make(map[string]int, len(currentSums))
+		for _, cs := range currentSums {
+			if cs != nil {
+				currentVersions[cs.FolderID] = cs.SummaryVersion
+			}
+		}
+		// any child's version drift → stale
+		for cid, v := range snapshot.ChildSummaryVersions {
+			if currentVersions[cid] != v {
+				return true, nil
+			}
+		}
+		// a child gained a summary it previously lacked
+		for cid := range currentVersions {
+			if _, ok := snapshot.ChildSummaryVersions[cid]; !ok {
+				return true, nil
+			}
+		}
+	}
 	return false, nil
 }
 
@@ -313,6 +356,13 @@ func (s *folderSummaryService) Handle(ctx context.Context, t *asynq.Task) error 
 		return err
 	}
 
+	// When a parent folder has child folders but none of them have summaries
+	// yet, content stays empty. Persist the snapshot (records child count so
+	// staleness can reschedule once children finish) but mark completed to
+	// avoid an infinite pending loop. The IsStale / ScheduleRefreshForFolder
+	// AndAncestors path will re-enqueue once any child summary is generated.
+	hasPendingChildren := strings.TrimSpace(content) == "" && snapshot != nil && snapshot.ChildFolderCount > 0
+
 	now := time.Now()
 	summary := &types.FolderSummary{
 		ID:              uuid.New().String(),
@@ -350,18 +400,75 @@ func (s *folderSummaryService) Handle(ctx context.Context, t *asynq.Task) error 
 
 	s.setFolderStatus(ctx, folder.ID, types.FolderSummaryStatusCompleted)
 	logger.Infof(ctx, "folder summary: generated for folder %s (kb %s)", folder.ID, payload.KnowledgeBaseID)
+
+	// Cascade upward: when this folder just produced a real summary (version
+	// bumped), its ancestors must be regenerated so their "subfolder guide"
+	// reflects the new child summary. We skip this when content is empty
+	// (parent folder waiting on children) to avoid an empty-cascade loop.
+	// The ancestors' IsStale check will also catch version drift, but this
+	// eager trigger short-circuits the 30s debounce lag.
+	if !hasPendingChildren && folder.ParentID != "" {
+		s.cascadeRefreshToAncestors(ctx, folder)
+	}
 	return nil
 }
 
+// cascadeRefreshToAncestors schedules a debounced refresh for every ancestor
+// of the given folder. Unlike ScheduleRefreshForFolderAndAncestors it does NOT
+// refresh the folder itself (already done); it only walks up ParentID.
+func (s *folderSummaryService) cascadeRefreshToAncestors(ctx context.Context, folder *types.KnowledgeFolder) {
+	current := folder
+	for current.ParentID != "" {
+		parent, err := s.folderRepo.GetByID(ctx, current.ParentID)
+		if err != nil || parent == nil {
+			break
+		}
+		// Skip parent if it has no child folders of its own (leaf at a higher
+		// level would not benefit). Also avoid spamming when the parent is
+		// already pending/processing (ScheduleRefresh's debounce check).
+		s.ScheduleRefresh(ctx, parent, false)
+		current = parent
+	}
+}
+
 // generateContent builds the folder-level summary from its knowledge entries.
+//
+// Aggregation policy (cascading):
+//   - Leaf folder (has direct files): summarize the files directly.
+//   - Parent folder (no direct files, has child folders): aggregate each
+//     child folder's name + summary content so the LLM can produce a
+//     "subfolder guide" overview. If no child has a summary yet, return
+//     empty (the parent will be rescheduled once children finish).
+//   - Mixed folder (both direct files and child folders): include both the
+//     file listing and the child-folder summaries.
+//
+// This closes the M4 gap where parent folders stayed empty forever because
+// generateContent only read direct files.
 func (s *folderSummaryService) generateContent(ctx context.Context, payload types.FolderSummaryGenerationPayload, folder *types.KnowledgeFolder, kb *types.KnowledgeBase) (string, *types.FolderSummaryInputSnapshot, error) {
 	// gather direct files of the folder
 	files, err := s.repo.ListByFolderIDs(ctx, payload.KnowledgeBaseID, []string{folder.ID})
 	if err != nil {
 		return "", nil, err
 	}
-	if len(files) == 0 {
-		return "", &types.FolderSummaryInputSnapshot{FileCount: 0}, nil
+
+	// gather direct child folders + their summaries (for parent aggregation)
+	children, childSummaries, childSummaryVersions, cerr := s.gatherChildSummaries(ctx, payload.TenantID, payload.KnowledgeBaseID, folder.ID)
+	if cerr != nil {
+		return "", nil, cerr
+	}
+
+	// nothing to summarize: no direct files AND no child summaries available
+	if len(files) == 0 && len(childSummaries) == 0 {
+		// If the folder has child folders but none of them have summaries yet,
+		// record the child count so staleness can trigger rescheduling later
+		// when children finish. Return empty content; caller writes a placeholder.
+		snapshot := &types.FolderSummaryInputSnapshot{
+			FileCount:            0,
+			ChildFolderCount:     len(children),
+			ChildSummaryVersions: childSummaryVersions,
+			GeneratedAt:          time.Now(),
+		}
+		return "", snapshot, nil
 	}
 
 	// citation counts enrich the prompt with usage signals
@@ -370,7 +477,7 @@ func (s *folderSummaryService) generateContent(ctx context.Context, payload type
 		citationCounts = nil
 	}
 
-	// build the document listing (title + summary if present)
+	// build the prompt body: direct files section + child-folder summaries section
 	var titles []string
 	var body strings.Builder
 	for _, f := range files {
@@ -381,6 +488,23 @@ func (s *folderSummaryService) generateContent(ctx context.Context, payload type
 		}
 		if c, ok := citationCounts[f.ID]; ok && c > 0 {
 			fmt.Fprintf(&body, "  引用次数: %d\n", c)
+		}
+	}
+	// append child-folder summaries so the LLM can synthesize a parent overview
+	if len(childSummaries) > 0 {
+		if body.Len() > 0 {
+			body.WriteString("\n")
+		}
+		body.WriteString("子文件夹及其摘要：\n")
+		// order children by SortOrder/Name for stable prompts
+		for _, child := range children {
+			cs := childSummaries[child.ID]
+			if cs == nil || strings.TrimSpace(cs.Content) == "" {
+				continue // child has no summary yet; skip
+			}
+			fmt.Fprintf(&body, "## 子文件夹：%s\n", child.Name)
+			body.WriteString(strings.TrimSpace(cs.Content))
+			body.WriteString("\n\n")
 		}
 	}
 
@@ -394,7 +518,7 @@ func (s *folderSummaryService) generateContent(ctx context.Context, payload type
 	}
 
 	modelCtx := types.WithLLMCallMetadata(ctx, "folder_summary", "")
-	prompt := s.folderSummaryPrompt(modelCtx)
+	prompt := s.folderSummaryPrompt(modelCtx, len(childSummaries) > 0)
 	content, err := chatModel.Chat(modelCtx, []chat.Message{
 		{Role: "system", Content: prompt},
 		{Role: "user", Content: body.String()},
@@ -404,20 +528,60 @@ func (s *folderSummaryService) generateContent(ctx context.Context, payload type
 	}
 
 	snapshot := &types.FolderSummaryInputSnapshot{
-		FileCount:      len(files),
-		FileTitles:     titles,
-		CitationCounts: citationCounts,
-		GeneratedAt:    time.Now(),
+		FileCount:            len(files),
+		FileTitles:           titles,
+		CitationCounts:       citationCounts,
+		ChildFolderCount:     len(children),
+		ChildSummaryVersions: childSummaryVersions,
+		GeneratedAt:          time.Now(),
 	}
 	return content.Content, snapshot, nil
 }
 
-func (s *folderSummaryService) folderSummaryPrompt(ctx context.Context) string {
+// gatherChildSummaries returns the direct child folders of the given folder,
+// their summaries (map by folder ID; nil entries for children without a
+// summary), and a map of folderID -> summary version for staleness tracking.
+// children is always returned (even when no summaries exist) so the caller can
+// record ChildFolderCount in the snapshot.
+func (s *folderSummaryService) gatherChildSummaries(ctx context.Context, tenantID uint64, kbID, folderID string) (children []*types.KnowledgeFolder, summaries map[string]*types.FolderSummary, versions map[string]int, err error) {
+	children, err = s.folderRepo.ListChildren(ctx, tenantID, kbID, folderID)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	if len(children) == 0 {
+		return children, map[string]*types.FolderSummary{}, map[string]int{}, nil
+	}
+	childIDs := make([]string, 0, len(children))
+	for _, c := range children {
+		childIDs = append(childIDs, c.ID)
+	}
+	childSums, err := s.summaryRepo.GetByFolderIDs(ctx, childIDs)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	summaries = make(map[string]*types.FolderSummary, len(childSums))
+	versions = make(map[string]int, len(children))
+	for _, cs := range childSums {
+		if cs == nil {
+			continue
+		}
+		summaries[cs.FolderID] = cs
+		versions[cs.FolderID] = cs.SummaryVersion
+	}
+	return children, summaries, versions, nil
+}
+
+func (s *folderSummaryService) folderSummaryPrompt(ctx context.Context, hasChildSummaries bool) string {
 	lang := types.LanguageNameFromContext(ctx)
+	// User-configured prompt takes precedence when present.
 	if s.config != nil && s.config.Conversation != nil && strings.TrimSpace(s.config.Conversation.GenerateSummaryPrompt) != "" {
 		return types.RenderPromptPlaceholders(s.config.Conversation.GenerateSummaryPrompt, types.PlaceholderValues{
 			"language": lang,
 		})
+	}
+	if hasChildSummaries {
+		return "你是一名知识库文件夹内容管理员。请根据以下文件夹直接包含的文件列表，以及各子文件夹的摘要内容，用 " + lang +
+			" 生成一段精炼的结构化概述（Markdown），概括该文件夹覆盖的整体主题、各子文件夹之间的关系与知识要点、适用场景。不要编造列表中不存在的信息。"
 	}
 	return "你是一名知识库文件夹内容管理员。请根据以下文件夹中的文件列表与摘要，用 " + lang + " 生成一段精炼的结构化概述（Markdown），概括该文件夹覆盖的主题、知识要点与适用场景。不要编造列表中不存在的信息。"
 }
@@ -523,18 +687,21 @@ func (s *folderSummaryService) syncFolderSummaryToWiki(
 	forceSyncWiki bool,
 ) error {
 	if s.wikiPageService == nil {
+		logger.Infof(ctx, "[M6] sync skipped for folder %s: wikiPageService is nil", folder.ID)
 		return nil // wiki not configured on this deployment
 	}
-	if kb.Type != types.KnowledgeBaseTypeWiki {
-		return nil // only wiki KBs have wiki routes
+	if !kb.IsWikiEnabled() {
+		logger.Infof(ctx, "[M6] sync skipped for folder %s: IsWikiEnabled()=false (kb type=%s wiki_enabled=%v)", folder.ID, kb.Type, kb.IndexingStrategy.WikiEnabled)
+		return nil // wiki feature not enabled for this KB
 	}
 	if strings.TrimSpace(summary.Content) == "" {
+		logger.Infof(ctx, "[M6] sync skipped for folder %s: empty content", folder.ID)
 		return nil // nothing to project
 	}
 
 	slug := types.WikiFolderSummarySlug(folder.ID)
 	existing, err := s.wikiPageService.GetPageBySlug(ctx, kb.ID, slug)
-	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) && !errors.Is(err, repository.ErrWikiPageNotFound) {
 		return fmt.Errorf("lookup existing wiki page: %w", err)
 	}
 
@@ -592,6 +759,7 @@ func (s *folderSummaryService) upsertFolderSummaryWikiPage(
 			Content:         summary.Content,
 			Summary:         oneLineSummary,
 			FolderID:        types.WikiFolderRootID, // 顶层
+			WikiPath:        slug,                   // [M6-fix] WikiPath must be set so the sidebar can render the page; slug is the natural wiki_path for root-level pages
 			SourceRefs:      types.StringArray{},    // 文件夹摘要不绑定单一文档
 			PageMetadata:    nil,
 			LastEditSource:  types.WikiEditSourcePipeline,
@@ -615,6 +783,7 @@ func (s *folderSummaryService) upsertFolderSummaryWikiPage(
 	existing.Title = title
 	existing.Content = summary.Content
 	existing.Summary = oneLineSummary
+	existing.WikiPath = slug // [M6-fix] keep wiki_path in sync on update
 	existing.LastEditSource = types.WikiEditSourcePipeline
 	if setManualEditFlag {
 		types.SetFolderSummaryPageManualEdit(existing, true)

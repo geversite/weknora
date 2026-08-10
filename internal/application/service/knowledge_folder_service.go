@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -353,7 +354,9 @@ func (s *folderService) GetGovernanceReport(ctx context.Context, kbID string) (*
 		}
 	}
 
-	// 2. stale summaries: generated_at < latest file change (folder-summary not manual)
+	// 2. stale summaries: use the summary service's IsStale which detects both
+	// direct-file changes and child-folder summary version drift (parent
+	// folders). Falls back to skip when the summary service is unavailable.
 	summaries, serr := s.summaryRepo.ListByKB(ctx, tenantID, kbID)
 	if serr != nil {
 		return nil, serr
@@ -362,20 +365,27 @@ func (s *folderService) GetGovernanceReport(ctx context.Context, kbID string) (*
 		if sum.IsManualEdit || sum.GeneratedAt == nil {
 			continue
 		}
-		latest, lerr := s.repo.LatestFileChangeTime(ctx, kbID, sum.FolderID)
-		if lerr != nil {
-			return nil, lerr
+		folder, ferr := s.folderRepo.GetByID(ctx, sum.FolderID)
+		if ferr != nil {
+			continue
 		}
-		if latest != nil && latest.After(*sum.GeneratedAt) {
-			folder, ferr := s.folderRepo.GetByID(ctx, sum.FolderID)
-			if ferr != nil {
-				continue
-			}
-			report.StaleSummaries = append(report.StaleSummaries, types.FolderStaleSummaryInfo{
-				FolderID: sum.FolderID, Name: folder.Name,
-				GeneratedAt: *sum.GeneratedAt, LastFileChange: *latest,
-			})
+		stale, stlErr := s.summarySvc.IsStale(ctx, kbID, sum.FolderID)
+		if stlErr != nil || !stale {
+			continue
 		}
+		// Best-effort last file change time for the report display; parents
+		// may have no direct files so this can be zero.
+		latest, _ := s.repo.LatestFileChangeTime(ctx, kbID, sum.FolderID)
+		var lastChange time.Time
+		if latest != nil {
+			lastChange = *latest
+		} else {
+			lastChange = *sum.GeneratedAt // no direct file change to show
+		}
+		report.StaleSummaries = append(report.StaleSummaries, types.FolderStaleSummaryInfo{
+			FolderID: sum.FolderID, Name: folder.Name,
+			GeneratedAt: *sum.GeneratedAt, LastFileChange: lastChange,
+		})
 	}
 
 	// 3. duplicate files across folders (same file_hash, different folder_id)

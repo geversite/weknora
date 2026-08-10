@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
-	"slices"
 	"sort"
 	"strconv"
 
@@ -536,24 +535,6 @@ func (s *agentService) registerTools(
 		}
 		allowedTools = filteredTools
 		logger.Infof(ctx, "Pure Agent Mode: Knowledge base tools filtered out, remaining: %v", allowedTools)
-	}
-
-	// M4-fix2: folder tools are always available to knowledge-scoped agents.
-	// They are harmless for KBs without folder governance (they degrade to a
-	// notice), and they pair with the auto-injected <folders> context block.
-	// Enforce their presence even for agents whose saved AllowedTools predate
-	// the folder feature, so a KB with folders always exposes them.
-	if hasKnowledge && s.folderService != nil {
-		added := false
-		for _, t := range []string{tools.ToolBrowseFolders, tools.ToolReadFolderSummary} {
-			if !slices.Contains(allowedTools, t) {
-				allowedTools = append(allowedTools, t)
-				added = true
-			}
-		}
-		if added {
-			logger.Infof(ctx, "M4-fix2: enforced folder tools in allowedTools: %v", allowedTools)
-		}
 	}
 
 	// If web search is enabled, add web_search to allowedTools

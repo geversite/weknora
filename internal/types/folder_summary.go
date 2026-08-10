@@ -31,6 +31,16 @@ type FolderSummaryInputSnapshot struct {
 	FileTitles     []string         `json:"file_titles"`
 	CitationCounts map[string]int64 `json:"citation_counts"` // knowledgeID -> count
 	GeneratedAt    time.Time        `json:"generated_at"`
+
+	// ChildFolderCount is the number of direct child folders at generation
+	// time. Parent-folder summaries aggregate child-folder summaries, so a
+	// change in the child-folder set (added/removed/renamed) must invalidate
+	// the parent summary.
+	ChildFolderCount int `json:"child_folder_count,omitempty"`
+	// ChildSummaryVersions records each child folder's SummaryVersion at
+	// generation time. When any child's summary is regenerated its version
+	// bumps, so the parent is considered stale and rescheduled.
+	ChildSummaryVersions map[string]int `json:"child_summary_versions,omitempty"` // folderID -> version
 }
 
 // FolderSummaryEditRequest is the payload for manual editing.

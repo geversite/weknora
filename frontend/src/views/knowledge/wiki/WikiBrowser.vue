@@ -228,7 +228,7 @@
                 <div class="wiki-tab-bar-scroll">
                   <div v-for="tab in visibleTabs" :key="tab.type"
                     :class="['wiki-tab', { active: activeTab === tab.type }]" @click="setActiveTab(tab.type)">
-                    <span class="wiki-tab-label">{{ tab.label }}</span>
+                    <span class="wiki-tab-label">{{ tab.type === 'folder_summary' ? $t('knowledgeEditor.wikiBrowser.filterFolder') : tab.label }}</span>
                     <span class="wiki-tab-count">{{ tab.total }}</span>
                   </div>
                 </div>
@@ -252,20 +252,25 @@
                       </button>
                     </t-tooltip>
                   </div>
-                  <t-tooltip v-if="props.canEdit" :content="$t('knowledgeEditor.wikiBrowser.newRootFolder')" placement="top">
+                  <t-dropdown v-if="props.canEdit" trigger="click" placement="bottom-right"
+                    :popup-props="{ overlayClassName: 'wiki-new-dropdown' }">
                     <button type="button" class="wiki-tab-bar-action"
-                      :disabled="sidebarViewMode !== 'tree' || sidebarViewSwitching || sidebarTabSwitching"
-                      :aria-label="$t('knowledgeEditor.wikiBrowser.newRootFolder')"
-                      @click.stop="startCreateRootFolder">
-                      <t-icon name="folder-add" />
+                      :aria-label="$t('knowledgeEditor.wikiBrowser.newBtn')">
+                      <t-icon name="add" />
                     </button>
-                  </t-tooltip>
-                  <t-tooltip v-if="props.canEdit" :content="$t('knowledgeEditor.wikiBrowser.newPageBtn')" placement="top">
-                    <button type="button" class="wiki-tab-bar-action"
-                      :aria-label="$t('knowledgeEditor.wikiBrowser.newPageBtn')" @click.stop="openCreatePageDialog">
-                      <t-icon name="file-add" />
-                    </button>
-                  </t-tooltip>
+                    <template #dropdown>
+                      <div class="wiki-new-dropdown-menu">
+                        <div class="wiki-new-dropdown-item" @click="startCreateRootFolder">
+                          <t-icon name="folder-add" />
+                          <span>{{ $t('knowledgeEditor.wikiBrowser.newRootFolder') }}</span>
+                        </div>
+                        <div class="wiki-new-dropdown-item" @click="openCreatePageDialog">
+                          <t-icon name="file-add" />
+                          <span>{{ $t('knowledgeEditor.wikiBrowser.newPageBtn') }}</span>
+                        </div>
+                      </div>
+                    </template>
+                  </t-dropdown>
                 </div>
               </div>
 
@@ -5148,6 +5153,32 @@ onUnmounted(() => {
     background: transparent;
     cursor: not-allowed;
     opacity: 0.45;
+  }
+}
+
+.wiki-new-dropdown-menu {
+  min-width: 140px;
+  padding: 4px;
+}
+
+.wiki-new-dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--td-text-color-primary);
+  cursor: pointer;
+  transition: background-color 0.12s;
+
+  .t-icon {
+    font-size: 15px;
+    color: var(--td-text-color-secondary);
+  }
+
+  &:hover {
+    background: var(--td-bg-color-container-hover);
   }
 }
 
