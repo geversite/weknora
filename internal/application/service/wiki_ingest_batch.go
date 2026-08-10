@@ -1180,7 +1180,10 @@ func (s *wikiIngestService) mapOneDocument(
 		return nil, nil, nil
 	}
 
-	chunks, err := s.chunkRepo.ListChunksByKnowledgeID(ctx, payload.TenantID, knowledgeID)
+	// Use ListEnabledChunksByKnowledgeID so that chunks disabled by conflict
+	// adjudication (IsEnabled=false) are excluded from wiki page generation.
+	// This keeps wiki content consistent with the adjudication outcome.
+	chunks, err := s.chunkRepo.ListEnabledChunksByKnowledgeID(ctx, payload.TenantID, knowledgeID)
 	if err != nil {
 		s.tracker().FailSpan(ctx, wikiSpan, "LIST_CHUNKS_FAILED", err.Error(), err)
 		return nil, nil, fmt.Errorf("get chunks: %w", err)

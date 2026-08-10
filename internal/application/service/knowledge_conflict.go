@@ -54,6 +54,7 @@ type KnowledgeConflictService struct {
 	chunkRepo    interfaces.ChunkRepository
 	modelService interfaces.ModelService
 	taskEnqueuer interfaces.TaskEnqueuer
+	pendingRepo  interfaces.TaskPendingOpsRepository
 }
 
 // NewKnowledgeConflictService constructs the conflict detect + adjudicate service.
@@ -64,6 +65,7 @@ func NewKnowledgeConflictService(
 	chunkRepo interfaces.ChunkRepository,
 	modelService interfaces.ModelService,
 	taskEnqueuer interfaces.TaskEnqueuer,
+	pendingRepo interfaces.TaskPendingOpsRepository,
 ) *KnowledgeConflictService {
 	return &KnowledgeConflictService{
 		conflictRepo: conflictRepo,
@@ -72,6 +74,7 @@ func NewKnowledgeConflictService(
 		chunkRepo:    chunkRepo,
 		modelService: modelService,
 		taskEnqueuer: taskEnqueuer,
+		pendingRepo:  pendingRepo,
 	}
 }
 
@@ -549,6 +552,18 @@ func (s *KnowledgeConflictService) Resolve(
 		return nil, fmt.Errorf("disable adjudicated chunks: %w", err)
 	}
 
+	// When chunks are disabled by adjudication (newer_wins / older_wins), the
+	// wiki pages that were previously generated from those chunks are now
+	// stale — they still contain the adjudicated-as-wrong content. Trigger a
+	// best-effort wiki re-ingest for the affected knowledge(s) so wiki syncs
+	// to the adjudication outcome. ListEnabledChunksByKnowledgeID (used by
+	// wiki ingest) will automatically exclude the freshly-disabled chunks.
+	//
+	// keep_both / not_conflict disable nothing, so there is nothing to sync.
+	if len(disabledChunkIDs) > 0 {
+		s.triggerWikiReingestForDisabledChunks(ctx, conflict, disabledChunkIDs)
+	}
+
 	now := time.Now()
 	conflict.Status = newStatus
 	conflict.ResolvedBy = resolverUserID
@@ -587,6 +602,60 @@ func (s *KnowledgeConflictService) disableChunks(ctx context.Context, tenantID u
 		c.IsEnabled = false
 	}
 	return s.chunkRepo.UpdateChunks(ctx, chunks)
+}
+
+// triggerWikiReingestForDisabledChunks enqueues a best-effort wiki re-ingest
+// for each knowledge that owns a disabled chunk. The wiki ingest pipeline uses
+// ListEnabledChunksByKnowledgeID, so the re-generated wiki pages will exclude
+// the adjudicated-as-wrong content.
+//
+// This is best-effort: failures are logged but never returned to the caller,
+// since the adjudication itself (chunk disable + conflict status update) has
+// already succeeded by the time we get here.
+func (s *KnowledgeConflictService) triggerWikiReingestForDisabledChunks(
+	ctx context.Context,
+	conflict *types.KnowledgeConflict,
+	disabledChunkIDs []string,
+) {
+	if s.pendingRepo == nil || s.taskEnqueuer == nil {
+		return
+	}
+
+	// Map each disabled chunk ID to the knowledge it belongs to. The conflict
+	// record tells us ChunkIDA→KnowledgeIDA and ChunkIDB→KnowledgeIDB, so we
+	// can resolve without an extra DB round-trip.
+	chunkToKnowledge := map[string]string{
+		conflict.ChunkIDA: conflict.KnowledgeIDA,
+		conflict.ChunkIDB: conflict.KnowledgeIDB,
+	}
+	affectedKnowledgeIDs := make(map[string]struct{})
+	for _, chunkID := range disabledChunkIDs {
+		if kid, ok := chunkToKnowledge[chunkID]; ok && kid != "" {
+			affectedKnowledgeIDs[kid] = struct{}{}
+		}
+	}
+
+	for knowledgeID := range affectedKnowledgeIDs {
+		accepted, err := EnqueueWikiIngest(
+			ctx, s.taskEnqueuer, s.pendingRepo,
+			conflict.TenantID, conflict.KnowledgeBaseID, knowledgeID,
+		)
+		if err != nil {
+			logger.GetLogger(ctx).Warnf(
+				"[ConflictResolve] Failed to enqueue wiki re-ingest for knowledge %s (kb %s): %v",
+				knowledgeID, conflict.KnowledgeBaseID, err)
+			continue
+		}
+		if !accepted {
+			logger.GetLogger(ctx).Infof(
+				"[ConflictResolve] Wiki re-ingest skipped (KB %s may be deleted) for knowledge %s",
+				conflict.KnowledgeBaseID, knowledgeID)
+			continue
+		}
+		logger.GetLogger(ctx).Infof(
+			"[ConflictResolve] Enqueued wiki re-ingest for knowledge %s (kb %s) after disabling chunk(s) %v",
+			knowledgeID, conflict.KnowledgeBaseID, disabledChunkIDs)
+	}
 }
 
 // ---------------------------------------------------------------------------

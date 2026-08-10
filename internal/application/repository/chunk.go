@@ -159,6 +159,23 @@ func (r *chunkRepository) ListChunksByKnowledgeID(
 	return chunks, nil
 }
 
+// ListEnabledChunksByKnowledgeID lists only enabled text chunks for a
+// knowledge ID. Wiki ingest uses this so chunks disabled by conflict
+// adjudication (IsEnabled=false) are excluded from wiki page generation.
+func (r *chunkRepository) ListEnabledChunksByKnowledgeID(
+	ctx context.Context, tenantID uint64, knowledgeID string,
+) ([]*types.Chunk, error) {
+	var chunks []*types.Chunk
+	if err := r.db.WithContext(ctx).
+		Where("tenant_id = ? AND knowledge_id = ? AND chunk_type = ? AND is_enabled = ?",
+			tenantID, knowledgeID, "text", true).
+		Order("chunk_index ASC").
+		Find(&chunks).Error; err != nil {
+		return nil, err
+	}
+	return chunks, nil
+}
+
 // ListPagedChunksByKnowledgeID lists chunks for a knowledge ID with pagination
 func (r *chunkRepository) ListPagedChunksByKnowledgeID(
 	ctx context.Context,
