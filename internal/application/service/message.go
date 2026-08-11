@@ -494,7 +494,14 @@ func (s *messageService) RecordReferenceEvents(ctx context.Context, tenantID uin
 		if assistantMessage.AgentID != "" || len(assistantMessage.AgentSteps) > 0 {
 			refType = types.ReferenceTypeAgent
 		}
-		// M2: 被 push_files 推送的文件标记为 push 类型。
+		// Wiki 工具引用的源文档标记为 wiki 类型。wiki_search / wiki_read_page
+		// 在构造 SearchResult 时通过 Metadata["citation_source"]="wiki" 打标。
+		// 优先级高于 agent（wiki 是更具体的引用来源），低于 push（push 是用户
+		// 主动获取文件的显式行为）。
+		if refType == types.ReferenceTypeAgent && ref.Metadata != nil && ref.Metadata["citation_source"] == "wiki" {
+			refType = types.ReferenceTypeWiki
+		}
+		// M2: 被 push_files 推送的文件标记为 push 类型（优先级最高）。
 		if pushedSet[ref.KnowledgeID] {
 			refType = types.ReferenceTypePush
 		}

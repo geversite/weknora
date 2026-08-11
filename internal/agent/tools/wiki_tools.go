@@ -223,6 +223,45 @@ func extractSourceKnowledgeIDs(page *types.WikiPage) []string {
 	return ids
 }
 
+// CitationSourceWiki is the marker value placed in SearchResult.Metadata
+// to signal that a citation originated from a wiki tool (wiki_read_page or
+// wiki_search) rather than a direct RAG retrieval. RecordReferenceEvents
+// inspects this key to tag the resulting reference_events row with
+// reference_type='wiki'.
+const CitationSourceWiki = "wiki"
+
+// buildWikiSourceSearchResults converts the SourceRefs of a wiki page into
+// minimal SearchResult objects suitable for citation tracking. Each source
+// document contributes one SearchResult (document-level granularity, no chunk
+// info), tagged with Metadata["citation_source"]="wiki" so the recording layer
+// can set reference_type='wiki'. Structural pages (index) have no provenance
+// and yield nothing. Deduplicates by knowledge_id within the call.
+func buildWikiSourceSearchResults(pages []*types.WikiPage) []*types.SearchResult {
+	seen := make(map[string]bool)
+	var results []*types.SearchResult
+	for _, page := range pages {
+		if page == nil || isStructuralPage(page) {
+			continue
+		}
+		kbID := page.KnowledgeBaseID
+		for _, kid := range extractSourceKnowledgeIDs(page) {
+			if kid == "" || seen[kid] {
+				continue
+			}
+			seen[kid] = true
+			results = append(results, &types.SearchResult{
+				KnowledgeID:     kid,
+				KnowledgeBaseID: kbID,
+				MatchType:       types.MatchTypeWiki,
+				Metadata: map[string]string{
+					"citation_source": CitationSourceWiki,
+				},
+			})
+		}
+	}
+	return results
+}
+
 // isStructuralPage reports whether a page is the wiki-level index rather than
 // a content page tied to specific source documents. The index is never
 // filtered by knowledge_ids scope because it describes wiki topology.
@@ -735,9 +774,29 @@ func (t *wikiReadPageTool) Execute(ctx context.Context, args json.RawMessage) (*
 		}
 	}
 
+	// Collect source-document citations from the wiki pages actually
+	// rendered to the model so the agent engine can record them as
+	// reference_type='wiki' citation events. Pages whose body was entirely
+	// omitted (omittedSlugs) were never shown to the model and therefore do
+	// not count as citations; pages that were merely truncated still count
+	// because their summary/metadata were visible.
+	omittedSet := make(map[string]bool, len(omittedSlugs))
+	for _, slug := range omittedSlugs {
+		omittedSet[slug] = true
+	}
+	citedPages := make([]*types.WikiPage, 0, len(pending))
+	for _, p := range pending {
+		if p.page == nil || omittedSet[p.page.Slug] {
+			continue
+		}
+		citedPages = append(citedPages, p.page)
+	}
+	wikiRefs := buildWikiSourceSearchResults(citedPages)
+
 	return &types.ToolResult{
-		Success: true,
-		Output:  finalOutput,
+		Success:       true,
+		Output:        finalOutput,
+		SearchResults: wikiRefs,
 		Data: map[string]interface{}{
 			"found_kbs":       foundKBs,
 			"ambiguous_slugs": ambiguous,
@@ -960,6 +1019,13 @@ func (t *wikiSearchTool) Execute(ctx context.Context, args json.RawMessage) (*ty
 	if len(searchErrors) > 0 {
 		output += "\n\n<errors>\n" + strings.Join(searchErrors, "\n") + "\n</errors>"
 	}
+
+	// wiki_search is a discovery tool: it returns page summaries/snippets so
+	// the agent can decide which pages to read next. Per M1's principle
+	// ("引用以回答实际使用为准，非检索召回即计数"), surfacing a page in search
+	// results is NOT a citation — the agent may read none, one, or several of
+	// these pages afterward via wiki_read_page, and only those reads count.
+	// Therefore wiki_search deliberately leaves SearchResults nil.
 	return &types.ToolResult{
 		Success: true,
 		Output:  output,

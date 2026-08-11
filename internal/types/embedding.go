@@ -23,6 +23,7 @@ const (
 	MatchTypeWebSearch    // 网络搜索匹配类型
 	MatchTypeDirectLoad   // Deprecated: reserved to preserve serialized enum values
 	MatchTypeDataAnalysis // 数据分析匹配类型
+	MatchTypeWiki         // Wiki 页面溯源到源文档的引用（非直接 RAG 检索）
 )
 
 // IndexInfo contains information about indexed content

@@ -79,6 +79,8 @@ func FormatMatchType(mt types.MatchType) string {
 		return "Relation Chunk Match"
 	case types.MatchTypeGraph:
 		return "Graph Match"
+	case types.MatchTypeWiki:
+		return "Wiki Source Match"
 	default:
 		return fmt.Sprintf("Unknown Type(%d)", mt)
 	}
