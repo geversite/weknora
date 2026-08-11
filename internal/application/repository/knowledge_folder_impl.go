@@ -103,6 +103,27 @@ func (r *knowledgeFolderRepo) HasChildren(ctx context.Context, tenantID uint64, 
 	return count > 0, err
 }
 
+// ExistsByName reports whether a non-deleted folder with the given name
+// exists under parentID (empty = root) in the KB. excludeID allows the
+// rename path to skip the folder itself.
+func (r *knowledgeFolderRepo) ExistsByName(ctx context.Context, tenantID uint64, kbID, parentID, name, excludeID string) (bool, error) {
+	q := r.db.WithContext(ctx).Model(&types.KnowledgeFolder{}).
+		Where("tenant_id = ? AND knowledge_base_id = ? AND name = ?", tenantID, kbID, name)
+	if parentID == "" {
+		q = q.Where("parent_id = '' OR parent_id IS NULL")
+	} else {
+		q = q.Where("parent_id = ?", parentID)
+	}
+	if excludeID != "" {
+		q = q.Where("id <> ?", excludeID)
+	}
+	var count int64
+	if err := q.Count(&count).Error; err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
 func (r *knowledgeFolderRepo) UpdateStatus(ctx context.Context, folderID, status string) error {
 	return r.db.WithContext(ctx).Model(&types.KnowledgeFolder{}).
 		Where("id = ?", folderID).

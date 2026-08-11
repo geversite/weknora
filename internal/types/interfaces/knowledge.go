@@ -256,6 +256,10 @@ type KnowledgeRepository interface {
 		kbID string,
 		params *types.KnowledgeCheckParams,
 	) (bool, *types.Knowledge, error)
+	// ExistsFileByNameInFolder reports whether a non-deleted knowledge row
+	// with the given file_name exists in folderID (empty = root) of the KB.
+	// excludeID allows the rename path to skip the knowledge itself.
+	ExistsFileByNameInFolder(ctx context.Context, tenantID uint64, kbID, folderID, fileName, excludeID string) (bool, error)
 	// AminusB returns the IDs of knowledge in A that have no counterpart in B,
 	// comparing file_hash as a multiset (so duplicate-count differences and
 	// NULL/empty hashes are handled correctly, letting a clone converge).

@@ -19,6 +19,11 @@ type KnowledgeFolderRepository interface {
 	// ListChildren returns direct child folders of parentID (empty = root).
 	ListChildren(ctx context.Context, tenantID uint64, kbID, parentID string) ([]*types.KnowledgeFolder, error)
 
+	// ExistsByName reports whether a non-deleted folder with the given name
+	// exists under parentID (empty = root) in the KB. excludeID allows the
+	// rename path to skip the folder itself.
+	ExistsByName(ctx context.Context, tenantID uint64, kbID, parentID, name, excludeID string) (bool, error)
+
 	// GetSubtree returns all folders under the given folder IDs (inclusive),
 	// using the materialized path prefix match.
 	GetSubtree(ctx context.Context, tenantID uint64, kbID string, folderIDs []string) ([]*types.KnowledgeFolder, error)

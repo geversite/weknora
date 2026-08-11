@@ -351,6 +351,25 @@ func scopedByFolder(query *gorm.DB, folderID string) *gorm.DB {
 	return query.Where("folder_id = ?", folderID)
 }
 
+// ExistsFileByNameInFolder reports whether a non-deleted knowledge row with
+// the given file_name exists in folderID (empty = root) of the KB. excludeID
+// allows the rename path to skip the knowledge itself. Only rows whose
+// parse_status is not 'failed' are considered, mirroring CheckKnowledgeExists.
+func (r *knowledgeRepository) ExistsFileByNameInFolder(ctx context.Context, tenantID uint64, kbID, folderID, fileName, excludeID string) (bool, error) {
+	q := r.db.WithContext(ctx).Table("knowledges").
+		Where("tenant_id = ? AND knowledge_base_id = ? AND file_name = ? AND parse_status <> 'failed'", tenantID, kbID, fileName).
+		Where("deleted_at IS NULL")
+	q = scopedByFolder(q, folderID)
+	if excludeID != "" {
+		q = q.Where("id <> ?", excludeID)
+	}
+	var count int64
+	if err := q.Count(&count).Error; err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
 // AminusB returns the IDs of knowledge in A that have no counterpart in B,
 // comparing by file_hash as a MULTISET rather than a plain set.
 //

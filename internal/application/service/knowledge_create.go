@@ -86,6 +86,18 @@ func (s *knowledgeService) CreateKnowledgeFromFile(ctx context.Context,
 	// Check if file already exists
 	tenantID := ctx.Value(types.TenantIDContextKey).(uint64)
 	logger.Infof(ctx, "Checking if file exists, tenant ID: %d", tenantID)
+
+	// 同路径下不允许同名文件（即使内容不同也视为冲突，避免 UI 混淆）
+	nameConflict, err := s.repo.ExistsFileByNameInFolder(ctx, tenantID, kbID, folderID, fileName, "")
+	if err != nil {
+		logger.Errorf(ctx, "Failed to check file name conflict: %v", err)
+		return nil, err
+	}
+	if nameConflict {
+		logger.Infof(ctx, "File name already exists in folder: %s", fileName)
+		return nil, ErrFileNameConflict
+	}
+
 	exists, existingKnowledge, err := s.repo.CheckKnowledgeExists(ctx, tenantID, kbID, &types.KnowledgeCheckParams{
 		Type:     "file",
 		FileName: fileName,

@@ -45,6 +45,9 @@ var (
 	ErrInvalidFolderParent   = errors.New("invalid folder parent")
 	ErrKnowledgeNotInKB      = errors.New("knowledge not in knowledge base")
 	ErrFolderSummaryNotReady = errors.New("folder summary not ready")
+	// 同路径下不允许出现同名文件夹 / 同名文件
+	ErrFolderNameConflict = errors.New("folder name already exists in the same parent folder")
+	ErrFileNameConflict   = errors.New("file name already exists in the same folder")
 )
 
 // knowledgeService implements the knowledge service interface

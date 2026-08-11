@@ -448,6 +448,8 @@ func writeKnowledgeFolderError(c *gin.Context, err error) {
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 	case "invalid folder name", "invalid folder parent", "knowledge not in knowledge base":
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	case "folder name already exists in the same parent folder":
+		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 	default:
 		if strings.Contains(err.Error(), "not found") {
 			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})

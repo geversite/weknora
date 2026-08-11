@@ -120,6 +120,15 @@ func (s *folderService) Create(ctx context.Context, kbID string, req *types.Know
 		depth = 0
 	}
 
+	// 同路径下不允许同名文件夹
+	exists, err := s.folderRepo.ExistsByName(ctx, tenantID, kbID, req.ParentID, name, "")
+	if err != nil {
+		return nil, err
+	}
+	if exists {
+		return nil, ErrFolderNameConflict
+	}
+
 	folder := &types.KnowledgeFolder{
 		ID:              uuid.New().String(),
 		TenantID:        tenantID,
@@ -151,17 +160,20 @@ func (s *folderService) Update(ctx context.Context, kbID, folderID string, req *
 	}
 
 	// 1. rename updates name + path leaf
+	newName := folder.Name
 	if req.Name != "" {
 		name := strings.TrimSpace(req.Name)
 		if name == "" {
 			return nil, ErrInvalidFolderName
 		}
+		newName = name
 		oldPath := folder.Path
 		folder.Name = name
 		folder.Path = buildFolderPath(parentPathOf(oldPath), name)
 	}
 
 	// 2. optional reparent (cascades path + depth for subtree)
+	newParentID := folder.ParentID
 	if req.MoveParent {
 		newParent := &types.KnowledgeFolder{
 			ParentID: "", Path: "/", Depth: -1,
@@ -183,9 +195,21 @@ func (s *folderService) Update(ctx context.Context, kbID, folderID string, req *
 		if strings.HasPrefix(req.ParentID, folder.Path) {
 			return nil, ErrInvalidFolderParent
 		}
+		newParentID = req.ParentID
 		folder.ParentID = req.ParentID
 		folder.Path = buildFolderPath(newParent.Path, folder.Name)
 		folder.Depth = newParent.Depth + 1
+	}
+
+	// 同路径下不允许同名文件夹（rename 或 reparent 都可能触发）
+	if req.Name != "" || req.MoveParent {
+		exists, err := s.folderRepo.ExistsByName(ctx, tenantID, kbID, newParentID, newName, folderID)
+		if err != nil {
+			return nil, err
+		}
+		if exists {
+			return nil, ErrFolderNameConflict
+		}
 	}
 
 	if err := s.folderRepo.Update(ctx, folder); err != nil {

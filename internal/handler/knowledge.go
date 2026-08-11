@@ -419,6 +419,14 @@ func (h *KnowledgeHandler) CreateKnowledgeFromFile(c *gin.Context) {
 	knowledge, err := h.kgService.CreateKnowledgeFromFile(ctx, kbID, file, metadata, enableMultimodel, customFileName, tagIDs, channel, processOverrides, folderID)
 	// Check for duplicate knowledge error
 	if err != nil {
+		if goerrors.Is(err, service.ErrFileNameConflict) {
+			c.JSON(http.StatusConflict, gin.H{
+				"success": false,
+				"message": err.Error(),
+				"code":    "file_name_conflict",
+			})
+			return
+		}
 		if h.handleDuplicateKnowledgeError(c, err, knowledge, "file") {
 			return
 		}
