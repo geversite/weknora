@@ -463,6 +463,11 @@ start_app() {
     fi
     mkdir -p "$LOCAL_STORAGE_BASE_DIR"
     
+    # 生成文件下载链接时需要的外部访问地址（local 存储场景下拼接签名 URL）
+    if [ -z "${APP_EXTERNAL_URL:-}" ]; then
+        export APP_EXTERNAL_URL="http://123.57.27.119:8080"
+    fi
+    
     # 确保必要的环境变量已设置
     if [ -z "$DB_DRIVER" ]; then
         log_error "DB_DRIVER 环境变量未设置，请检查 .env 文件"

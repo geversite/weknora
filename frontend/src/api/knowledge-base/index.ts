@@ -383,6 +383,14 @@ export function updateKnowledgeMetadata(knowledgeId: string, customMetadata: Rec
   return put(`/api/v1/knowledge/${knowledgeId}`, { custom_metadata: customMetadata });
 }
 
+/**
+ * 切换单个文档是否允许被推送（push_files 工具 / IM 下载链接生成）。
+ * 关闭后，智能体试图推送该文件或生成下载链接时将被拒绝。
+ */
+export function setKnowledgePushAllowed(knowledgeId: string, allowed: boolean) {
+  return put(`/api/v1/knowledge/${knowledgeId}/push-allowed`, { allowed });
+}
+
 export function regenerateKnowledgeSummary(knowledgeId: string) {
   return post(`/api/v1/knowledge/${knowledgeId}/regenerate-summary`, {});
 }

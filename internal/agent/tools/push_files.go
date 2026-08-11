@@ -234,6 +234,15 @@ func (t *PushFilesTool) pushOneFile(
 			PushFailedReason: "file is disabled",
 		}, nil, false
 	}
+	// 3.1 校验文档是否允许推送（push_allowed=false 时拒绝生成下载链接）
+	if knowledge.PushAllowed != nil && !*knowledge.PushAllowed {
+		return PushedFileCard{
+			KnowledgeID:      knowledgeID,
+			Title:            knowledge.Title,
+			KnowledgeBaseID:  knowledge.KnowledgeBaseID,
+			PushFailedReason: "因管理员设置，该文件暂不支持下载",
+		}, nil, false
+	}
 	if knowledge.FilePath == "" {
 		return PushedFileCard{
 			KnowledgeID:      knowledgeID,

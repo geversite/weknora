@@ -36,6 +36,10 @@ func appendPushedFileLinks(
 		if err != nil || k == nil || k.FilePath == "" {
 			continue
 		}
+		// 文档所有者关闭了推送权限则跳过（不向 IM 追加下载链接）
+		if k.PushAllowed != nil && !*k.PushAllowed {
+			continue
+		}
 		url, err := fileService.GetFileURL(ctx, k.FilePath)
 		if err != nil || url == "" || strings.HasPrefix(url, "local://") {
 			continue

@@ -98,6 +98,10 @@ type KnowledgeService interface {
 	GetKnowledgeFile(ctx context.Context, id string) (io.ReadCloser, string, error)
 	// UpdateKnowledge updates knowledge information.
 	UpdateKnowledge(ctx context.Context, knowledge *types.Knowledge) error
+	// SetKnowledgePushAllowed toggles whether a single knowledge document may
+	// be pushed (i.e. whether the agent may generate a download link / file
+	// card for it). Returns the updated knowledge row.
+	SetKnowledgePushAllowed(ctx context.Context, knowledgeID string, allowed bool) (*types.Knowledge, error)
 	// RegenerateKnowledgeSummary refreshes the document description and summary retrieval chunk.
 	RegenerateKnowledgeSummary(ctx context.Context, knowledgeID string) (*types.Knowledge, error)
 	// RequestKnowledgeSummaryRefresh enqueues an async summary refresh.

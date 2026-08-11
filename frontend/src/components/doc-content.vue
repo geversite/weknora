@@ -12,6 +12,7 @@ import {
   downKnowledgeDetails, deleteGeneratedQuestion, getChunkByIdOnly, previewKnowledgeFile,
   updateDocumentChunk, listChunkRevisions, revertDocumentChunk, updateKnowledgeMetadata,
   regenerateKnowledgeSummary, upsertGeneratedQuestion, regenerateGeneratedQuestions, getKnowledgeDetails,
+  setKnowledgePushAllowed,
 } from "@/api/knowledge-base/index";
 import { MessagePlugin } from "tdesign-vue-next";
 import { sanitizeHTML, safeMarkdownToHTML, createSafeImage, isValidImageURL, hydrateProtectedFileImages, isValidURL } from '@/utils/security';
@@ -1561,6 +1562,35 @@ const downloadFile = () => {
       MessagePlugin.error(t('file.downloadFailed'));
     });
 };
+
+// 文档"允许推送"开关：关闭后智能体无法通过 push_files 工具推送该文件或生成下载链接
+const pushAllowedLoading = ref(false);
+const pushAllowedValue = ref(true);
+// 仅文件型 / 手工型文档显示该开关（URL 抓取的网页无可推送文件）
+const showPushAllowedSwitch = computed(() =>
+  props.canEditKB && props.details?.id && (props.details.type === 'file' || props.details.type === 'manual')
+);
+watch(() => [props.details?.id, props.details?.push_allowed], () => {
+  pushAllowedValue.value = props.details?.push_allowed !== false;
+}, { immediate: true });
+const onTogglePushAllowed = async (val: boolean) => {
+  if (!props.details?.id || pushAllowedLoading.value) return;
+  const prev = pushAllowedValue.value;
+  pushAllowedValue.value = val;
+  pushAllowedLoading.value = true;
+  try {
+    await setKnowledgePushAllowed(props.details.id, val);
+    props.details.push_allowed = val;
+    MessagePlugin.success(val
+      ? t('knowledgeBase.pushAllowedEnabled')
+      : t('knowledgeBase.pushAllowedDisabled'));
+  } catch (err) {
+    pushAllowedValue.value = prev;
+    MessagePlugin.error(t('knowledgeBase.pushAllowedToggleFailed'));
+  } finally {
+    pushAllowedLoading.value = false;
+  }
+};
 const requestNextChunkPage = () => {
   if (loadingChunks || props.details?.chunkLoading) return;
   const total = props.details?.total ?? 0;
@@ -1696,6 +1726,20 @@ const handleDetailsScroll = () => {
                 >
                   <span class="tag-text">{{ tag.name }}</span>
                 </t-tag>
+              </span>
+            </div>
+            <div v-if="showPushAllowedSwitch" class="doc-detail-row doc-detail-row--push">
+              <span class="doc-detail-label">{{ $t('knowledgeBase.pushAllowedLabel') }}</span>
+              <span class="doc-detail-value doc-detail-push-switch">
+                <t-switch
+                  size="small"
+                  :value="pushAllowedValue"
+                  :loading="pushAllowedLoading"
+                  @change="onTogglePushAllowed"
+                />
+                <t-tooltip :content="$t('knowledgeBase.pushAllowedTooltip')" placement="top-left">
+                  <t-icon name="info-circle" size="14px" class="doc-detail-push-hint" />
+                </t-tooltip>
               </span>
             </div>
           </div>
@@ -2321,6 +2365,19 @@ const handleDetailsScroll = () => {
   font-size: 13px;
   color: var(--td-text-color-primary);
   word-break: break-word;
+}
+
+.doc-detail-row--push {
+  align-items: center;
+}
+
+.doc-detail-push-switch {
+  gap: 6px;
+}
+
+.doc-detail-push-hint {
+  color: var(--td-text-color-placeholder);
+  cursor: help;
 }
 
 .metadata-editor-row {

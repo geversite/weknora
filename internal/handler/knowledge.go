@@ -1594,6 +1594,47 @@ func (h *KnowledgeHandler) UpdateKnowledge(c *gin.Context) {
 	})
 }
 
+// SetKnowledgePushAllowed godoc
+// @Summary      设置文档是否允许推送
+// @Description  切换单个文档的 push_allowed 标记。关闭后，智能体试图推送该文件或生成下载链接时将被拒绝。
+// @Tags         知识管理
+// @Accept       json
+// @Produce      json
+// @Param        id       path   string                      true  "知识ID"
+// @Param        request  body   setPushAllowedRequest       true  "目标状态"
+// @Success      200      {object}  map[string]interface{}
+// @Security     Bearer
+// @Security     ApiKeyAuth
+// @Router       /knowledge/{id}/push-allowed [put]
+func (h *KnowledgeHandler) SetKnowledgePushAllowed(c *gin.Context) {
+	ctx := c.Request.Context()
+	id := secutils.SanitizeForLog(c.Param("id"))
+	if id == "" {
+		c.Error(errors.NewBadRequestError("Knowledge ID cannot be empty"))
+		return
+	}
+	if _, _, err := h.resolveKnowledgeAndValidateKBAccess(c, id, types.OrgRoleEditor); err != nil {
+		c.Error(err)
+		return
+	}
+	var req setPushAllowedRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(errors.NewBadRequestError(err.Error()))
+		return
+	}
+	updated, err := h.kgService.SetKnowledgePushAllowed(ctx, id, req.Allowed)
+	if err != nil {
+		logger.ErrorWithFields(ctx, err, nil)
+		c.Error(errors.NewInternalServerError(err.Error()))
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": updated})
+}
+
+type setPushAllowedRequest struct {
+	Allowed bool `json:"allowed"`
+}
+
 // RegenerateKnowledgeSummary refreshes a stale summary after chunk or metadata edits.
 func (h *KnowledgeHandler) RegenerateKnowledgeSummary(c *gin.Context) {
 	ctx := c.Request.Context()

@@ -143,6 +143,12 @@ type Knowledge struct {
 	SummaryStatus string `json:"summary_status"     gorm:"type:varchar(32);default:none"`
 	// Enable status of the knowledge
 	EnableStatus string `json:"enable_status"`
+	// PushAllowed controls whether this document may be pushed to the user
+	// (i.e. whether the agent may generate a download link / file card for it
+	// via the push_files tool, or append a download link in IM channels).
+	// Default true to preserve backward compatibility. When false, any push
+	// attempt (push_files tool, IM appendPushedFileLinks) is rejected.
+	PushAllowed *bool `json:"push_allowed" gorm:"type:boolean;not null;default:true"`
 	// ID of the embedding model
 	EmbeddingModelID string `json:"embedding_model_id"`
 	// File name of the knowledge
