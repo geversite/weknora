@@ -154,6 +154,20 @@ func Auth(
 				return
 			}
 			logger.Warnf(c.Request.Context(), "[auth] bearer token rejected: %v", err)
+
+			// OpenAI-compatible fallback: Dify and other OpenAI-compatible
+			// clients send the API key via "Authorization: Bearer <key>"
+			// (the OpenAI standard). When the Bearer token fails JWT
+			// validation, fall through to the API Key channel so the same
+			// key works for both /v1/chat/completions and /api/v1/*.
+			// This only applies to the /v1/ path prefix to avoid changing
+			// behavior for existing /api/v1 routes.
+			if strings.HasPrefix(c.Request.URL.Path, "/v1/") && apiKeyService != nil {
+				if authenticateAPIKeyRequest(c, tenantService, userService, apiKeyService, token) {
+					c.Next()
+				}
+				return
+			}
 		}
 
 		// 尝试X-API-Key认证（兼容模式）
