@@ -66,9 +66,10 @@ func (s IndexingStrategy) IsZero() bool {
 }
 
 // IsUserFeedbackEnabled reports whether the M5 feedback pipeline is active.
-// Implies WikiEnabled (feedback cannot run without wiki).
+// The feature is no longer user-toggleable: it runs whenever wiki indexing is
+// enabled (feedback cannot run without wiki).
 func (s IndexingStrategy) IsUserFeedbackEnabled() bool {
-	return s.UserFeedbackEnabled && s.WikiEnabled
+	return s.WikiEnabled
 }
 
 // Value implements the driver.Valuer interface for GORM serialization.

@@ -731,21 +731,25 @@ func (kb *KnowledgeBase) IsGraphEnabled() bool {
 }
 
 // IsConflictDetectEnabled reports whether post-upload file-level conflict
-// detection is enabled for this knowledge base (M3). Default false.
+// detection is enabled for this knowledge base (M3). Always true: the feature
+// is unconditionally on and no longer user-toggleable.
 func (kb *KnowledgeBase) IsConflictDetectEnabled() bool {
-	return kb != nil && kb.IndexingStrategy.ConflictDetectEnabled
+	return kb != nil
 }
 
 // IsFolderGovernanceEnabled reports whether file-level folder governance is
-// enabled for this knowledge base (M4). Default false; enabled per KB.
+// enabled for this knowledge base (M4). Always true: the feature is
+// unconditionally on and no longer user-toggleable.
 func (kb *KnowledgeBase) IsFolderGovernanceEnabled() bool {
-	return kb != nil && kb.IndexingStrategy.FolderGovernanceEnabled
+	return kb != nil
 }
 
 // IsUserFeedbackEnabled reports whether the M5 automatic user-feedback-to-wiki
-// pipeline is active for this knowledge base. Default false; requires Wiki.
+// pipeline is active for this knowledge base. Always true when wiki indexing is
+// enabled: the feature is no longer user-toggleable and runs whenever the wiki
+// pipeline runs.
 func (kb *KnowledgeBase) IsUserFeedbackEnabled() bool {
-	return kb != nil && kb.IndexingStrategy.IsUserFeedbackEnabled()
+	return kb != nil && kb.IndexingStrategy.WikiEnabled
 }
 
 // NeedsEmbeddingModel returns true if any enabled pipeline requires an embedding model.

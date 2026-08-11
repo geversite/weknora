@@ -107,50 +107,6 @@
                             </t-checkbox>
                             <p class="indexing-check-desc">{{ $t('knowledgeEditor.indexing.wikiDesc') }}</p>
                           </div>
-                          <div
-                            class="indexing-check-item"
-                            :class="{ 'is-checked': formData.indexingStrategy.conflictEnabled, 'is-disabled': isIndexingLocked }"
-                            @click="toggleConflictDetection"
-                          >
-                            <t-checkbox
-                              :checked="formData.indexingStrategy.conflictEnabled"
-                              :disabled="isIndexingLocked"
-                              class="indexing-check-box"
-                            >
-                              {{ $t('knowledgeEditor.indexing.conflictTitle') }}
-                            </t-checkbox>
-                            <p class="indexing-check-desc">{{ $t('knowledgeEditor.indexing.conflictDesc') }}</p>
-                          </div>
-                          <div
-                            class="indexing-check-item"
-                            :class="{ 'is-checked': formData.indexingStrategy.folderGovernanceEnabled, 'is-disabled': isIndexingLocked }"
-                            @click="toggleFolderGovernance"
-                          >
-                            <t-checkbox
-                              :checked="formData.indexingStrategy.folderGovernanceEnabled"
-                              :disabled="isIndexingLocked"
-                              class="indexing-check-box"
-                            >
-                              {{ $t('knowledgeEditor.indexing.folderGovernanceTitle') }}
-                              <span class="indexing-new-badge">NEW</span>
-                            </t-checkbox>
-                            <p class="indexing-check-desc">{{ $t('knowledgeEditor.indexing.folderGovernanceDesc') }}</p>
-                          </div>
-                          <div
-                            class="indexing-check-item"
-                            :class="{ 'is-checked': formData.indexingStrategy.userFeedbackEnabled, 'is-disabled': isIndexingLocked || !formData.indexingStrategy.wikiEnabled }"
-                            @click="toggleUserFeedback"
-                          >
-                            <t-checkbox
-                              :checked="formData.indexingStrategy.userFeedbackEnabled"
-                              :disabled="isIndexingLocked || !formData.indexingStrategy.wikiEnabled"
-                              class="indexing-check-box"
-                            >
-                              {{ $t('knowledgeEditor.indexing.userFeedbackTitle') }}
-                              <span class="indexing-new-badge">NEW</span>
-                            </t-checkbox>
-                            <p class="indexing-check-desc">{{ $t('knowledgeEditor.indexing.userFeedbackDesc') }}</p>
-                          </div>
                         </div>
                         <p v-if="isIndexingLocked" class="form-tip locked-tip">
                           {{ $t('knowledgeEditor.indexing.lockedTip') }}
@@ -1079,25 +1035,6 @@ const toggleWikiIndexing = () => {
   formData.value.indexingStrategy.wikiEnabled = !formData.value.indexingStrategy.wikiEnabled
 }
 
-const toggleConflictDetection = () => {
-  if (!formData.value) return
-  if (isIndexingLocked.value) return
-  formData.value.indexingStrategy.conflictEnabled = !formData.value.indexingStrategy.conflictEnabled
-}
-
-const toggleFolderGovernance = () => {
-  if (!formData.value) return
-  if (isIndexingLocked.value) return
-  formData.value.indexingStrategy.folderGovernanceEnabled = !formData.value.indexingStrategy.folderGovernanceEnabled
-}
-
-const toggleUserFeedback = () => {
-  if (!formData.value) return
-  if (isIndexingLocked.value) return
-  if (!formData.value.indexingStrategy.wikiEnabled) return // 需先开启 Wiki
-  formData.value.indexingStrategy.userFeedbackEnabled = !formData.value.indexingStrategy.userFeedbackEnabled
-}
-
 const handleChunkingConfigUpdate = (config: any) => {
   if (formData.value) {
     formData.value.chunkingConfig = { ...config }
@@ -1379,9 +1316,9 @@ const buildSubmitData = () => {
       keyword_enabled: formData.value.indexingStrategy?.keywordEnabled ?? true,
       wiki_enabled: formData.value.indexingStrategy?.wikiEnabled ?? false,
       graph_enabled: formData.value.indexingStrategy?.graphEnabled ?? false,
-      conflict_detect_enabled: formData.value.indexingStrategy?.conflictEnabled ?? false,
-      folder_governance_enabled: formData.value.indexingStrategy?.folderGovernanceEnabled ?? false,
-      user_feedback_enabled: formData.value.indexingStrategy?.userFeedbackEnabled ?? false,
+      conflict_detect_enabled: true,
+      folder_governance_enabled: true,
+      user_feedback_enabled: true,
     }
   }
 
@@ -1549,8 +1486,7 @@ const doSubmit = async () => {
           curr.vectorEnabled !== prev.vectorEnabled ||
           curr.keywordEnabled !== prev.keywordEnabled ||
           curr.wikiEnabled !== prev.wikiEnabled ||
-          curr.graphEnabled !== prev.graphEnabled ||
-          curr.folderGovernanceEnabled !== prev.folderGovernanceEnabled
+          curr.graphEnabled !== prev.graphEnabled
         )
         if (strategyChanged) {
           const dialog = DialogPlugin.confirm({
