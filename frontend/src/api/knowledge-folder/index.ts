@@ -80,6 +80,13 @@ export function createFolder(kbId: string, payload: { parent_id: string; name: s
   return post<KnowledgeFolder>(`/api/v1/knowledge-bases/${kbId}/folders`, payload)
 }
 
+// Create or reuse a folder (merge semantics): if a same-name folder already
+// exists under the same parent, returns the existing one instead of erroring.
+// Used for folder upload to merge A(B) + A(C) → A(B,C).
+export function createOrGetFolder(kbId: string, payload: { parent_id: string; name: string }) {
+  return post<KnowledgeFolder>(`/api/v1/knowledge-bases/${kbId}/folders/or-get`, payload)
+}
+
 export function updateFolder(kbId: string, folderId: string, payload: { name?: string; parent_id?: string; move_parent?: boolean }) {
   return put<KnowledgeFolder>(`/api/v1/knowledge-bases/${kbId}/folders/${folderId}`, payload)
 }

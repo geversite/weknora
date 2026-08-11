@@ -124,6 +124,23 @@ func (r *knowledgeFolderRepo) ExistsByName(ctx context.Context, tenantID uint64,
 	return count > 0, nil
 }
 
+// GetByNameInParent returns the non-deleted folder with the given name
+// under parentID (empty = root). Used for folder-merge-on-upload.
+func (r *knowledgeFolderRepo) GetByNameInParent(ctx context.Context, tenantID uint64, kbID, parentID, name string) (*types.KnowledgeFolder, error) {
+	q := r.db.WithContext(ctx).
+		Where("tenant_id = ? AND knowledge_base_id = ? AND name = ?", tenantID, kbID, name)
+	if parentID == "" {
+		q = q.Where("parent_id = '' OR parent_id IS NULL")
+	} else {
+		q = q.Where("parent_id = ?", parentID)
+	}
+	var folder types.KnowledgeFolder
+	if err := q.First(&folder).Error; err != nil {
+		return nil, err
+	}
+	return &folder, nil
+}
+
 func (r *knowledgeFolderRepo) UpdateStatus(ctx context.Context, folderID, status string) error {
 	return r.db.WithContext(ctx).Model(&types.KnowledgeFolder{}).
 		Where("id = ?", folderID).

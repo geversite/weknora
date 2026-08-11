@@ -12,6 +12,11 @@ type KnowledgeFolderService interface {
 	ListTree(ctx context.Context, kbID string) (*types.KnowledgeFolderTreeResponse, error)
 	// Create creates a folder under parentID.
 	Create(ctx context.Context, kbID string, req *types.KnowledgeFolderCreateRequest) (*types.KnowledgeFolder, error)
+	// CreateOrGet creates a folder, or if a same-name folder already exists
+	// under the same parent, returns the existing one. Used for folder upload
+	// merge: uploading folder A (containing C) when A (containing B) already
+	// exists merges them into A containing both B and C.
+	CreateOrGet(ctx context.Context, kbID string, req *types.KnowledgeFolderCreateRequest) (*types.KnowledgeFolder, error)
 	// Update renames and/or reparents a folder; reparenting cascades paths.
 	Update(ctx context.Context, kbID, folderID string, req *types.KnowledgeFolderUpdateRequest) (*types.KnowledgeFolder, error)
 	// Delete removes a folder; files cascade to its parent; summaries/chunks cleaned.

@@ -24,6 +24,13 @@ type KnowledgeFolderRepository interface {
 	// rename path to skip the folder itself.
 	ExistsByName(ctx context.Context, tenantID uint64, kbID, parentID, name, excludeID string) (bool, error)
 
+	// GetByNameInParent returns the non-deleted folder with the given name
+	// under parentID (empty = root) in the KB. Returns gorm.ErrRecordNotFound
+	// if not found. Used for folder-merge-on-upload: when uploading a folder
+	// whose name already exists, we reuse the existing folder instead of
+	// returning an error.
+	GetByNameInParent(ctx context.Context, tenantID uint64, kbID, parentID, name string) (*types.KnowledgeFolder, error)
+
 	// GetSubtree returns all folders under the given folder IDs (inclusive),
 	// using the materialized path prefix match.
 	GetSubtree(ctx context.Context, tenantID uint64, kbID string, folderIDs []string) ([]*types.KnowledgeFolder, error)

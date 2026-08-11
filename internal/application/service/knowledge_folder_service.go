@@ -146,6 +146,32 @@ func (s *folderService) Create(ctx context.Context, kbID string, req *types.Know
 	return folder, nil
 }
 
+// CreateOrGet creates a folder, or if a same-name folder already exists
+// under the same parent, returns the existing one. This enables folder-merge
+// semantics on upload: uploading folder A (with file C) when A (with file B)
+// already exists reuses the existing A, resulting in A containing both B and C.
+func (s *folderService) CreateOrGet(ctx context.Context, kbID string, req *types.KnowledgeFolderCreateRequest) (*types.KnowledgeFolder, error) {
+	tenantID := types.MustTenantIDFromContext(ctx)
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		return nil, ErrInvalidFolderName
+	}
+
+	// Check if a same-name folder already exists under the same parent.
+	existing, err := s.folderRepo.GetByNameInParent(ctx, tenantID, kbID, req.ParentID, name)
+	if err == nil && existing != nil {
+		// Folder already exists — reuse it (merge semantics).
+		return existing, nil
+	}
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
+	}
+
+	// Not found — create a new folder (delegates to Create, which also
+	// handles parent validation and path/depth computation).
+	return s.Create(ctx, kbID, req)
+}
+
 func (s *folderService) Update(ctx context.Context, kbID, folderID string, req *types.KnowledgeFolderUpdateRequest) (*types.KnowledgeFolder, error) {
 	tenantID := types.MustTenantIDFromContext(ctx)
 	folder, err := s.folderRepo.GetByID(ctx, folderID)

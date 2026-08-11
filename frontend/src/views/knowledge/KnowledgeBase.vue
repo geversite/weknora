@@ -43,7 +43,7 @@ import DocumentCardView from './components/DocumentCardView.vue';
 import DocumentBatchBar from './components/DocumentBatchBar.vue';
 import KbUploadSourceDropdown from './components/KbUploadSourceDropdown.vue';
 import FolderView, { type FolderStructureItem } from './components/FolderView.vue';
-import { createFolder } from '@/api/knowledge-folder';
+import { createFolder, createOrGetFolder } from '@/api/knowledge-folder';
 import TagEditDialog from './components/TagEditDialog.vue';
 import BatchTagDialog from './components/BatchTagDialog.vue';
 import KbTagManageDrawer from './components/KbTagManageDrawer.vue';
@@ -1602,6 +1602,8 @@ const handleUploadSourceFolderStructure = async (items: FolderStructureItem[]) =
   }
 
   // 2. 在当前文件夹下创建子文件夹树（先父后子，串行）
+  //    使用 createOrGetFolder（合并语义）：如果同名文件夹已存在则复用，
+  //    这样上传文件夹 A(含C) 到已有 A(含B) 时，会合并为 A(含B+C)。
   const folderIdByPath = new Map<string, string>();
   folderIdByPath.set('', parentId);
   const sortedPaths = Array.from(folderPaths).sort((a, b) =>
@@ -1613,7 +1615,7 @@ const handleUploadSourceFolderStructure = async (items: FolderStructureItem[]) =
       const name = parts[parts.length - 1];
       const parentPath = parts.slice(0, -1).join('/');
       const parentFolderId = folderIdByPath.get(parentPath) || parentId;
-      const res = await createFolder(kb, { parent_id: parentFolderId, name });
+      const res = await createOrGetFolder(kb, { parent_id: parentFolderId, name });
       folderIdByPath.set(path, res.id);
     }
   } catch (e: any) {

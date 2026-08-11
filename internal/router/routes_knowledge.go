@@ -366,6 +366,7 @@ func RegisterKnowledgeFolderRoutes(r *gin.RouterGroup, folderHandler *handler.Kn
 		// Folder tree CRUD
 		folderRead.GET("", g.Viewer(), g.KBAccessRead("id"), folderHandler.ListFolders)
 		folder.POST("", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), folderHandler.CreateFolder)
+		folder.POST("/or-get", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), folderHandler.CreateOrGetFolder)
 		folder.PUT("/:folder_id", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), folderHandler.UpdateFolder)
 		folder.DELETE("/:folder_id", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), folderHandler.DeleteFolder)
 

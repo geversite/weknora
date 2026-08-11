@@ -106,6 +106,40 @@ func (h *KnowledgeFolderHandler) CreateFolder(c *gin.Context) {
 	c.JSON(http.StatusCreated, folder)
 }
 
+// CreateOrGetFolder godoc
+// @Summary      Create or reuse a folder (merge semantics)
+// @Description  Creates a folder, or if a same-name folder already exists under
+// @Description  the same parent, returns the existing one. Used for folder upload
+// @Description  merge: uploading folder A (with file C) when A (with file B)
+// @Description  already exists reuses A, resulting in A containing both B and C.
+// @Tags         KnowledgeFolder
+// @Accept       json
+// @Produce      json
+// @Param        kb_id  path  string  true  "Knowledge base ID"
+// @Param        body   body  types.KnowledgeFolderCreateRequest true "Folder create"
+// @Success      200    {object} types.KnowledgeFolder
+// @Router       /knowledge-bases/{kb_id}/folders/or-get [post]
+func (h *KnowledgeFolderHandler) CreateOrGetFolder(c *gin.Context) {
+	kbID, err := h.validateKBFolderGovernance(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	var req types.KnowledgeFolderCreateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body: " + err.Error()})
+		return
+	}
+	folder, err := h.folderService.CreateOrGet(c.Request.Context(), kbID, &req)
+	if err != nil {
+		writeKnowledgeFolderError(c, err)
+		return
+	}
+	// 200 OK for both created and reused (caller can't tell the difference,
+	// which is the point of merge semantics).
+	c.JSON(http.StatusOK, folder)
+}
+
 // UpdateFolder godoc
 // @Summary      Rename / reparent a folder
 // @Description  Rename and/or reparent a folder; subtree paths are recomputed
