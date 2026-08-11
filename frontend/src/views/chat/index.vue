@@ -157,6 +157,7 @@ import {
     getMessageSuggestions,
     recordMessageSuggestionEvent,
 } from '@/api/message-suggestion';
+import { ensureUnsolvedJudge } from '@/api/agent/unsolved-question';
 import { provideChatReferencesDrawer } from '@/composables/useChatReferencesDrawer';
 import { provideChatAttachmentPreviewDrawer } from '@/composables/useChatAttachmentPreviewDrawer';
 
@@ -369,6 +370,26 @@ const loadFollowUpSuggestions = async (message, ensure = false, regenerate = fal
     }
 };
 
+// 触发未解决问题判定：助手回复完成后，由 LLM 判断回答是否完善解决了用户问题
+const triggerUnsolvedJudge = (message) => {
+    const messageId = resolveAssistantMessageId(message);
+    const targetSessionId = session_id.value;
+    // 仅智能体会话才判定；builtin-quick-answer 不记录
+    const agentId = props.embeddedMode
+        ? props.agentId
+        : (useSettingsStoreInstance.selectedAgentId || '');
+    if (!messageId || !targetSessionId || !agentId || agentId === 'builtin-quick-answer') return;
+    // 已判定过的消息不重复触发
+    if (message.unsolvedJudgeTriggered) return;
+    message.unsolvedJudgeTriggered = true;
+    // 后台异步触发，不阻塞 UI；失败静默
+    void ensureUnsolvedJudge(targetSessionId, messageId, false).catch((err) => {
+        if (import.meta.env.DEV) {
+            console.warn('[UnsolvedJudge] Failed to judge:', err);
+        }
+    });
+};
+
 const recordSuggestionEvent = (message, set, eventType, questionId = '') => {
     if (!set?.id) return;
     void recordMessageSuggestionEvent(session_id.value, set.id, eventType, questionId).catch(() => undefined);
@@ -555,6 +576,9 @@ const {
             if (message.role === 'assistant' && message.is_completed && message.suggestionSet === undefined) {
                 void loadFollowUpSuggestions(message, false);
             }
+            if (message.role === 'assistant' && message.is_completed) {
+                triggerUnsolvedJudge(message);
+            }
         }
         const lastMessage = messagesList[messagesList.length - 1];
         if (lastMessage && !lastMessage.is_completed) {
@@ -599,6 +623,7 @@ const {
     },
     onTurnComplete: (message) => {
         void loadFollowUpSuggestions(message, true);
+        triggerUnsolvedJudge(message);
     },
 });
 

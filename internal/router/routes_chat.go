@@ -43,6 +43,7 @@ func RegisterSessionRoutes(
 	r *gin.RouterGroup,
 	handler *session.Handler,
 	suggestionHandler *handler.MessageSuggestionHandler,
+	unsolvedHandler *handler.AgentUnsolvedQuestionHandler,
 	g *rbacGuards,
 ) {
 	// Sessions are per-user chat state, not knowledge-base content. The
@@ -78,6 +79,9 @@ func RegisterSessionRoutes(
 			sessions.GET("/:id/messages/:message_id/suggestions", suggestionHandler.Get)
 			sessions.POST("/:session_id/messages/:message_id/suggestions", suggestionHandler.Ensure)
 			sessions.POST("/:session_id/suggestion-events", suggestionHandler.RecordEvent)
+		}
+		if unsolvedHandler != nil {
+			sessions.POST("/:session_id/messages/:message_id/unsolved-judge", unsolvedHandler.EnsureJudgement)
 		}
 	}
 }

@@ -1608,6 +1608,12 @@
                   v-show="currentSection === 'share'" class="section">
                   <AgentShareSettings :agent-id="editorAgent.id" :agent="editorAgent" />
                 </div>
+
+                <!-- 未解决问题（仅编辑已有智能体时显示） -->
+                <div v-if="editorMode === 'edit' && editorAgent?.id"
+                  v-show="currentSection === 'unsolved'" class="section">
+                  <AgentUnsolvedQuestions :agent-id="editorAgent.id" :read-only="props.readOnly" />
+                </div>
               </div>
 
               <!-- 底部操作栏 -->
@@ -1675,6 +1681,7 @@ import PromptTemplateSelector from '@/components/PromptTemplateSelector.vue';
 import ModelSelector from '@/components/ModelSelector.vue';
 import KBParserSettings, { type ParserEngineRule } from '@/views/knowledge/settings/KBParserSettings.vue';
 import AgentShareSettings from '@/components/AgentShareSettings.vue';
+import AgentUnsolvedQuestions from '@/components/AgentUnsolvedQuestions.vue';
 import { listEmbedChannels } from '@/api/embed';
 import { getRootZoom, rectToCssPx } from '@/utils/zoom';
 import {
@@ -2256,6 +2263,10 @@ const navItems = computed(() => {
   if (editorMode.value === 'edit' && editorAgent.value?.id && !editorAgent.value?.is_builtin && !authStore.isLiteMode) {
     items.push({ key: 'share', icon: 'share', label: t('knowledgeEditor.sidebar.share') });
   }
+  // 未解决问题（仅编辑已有智能体时显示）
+  if (editorMode.value === 'edit' && editorAgent.value?.id) {
+    items.push({ key: 'unsolved', icon: 'help-circle', label: t('agentEditor.unsolvedQuestions.navLabel') });
+  }
   return items;
 });
 
@@ -2284,6 +2295,11 @@ const navGroups = computed(() => {
       key: 'integration',
       label: t('agentEditor.navGroups.integration'),
       items: pickItems(['share']),
+    },
+    {
+      key: 'quality',
+      label: t('agentEditor.navGroups.quality'),
+      items: pickItems(['unsolved']),
     },
   ].filter((group) => group.items.length > 0);
 });

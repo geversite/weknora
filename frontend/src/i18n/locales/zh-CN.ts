@@ -1103,11 +1103,25 @@ export default {
       categoryDeepen: '深入',
       categoryAction: '下一步'
     },
+    unsolvedQuestions: {
+      navLabel: '未解决问题',
+      title: '未解决问题',
+      description: '记录该智能体未能完善回答的用户问题。每次回复完成后由模型判定回答是否完善解决了用户问题，若未完善则记录于此，便于运营复盘与改进智能体配置。',
+      filterUnsolved: '未解决',
+      filterAll: '全部',
+      empty: '暂无未解决问题',
+      statusUnsolved: '未解决',
+      statusResolved: '已处理',
+      statusFailed: '判定失败',
+      markResolved: '标记已处理',
+      markUnresolved: '取消标记'
+    },
     navGroups: {
       basic: '基础',
       knowledge: '知识检索',
       capability: '能力扩展',
-      integration: '发布集成'
+      integration: '发布集成',
+      quality: '质量监控'
     }
   },
   agentStream: {

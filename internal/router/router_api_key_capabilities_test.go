@@ -16,7 +16,7 @@ func TestConversationRoutesDeclareChatCapability(t *testing.T) {
 	g := &rbacGuards{}
 	v1 := gin.New().Group("/api/v1")
 
-	RegisterSessionRoutes(v1, &sessionhandler.Handler{}, &handler.MessageSuggestionHandler{}, g)
+	RegisterSessionRoutes(v1, &sessionhandler.Handler{}, &handler.MessageSuggestionHandler{}, &handler.AgentUnsolvedQuestionHandler{}, g)
 	RegisterChatRoutes(v1, &sessionhandler.Handler{}, g)
 	RegisterMessageRoutes(v1, &handler.MessageHandler{}, g)
 
@@ -150,7 +150,7 @@ func TestAgentReadRoutesDeclareReadAgentsCapability(t *testing.T) {
 	g := &rbacGuards{}
 	v1 := gin.New().Group("/api/v1")
 
-	RegisterCustomAgentRoutes(v1, &handler.CustomAgentHandler{}, g)
+	RegisterCustomAgentRoutes(v1, &handler.CustomAgentHandler{}, &handler.AgentUnsolvedQuestionHandler{}, g)
 
 	cases := []struct {
 		method string
@@ -187,7 +187,7 @@ func TestAgentWriteRoutesRequireManageAgentsCapability(t *testing.T) {
 	g := &rbacGuards{}
 	v1 := gin.New().Group("/api/v1")
 
-	RegisterCustomAgentRoutes(v1, &handler.CustomAgentHandler{}, g)
+	RegisterCustomAgentRoutes(v1, &handler.CustomAgentHandler{}, &handler.AgentUnsolvedQuestionHandler{}, g)
 
 	cases := []struct {
 		method string

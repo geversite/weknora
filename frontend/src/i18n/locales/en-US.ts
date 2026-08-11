@@ -4774,7 +4774,8 @@ export default {
       basic: 'Basics',
       knowledge: 'Knowledge & Retrieval',
       capability: 'Extensions',
-      integration: 'Publish & Integrations'
+      integration: 'Publish & Integrations',
+      quality: 'Quality'
     },
     questionSuggestions: {
       navLabel: 'Question suggestions',
@@ -4810,6 +4811,19 @@ export default {
       categoryClarify: 'Clarify',
       categoryDeepen: 'Deepen',
       categoryAction: 'Next step'
+    },
+    unsolvedQuestions: {
+      navLabel: 'Unsolved Questions',
+      title: 'Unsolved Questions',
+      description: 'Records user questions this agent failed to fully answer. After each reply an LLM judges whether the answer fully resolves the question; if not, it is recorded here for review.',
+      filterUnsolved: 'Unsolved',
+      filterAll: 'All',
+      empty: 'No unsolved questions',
+      statusUnsolved: 'Unsolved',
+      statusResolved: 'Handled',
+      statusFailed: 'Judgement failed',
+      markResolved: 'Mark handled',
+      markUnresolved: 'Unmark'
     },
     placeholders: {
       available: 'Available variables: ',
