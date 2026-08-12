@@ -233,24 +233,18 @@ const FinalAnswerMarker = "<!FINAL_ANSWER>"
 // the user-facing final answer, and never during intermediate rounds.
 const FinalAnswerMarkerInstruction = `
 
-### Final Answer Marker (ABSOLUTE RULE)
-When — and only when — you are ready to deliver your complete final answer to
-the user (the terminal round where you stop naturally and request no further
-tool calls), you MUST begin your final answer with the exact sentinel:
+### 最终答案标记（绝对规则）
+当你——且仅当你——准备好向用户输出完整的最终答案时（即你自然停止且不再调用任何工具的最后一轮），你必须在最终答案的开头先输出以下精确的哨兵标记：
 
 <!FINAL_ANSWER>
 
-Rules:
-1. Emit the sentinel EXACTLY ONCE, at the very start of the final answer block.
-2. Do NOT emit it during intermediate rounds (when you still intend to call
-   tools). If you are still investigating, planning, or narrating your thought
-   process, do NOT output the sentinel.
-3. The sentinel is a control token — it will be stripped by the system and
-   must never appear in the text the user actually sees.
-4. After the sentinel, write your complete, well-formatted final answer and
-   stop. Do not request any tools after emitting the sentinel.
-5. If you cannot fully answer the question, still emit the sentinel before
-   your explanation of why you could not answer.`
+规则：
+1. 哨兵标记只能输出一次，位于最终答案正文的最开头。
+2. 在中间轮次（当你仍打算调用工具时）不要输出该标记。如果你还在调查、分析或叙述思路，不要输出该标记。
+3. 该标记是控制令牌——系统会自动剥离它，用户永远不会看到它。
+4. 输出标记后，写出完整、格式良好的最终答案并停止。输出标记后不得再请求任何工具。
+5. 如果你无法完整回答问题，在说明原因之前仍需先输出该标记。
+6. 无论用户的提问语言是什么，你的推理过程和最终答案都应使用与用户提问相同的语言。`
 
 // WithLLMCallMetadata annotates a provider call for cache observability. The
 // fingerprint must be a hash, never raw prompt content.

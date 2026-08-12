@@ -524,7 +524,7 @@ func (h *Handler) streamEventsToOpenAIChunks(
 	sessionID, assistantMessageID, requestID, completionID, modelName string,
 	eventBus *event.EventBus,
 ) {
-	ticker := time.NewTicker(100 * time.Millisecond)
+	ticker := time.NewTicker(50 * time.Millisecond)
 	defer ticker.Stop()
 
 	lastOffset := 0
@@ -595,13 +595,12 @@ func (h *Handler) streamEventsToOpenAIChunks(
 			keep, hold := splitPotentialPartialMarker(scanned, finalAnswerMarker)
 			if keep != "" {
 				reasoningBuf.WriteString(keep)
+				// Flush immediately for low-latency streaming (matching
+				// the web SSE behavior of forwarding every chunk ASAP).
+				flushReasoning()
 			}
 			if hold != "" {
 				markerScanBuf.WriteString(hold)
-			}
-			// Flush reasoning in reasonable batches to keep latency low.
-			if reasoningBuf.Len() >= 256 {
-				flushReasoning()
 			}
 			return
 		}
@@ -683,9 +682,7 @@ func (h *Handler) streamEventsToOpenAIChunks(
 				if evt.Type == types.ResponseTypeThinking {
 					if evt.Content != "" {
 						reasoningBuf.WriteString(evt.Content)
-						if reasoningBuf.Len() >= 256 {
-							flushReasoning()
-						}
+						flushReasoning()
 					}
 					continue
 				}
