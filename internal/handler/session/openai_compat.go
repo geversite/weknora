@@ -69,12 +69,24 @@ type openaiChatResponse struct {
 	SessionID string `json:"session_id,omitempty"`
 }
 
+// openaiToolCallDelta mirrors the OpenAI streaming tool_call fragment schema.
+type openaiToolCallDelta struct {
+	Index    int    `json:"index"`
+	ID       string `json:"id,omitempty"`
+	Type     string `json:"type,omitempty"` // always "function"
+	Function struct {
+		Name      string `json:"name,omitempty"`
+		Arguments string `json:"arguments,omitempty"`
+	} `json:"function"`
+}
+
 // openaiChunkChoice is one choice in a streaming response chunk.
 type openaiChunkChoice struct {
 	Index int `json:"index"`
 	Delta struct {
-		Role    string `json:"role,omitempty"`
-		Content string `json:"content,omitempty"`
+		Role      string                `json:"role,omitempty"`
+		Content   string                `json:"content,omitempty"`
+		ToolCalls []openaiToolCallDelta `json:"tool_calls,omitempty"`
 	} `json:"delta"`
 	FinishReason *string `json:"finish_reason"`
 }
@@ -372,6 +384,11 @@ func (h *Handler) openAIStreamQA(
 			)
 		}
 	}
+	// Mark the context so the agent engine appends the <!FINAL_ANSWER>
+	// constraint to the system prompt. This lets the OpenAI streaming
+	// handler split reasoning (wrapped in <think>...</think> as delta.content)
+	// from the final answer (delta.content directly) by detecting the marker.
+	baseCtx = types.WithFinalAnswerMarker(baseCtx)
 
 	eventBus := event.NewEventBus()
 	asyncCtx, cancel := context.WithCancel(logger.CloneContext(baseCtx))
@@ -473,8 +490,34 @@ func (h *Handler) openAIStreamQA(
 	h.streamEventsToOpenAIChunks(c, ctx, sessionID, assistantMessageID, requestID, completionID, modelName, eventBus)
 }
 
+// finalAnswerMarker is the sentinel the LLM emits (constrained by the system
+// prompt) immediately before the user-facing final answer. Everything before
+// it is wrapped inside a <think>...</think> block and streamed as
+// delta.content; everything after it is streamed as delta.content directly
+// (the final answer).
+//
+// The marker itself is stripped — it must never reach the client.
+// Alias for types.FinalAnswerMarker kept for readability within this file.
+const finalAnswerMarker = types.FinalAnswerMarker
+
 // streamEventsToOpenAIChunks polls the StreamManager and converts WeKnora
 // stream events into OpenAI chat.completion.chunk SSE frames.
+//
+// Mapping strategy (optimistic <think> → marker → content):
+//   - Before the <!FINAL_ANSWER> marker, all content (thinking, answer
+//     preamble, tool-call narration) is wrapped inside a single
+//     <think>...</think> block and streamed as delta.content.
+//   - The opening <think> tag is emitted lazily (only when the first
+//     reasoning chunk arrives) so we don't emit an empty think block.
+//   - When the <!FINAL_ANSWER> marker is detected:
+//     1. flush remaining buffered reasoning
+//     2. emit </think>\n as delta.content (closes the think block)
+//     3. switch: subsequent answer events → delta.content (the final answer)
+//   - tool_call events → delta.tool_calls (still emitted separately)
+//
+// Because the LLM only emits the marker in the terminal round (system prompt
+// constrains it to do so), all intermediate-round preamble text correctly
+// lands inside the <think> block.
 func (h *Handler) streamEventsToOpenAIChunks(
 	c *gin.Context,
 	ctx context.Context,
@@ -486,8 +529,97 @@ func (h *Handler) streamEventsToOpenAIChunks(
 
 	lastOffset := 0
 	now := time.Now().Unix()
-	var fullContent strings.Builder
 	log := logger.GetLogger(ctx)
+
+	// State machine
+	finalAnswerStarted := false // becomes true after we see <!FINAL_ANSWER>
+	thinkOpened := false        // becomes true after we emit the opening <think>
+
+	// Reasoning buffer: accumulates content destined for the <think> block.
+	// We flush it in two cases:
+	//   (a) when we detect the <!FINAL_ANSWER> marker (split around it)
+	//   (b) at the very end if the marker never appeared (graceful fallback)
+	var reasoningBuf strings.Builder
+	// fullAnswer accumulates only the final-answer text (post-marker) for logging.
+	var fullAnswer strings.Builder
+
+	// flushReasoning sends the accumulated reasoningBuf as delta.content.
+	// On the very first flush it also prepends the opening <think> tag.
+	flushReasoning := func() {
+		if reasoningBuf.Len() == 0 && thinkOpened {
+			return
+		}
+		prefix := ""
+		if !thinkOpened {
+			prefix = "<think>"
+			thinkOpened = true
+		}
+		h.writeOpenAIChunk(c, completionID, now, modelName, "", prefix+reasoningBuf.String(), nil)
+		reasoningBuf.Reset()
+	}
+
+	// closeThink flushes any remaining reasoning buffer, then emits
+	// </think>\n as delta.content to close the think block.
+	closeThink := func() {
+		flushReasoning()
+		if thinkOpened {
+			h.writeOpenAIChunk(c, completionID, now, modelName, "", "</think>\n", nil)
+		}
+	}
+
+	// emitAnswerChunk routes content to the <think> block (pre-marker,
+	// optimistic) or delta.content (post-marker). It also scans for the
+	// <!FINAL_ANSWER> marker which may be split across streaming chunks.
+	var markerScanBuf strings.Builder // accumulates content for marker scanning
+
+	emitAnswerChunk := func(content string) {
+		if content == "" {
+			return
+		}
+		if finalAnswerStarted {
+			// Post-marker: route straight to content
+			fullAnswer.WriteString(content)
+			h.writeOpenAIChunk(c, completionID, now, modelName, "", content, nil)
+			return
+		}
+		// Pre-marker (optimistic): buffer and scan for the marker.
+		markerScanBuf.WriteString(content)
+		scanned := markerScanBuf.String()
+		markerScanBuf.Reset()
+
+		idx := strings.Index(scanned, finalAnswerMarker)
+		if idx < 0 {
+			// No marker found. But the marker could be split across chunks:
+			// hold back a tail that could be the start of a partial marker
+			// and re-inject it into markerScanBuf for the next chunk.
+			keep, hold := splitPotentialPartialMarker(scanned, finalAnswerMarker)
+			if keep != "" {
+				reasoningBuf.WriteString(keep)
+			}
+			if hold != "" {
+				markerScanBuf.WriteString(hold)
+			}
+			// Flush reasoning in reasonable batches to keep latency low.
+			if reasoningBuf.Len() >= 256 {
+				flushReasoning()
+			}
+			return
+		}
+		// Marker found! Split: [before-marker] → reasoning, [after-marker] → content.
+		before := scanned[:idx]
+		after := scanned[idx+len(finalAnswerMarker):]
+		if before != "" {
+			reasoningBuf.WriteString(before)
+		}
+		// Flush all accumulated reasoning and close the think block.
+		closeThink()
+		finalAnswerStarted = true
+		log.Infof("[openai] <!FINAL_ANSWER> marker detected, switching to content mode, session=%s", sessionID)
+		if after != "" {
+			fullAnswer.WriteString(after)
+			h.writeOpenAIChunk(c, completionID, now, modelName, "", after, nil)
+		}
+	}
 
 	for {
 		select {
@@ -517,7 +649,10 @@ func (h *Handler) streamEventsToOpenAIChunks(
 							},
 						})
 					}
-					// Send finish chunk
+					// Graceful close: flush any pending reasoning
+					if !finalAnswerStarted {
+						closeThink()
+					}
 					finishReason := "stop"
 					h.writeOpenAIChunk(c, completionID, now, modelName, "", "", &finishReason)
 					c.Writer.Flush()
@@ -544,30 +679,131 @@ func (h *Handler) streamEventsToOpenAIChunks(
 					return
 				}
 
-				// Translate answer / final_answer chunks to OpenAI content delta
-				if evt.Type == types.ResponseTypeAnswer || evt.Type == types.ResponseType(event.EventAgentFinalAnswer) {
+				// thinking events (LLM内生 reasoning_content) → <think> block
+				if evt.Type == types.ResponseTypeThinking {
 					if evt.Content != "" {
-						fullContent.WriteString(evt.Content)
-						h.writeOpenAIChunk(c, completionID, now, modelName, "", evt.Content, nil)
+						reasoningBuf.WriteString(evt.Content)
+						if reasoningBuf.Len() >= 256 {
+							flushReasoning()
+						}
 					}
+					continue
 				}
 
-				// Ignore other event types (thinking, tool_call, references, etc.)
-				// — they don't have a direct mapping in the OpenAI streaming format.
+				// tool_call events → delta.tool_calls (+ brief narration to <think>)
+				if evt.Type == types.ResponseTypeToolCall {
+					toolName, _ := evt.Data["tool_name"].(string)
+					toolCallID, _ := evt.Data["tool_call_id"].(string)
+					arguments, _ := evt.Data["arguments"].(string)
+					// Emit tool_calls delta (index 0, single function call per event)
+					tcDelta := openaiToolCallDelta{
+						Index: 0,
+						ID:    toolCallID,
+						Type:  "function",
+					}
+					tcDelta.Function.Name = toolName
+					tcDelta.Function.Arguments = arguments
+					h.writeOpenAIChunkDelta(c, completionID, now, modelName, openaiChunkDelta{
+						ToolCalls: []openaiToolCallDelta{tcDelta},
+					}, nil, "")
+					// Also add a brief narration to the <think> block so the
+					// receiving client shows it inside the think section.
+					narration := fmt.Sprintf("\n[calling tool: %s]\n", toolName)
+					reasoningBuf.WriteString(narration)
+					continue
+				}
+
+				// tool_result events → <think> block narration
+				if evt.Type == types.ResponseTypeToolResult {
+					toolName, _ := evt.Data["tool_name"].(string)
+					success := true
+					if s, ok := evt.Data["success"].(bool); ok {
+						success = s
+					}
+					narration := fmt.Sprintf("[tool result: %s (success=%v)]\n", toolName, success)
+					reasoningBuf.WriteString(narration)
+					continue
+				}
+
+				// answer / final_answer events → optimistic <think> block
+				// until <!FINAL_ANSWER> marker detected, then content.
+				if evt.Type == types.ResponseTypeAnswer || evt.Type == types.ResponseType(event.EventAgentFinalAnswer) {
+					emitAnswerChunk(evt.Content)
+				}
+
+				// Ignore other event types (references, reflection, etc.)
 			}
 
 			lastOffset = newOffset
 
 			if streamCompleted {
+				// Flush any tail reasoning content (marker never appeared)
+				if !finalAnswerStarted {
+					closeThink()
+					// Fallback: if no final answer was extracted, the
+					// reasoning content is all we have. Leave it inside
+					// the <think> block — the client will display it.
+					// This is a safety net — the system prompt should
+					// prevent this in normal operation.
+					if fullAnswer.Len() == 0 {
+						log.Warnf("[openai] no <!FINAL_ANSWER> marker found; reasoning left in <think>, session=%s", sessionID)
+					}
+				} else {
+					// Flush any tail content from the marker scan buffer
+					tail := markerScanBuf.String()
+					if tail != "" && finalAnswerStarted {
+						fullAnswer.WriteString(tail)
+						h.writeOpenAIChunk(c, completionID, now, modelName, "", tail, nil)
+					}
+				}
 				// Send final chunk with finish_reason=stop
 				finishReason := "stop"
 				h.writeOpenAIChunk(c, completionID, now, modelName, "", "", &finishReason)
 				c.Writer.Flush()
-				log.Infof("[openai] stream completed, session=%s, total_content_len=%d", sessionID, fullContent.Len())
+				log.Infof("[openai] stream completed, session=%s, final_answer_len=%d, marker_found=%v",
+					sessionID, fullAnswer.Len(), finalAnswerStarted)
 				return
 			}
 		}
 	}
+}
+
+// splitPotentialPartialMarker checks if the tail of `content` could be the
+// beginning of a partial `marker` (i.e. the marker is split across streaming
+// chunks). Returns (keep, hold) where:
+//   - keep: the portion that is safe to flush as reasoning content
+//   - hold: the tail portion that might be the start of the marker and
+//     should be buffered until the next chunk arrives
+//
+// If the content does not end with a prefix of the marker, keep=content and
+// hold="".
+func splitPotentialPartialMarker(content, marker string) (keep, hold string) {
+	if len(marker) == 0 || len(content) == 0 {
+		return content, ""
+	}
+	// Maximum overlap is len(marker)-1 characters.
+	maxOverlap := len(marker) - 1
+	if maxOverlap > len(content) {
+		maxOverlap = len(content)
+	}
+	// Check from longest possible overlap down to 1.
+	for n := maxOverlap; n >= 1; n-- {
+		tail := content[len(content)-n:]
+		if strings.HasPrefix(marker, tail) {
+			// The tail is a prefix of the marker — hold it back.
+			return content[:len(content)-n], tail
+		}
+	}
+	return content, ""
+}
+
+// openaiChunkDelta carries the delta payload for a single OpenAI streaming chunk.
+// It decouples callers from the inline struct literal so we can set
+// tool_calls without rewriting the struct tags everywhere.
+type openaiChunkDelta struct {
+	Role      string
+	Content   string
+	ToolCalls []openaiToolCallDelta
 }
 
 // writeOpenAIChunk writes a single OpenAI chat.completion.chunk SSE frame.
@@ -579,6 +815,13 @@ func (h *Handler) writeOpenAIChunk(c *gin.Context, completionID string, created 
 // session_id field in the JSON (used for the first chunk of a stream so
 // Dify can echo it back for multi-turn conversations).
 func (h *Handler) writeOpenAIChunkWithSession(c *gin.Context, completionID string, created int64, model, role, content string, finishReason *string, sessionID string) {
+	delta := openaiChunkDelta{Role: role, Content: content}
+	h.writeOpenAIChunkDelta(c, completionID, created, model, delta, finishReason, sessionID)
+}
+
+// writeOpenAIChunkDelta writes a single OpenAI chat.completion.chunk SSE frame
+// using a full openaiChunkDelta, allowing tool_calls.
+func (h *Handler) writeOpenAIChunkDelta(c *gin.Context, completionID string, created int64, model string, delta openaiChunkDelta, finishReason *string, sessionID string) {
 	chunk := openaiChatChunk{
 		ID:        completionID,
 		Object:    "chat.completion.chunk",
@@ -589,11 +832,13 @@ func (h *Handler) writeOpenAIChunkWithSession(c *gin.Context, completionID strin
 			{
 				Index: 0,
 				Delta: struct {
-					Role    string `json:"role,omitempty"`
-					Content string `json:"content,omitempty"`
+					Role      string                `json:"role,omitempty"`
+					Content   string                `json:"content,omitempty"`
+					ToolCalls []openaiToolCallDelta `json:"tool_calls,omitempty"`
 				}{
-					Role:    role,
-					Content: content,
+					Role:      delta.Role,
+					Content:   delta.Content,
+					ToolCalls: delta.ToolCalls,
 				},
 				FinishReason: finishReason,
 			},
@@ -644,6 +889,8 @@ func (h *Handler) openAINonStreamQA(
 			)
 		}
 	}
+	// Mark context for <!FINAL_ANSWER> marker (same as streaming path).
+	baseCtx = types.WithFinalAnswerMarker(baseCtx)
 
 	eventBus := event.NewEventBus()
 	asyncCtx, cancel := context.WithCancel(logger.CloneContext(baseCtx))
@@ -796,14 +1043,62 @@ pollLoop:
 
 	// Build response
 	completionID := "chatcmpl-" + uuid.New().String()
-	content := fullContent.String()
 	finishReason := "stop"
 
 	if hasError {
-		content = fmt.Sprintf("[Error] %s", errorMsg)
+		resp := openaiChatResponse{
+			ID:        completionID,
+			Object:    "chat.completion",
+			Created:   time.Now().Unix(),
+			Model:     modelName,
+			SessionID: sessionID,
+			Choices: []openaiChatChoice{
+				{
+					Index: 0,
+					Message: struct {
+						Role    string `json:"role"`
+						Content string `json:"content"`
+					}{
+						Role:    "assistant",
+						Content: fmt.Sprintf("[Error] %s", errorMsg),
+					},
+					FinishReason: finishReason,
+				},
+			},
+		}
+		c.JSON(http.StatusOK, resp)
+		return
 	}
 
-	log.Infof("[openai] non-stream response ready, content_len=%d", len(content))
+	// Split the accumulated content at the <!FINAL_ANSWER> marker.
+	// Everything before it is wrapped in <think>...</think>; everything
+	// after is the final answer. Both go into delta.content.
+	rawContent := fullContent.String()
+	reasoningPart := ""
+	answerPart := ""
+	idx := strings.Index(rawContent, finalAnswerMarker)
+	if idx >= 0 {
+		reasoningPart = rawContent[:idx]
+		answerPart = rawContent[idx+len(finalAnswerMarker):]
+		log.Infof("[openai] non-stream marker found, reasoning_len=%d, answer_len=%d",
+			len(reasoningPart), len(answerPart))
+	} else {
+		// No marker — treat everything as the answer (safety fallback).
+		answerPart = rawContent
+		log.Warnf("[openai] non-stream no <!FINAL_ANSWER> marker found; using full content as answer, len=%d",
+			len(answerPart))
+	}
+
+	// Combine: <think>reasoning</think>\n + answer
+	var content string
+	if reasoningPart != "" {
+		content = "<think>" + reasoningPart + "</think>\n" + answerPart
+	} else {
+		content = answerPart
+	}
+
+	log.Infof("[openai] non-stream response ready, reasoning_len=%d, answer_len=%d, total_len=%d",
+		len(reasoningPart), len(answerPart), len(content))
 
 	resp := openaiChatResponse{
 		ID:        completionID,

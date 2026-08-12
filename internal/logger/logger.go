@@ -533,6 +533,11 @@ func CloneContext(ctx context.Context) context.Context {
 		// to the same trace opened by GinMiddleware, instead of each call
 		// auto-creating its own orphan trace.
 		types.LangfuseTraceContextKey,
+		// FinalAnswerMarkerContextKey: must survive CloneContext so the
+		// agent engine (which builds its system prompt from a context
+		// derived via logger.CloneContext) still sees the OpenAI-endpoint
+		// marker flag and appends the <!FINAL_ANSWER> constraint.
+		types.FinalAnswerMarkerContextKey,
 	} {
 		if v := ctx.Value(k); v != nil {
 			newCtx = context.WithValue(newCtx, k, v)

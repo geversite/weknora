@@ -197,6 +197,61 @@ func IsBackgroundTask(ctx context.Context) bool {
 	return v
 }
 
+// WithFinalAnswerMarker marks ctx as expecting the LLM to emit the
+// <!FINAL_ANSWER> sentinel before its final answer. The agent engine consults
+// this flag (see WantsFinalAnswerMarker) to decide whether to append the
+// marker-constraint preamble to the system prompt. Set by the OpenAI-
+// compatible handler so downstream agent rounds know to instruct the LLM.
+func WithFinalAnswerMarker(ctx context.Context) context.Context {
+	return context.WithValue(ctx, FinalAnswerMarkerContextKey, true)
+}
+
+// WantsFinalAnswerMarker reports whether ctx was marked as expecting the
+// <!FINAL_ANSWER> sentinel (see WithFinalAnswerMarker). When true, the agent
+// engine appends a constraint to the system prompt instructing the LLM to
+// emit the marker exactly once before its final answer.
+func WantsFinalAnswerMarker(ctx context.Context) bool {
+	if ctx == nil {
+		return false
+	}
+	v, _ := ctx.Value(FinalAnswerMarkerContextKey).(bool)
+	return v
+}
+
+// FinalAnswerMarker is the exact sentinel the LLM is instructed to emit
+// (via FinalAnswerMarkerInstruction) at the very start of its final answer
+// when the request wants the marker (OpenAI-compatible endpoint). The
+// OpenAI streaming handler scans for this token in the answer stream to
+// switch from delta.reasoning_content (everything before) to delta.content
+// (everything after). The marker itself is stripped — it never reaches the
+// end client.
+const FinalAnswerMarker = "<!FINAL_ANSWER>"
+
+// FinalAnswerMarkerInstruction is appended to the system prompt when the
+// request wants the <!FINAL_ANSWER> marker (OpenAI-compatible endpoint).
+// It constrains the LLM to emit the marker exactly once, immediately before
+// the user-facing final answer, and never during intermediate rounds.
+const FinalAnswerMarkerInstruction = `
+
+### Final Answer Marker (ABSOLUTE RULE)
+When — and only when — you are ready to deliver your complete final answer to
+the user (the terminal round where you stop naturally and request no further
+tool calls), you MUST begin your final answer with the exact sentinel:
+
+<!FINAL_ANSWER>
+
+Rules:
+1. Emit the sentinel EXACTLY ONCE, at the very start of the final answer block.
+2. Do NOT emit it during intermediate rounds (when you still intend to call
+   tools). If you are still investigating, planning, or narrating your thought
+   process, do NOT output the sentinel.
+3. The sentinel is a control token — it will be stripped by the system and
+   must never appear in the text the user actually sees.
+4. After the sentinel, write your complete, well-formatted final answer and
+   stop. Do not request any tools after emitting the sentinel.
+5. If you cannot fully answer the question, still emit the sentinel before
+   your explanation of why you could not answer.`
+
 // WithLLMCallMetadata annotates a provider call for cache observability. The
 // fingerprint must be a hash, never raw prompt content.
 func WithLLMCallMetadata(ctx context.Context, purpose, prefixFingerprint string) context.Context {

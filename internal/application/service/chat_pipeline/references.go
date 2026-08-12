@@ -24,6 +24,13 @@ func prepareMessagesWithModelContext(
 	messages := prepareMessagesWithHistory(chatManage)
 	if len(messages) > 0 {
 		messages[0].Content = strings.TrimRight(messages[0].Content, " \t\r\n") + registry.ProtocolPrompt()
+		// When the request originates from the OpenAI-compatible endpoint,
+		// append the <!FINAL_ANSWER> constraint so the LLM emits the marker
+		// before its final answer. The OpenAI handler parses this marker to
+		// split delta.reasoning_content from delta.content.
+		if types.WantsFinalAnswerMarker(ctx) {
+			messages[0].Content += types.FinalAnswerMarkerInstruction
+		}
 	}
 	if len(chatManage.MergeResult) == 0 || len(messages) == 0 {
 		return messages, registry

@@ -122,7 +122,17 @@ func (e *AgentEngine) buildSystemPrompt(ctx context.Context) string {
 		e.systemPromptOptions(ctx),
 		e.systemPromptTemplate,
 	)
-	return strings.TrimRight(prompt, " \t\r\n") + e.modelContext.ProtocolPrompt()
+	prompt = strings.TrimRight(prompt, " \t\r\n") + e.modelContext.ProtocolPrompt()
+
+	// When the request originates from the OpenAI-compatible endpoint, append
+	// a constraint instructing the LLM to emit <!FINAL_ANSWER> exactly once
+	// before its final answer. The OpenAI handler parses this marker to split
+	// the stream into delta.reasoning_content (everything before) and
+	// delta.content (everything after). See WantsFinalAnswerMarker.
+	if types.WantsFinalAnswerMarker(ctx) {
+		prompt += types.FinalAnswerMarkerInstruction
+	}
+	return prompt
 }
 
 // NewAgentEngineWithSkills creates a new agent engine with skills support
