@@ -43,9 +43,11 @@
               </t-tag>
             </div>
           </div>
-          <t-dropdown :options="folderMenuOptions(folder)" @click="(opt) => onFolderMenu(opt, folder)">
-            <t-icon name="more" class="folder-card-more" @click.stop />
-          </t-dropdown>
+          <span @click.stop>
+            <t-dropdown trigger="click" :options="folderMenuOptions(folder)" @click="(opt) => onFolderMenu(opt, folder)">
+              <t-icon name="more" class="folder-card-more" />
+            </t-dropdown>
+          </span>
         </div>
 
         <!-- 文件卡片 -->
