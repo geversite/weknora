@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -543,10 +544,15 @@ func (h *Handler) streamEventsToOpenAIChunks(
 	// fullAnswer accumulates only the final-answer text (post-marker) for logging.
 	var fullAnswer strings.Builder
 
+	// wikiStripper removes [[slug|display name]] wiki links from text that
+	// may be split across streaming chunks. It is applied to every piece of
+	// content before it is emitted to the client (both reasoning and answer).
+	wikiStripper := &wikiLinkStripper{}
+
 	// flushReasoning sends the accumulated reasoningBuf as delta.content.
 	// On the very first flush it also prepends the opening <think> tag.
 	flushReasoning := func() {
-		if reasoningBuf.Len() == 0 && thinkOpened {
+		if reasoningBuf.Len() == 0 {
 			return
 		}
 		prefix := ""
@@ -561,6 +567,11 @@ func (h *Handler) streamEventsToOpenAIChunks(
 	// closeThink flushes any remaining reasoning buffer, then emits
 	// </think>\n as delta.content to close the think block.
 	closeThink := func() {
+		// Release any pending wiki-stripped text first so it isn't lost
+		// when we close the think block.
+		if p := wikiStripper.flush(); p != "" {
+			reasoningBuf.WriteString(p)
+		}
 		flushReasoning()
 		if thinkOpened {
 			h.writeOpenAIChunk(c, completionID, now, modelName, "", "</think>\n", nil)
@@ -577,9 +588,11 @@ func (h *Handler) streamEventsToOpenAIChunks(
 			return
 		}
 		if finalAnswerStarted {
-			// Post-marker: route straight to content
-			fullAnswer.WriteString(content)
-			h.writeOpenAIChunk(c, completionID, now, modelName, "", content, nil)
+			// Post-marker: route straight to content, stripping wiki links.
+			if cleaned := wikiStripper.feed(content); cleaned != "" {
+				fullAnswer.WriteString(cleaned)
+				h.writeOpenAIChunk(c, completionID, now, modelName, "", cleaned, nil)
+			}
 			return
 		}
 		// Pre-marker (optimistic): buffer and scan for the marker.
@@ -594,10 +607,12 @@ func (h *Handler) streamEventsToOpenAIChunks(
 			// and re-inject it into markerScanBuf for the next chunk.
 			keep, hold := splitPotentialPartialMarker(scanned, finalAnswerMarker)
 			if keep != "" {
-				reasoningBuf.WriteString(keep)
-				// Flush immediately for low-latency streaming (matching
-				// the web SSE behavior of forwarding every chunk ASAP).
-				flushReasoning()
+				if cleaned := wikiStripper.feed(keep); cleaned != "" {
+					reasoningBuf.WriteString(cleaned)
+					// Flush immediately for low-latency streaming (matching
+					// the web SSE behavior of forwarding every chunk ASAP).
+					flushReasoning()
+				}
 			}
 			if hold != "" {
 				markerScanBuf.WriteString(hold)
@@ -608,15 +623,19 @@ func (h *Handler) streamEventsToOpenAIChunks(
 		before := scanned[:idx]
 		after := scanned[idx+len(finalAnswerMarker):]
 		if before != "" {
-			reasoningBuf.WriteString(before)
+			if cleaned := wikiStripper.feed(before); cleaned != "" {
+				reasoningBuf.WriteString(cleaned)
+			}
 		}
 		// Flush all accumulated reasoning and close the think block.
 		closeThink()
 		finalAnswerStarted = true
 		log.Infof("[openai] <!FINAL_ANSWER> marker detected, switching to content mode, session=%s", sessionID)
 		if after != "" {
-			fullAnswer.WriteString(after)
-			h.writeOpenAIChunk(c, completionID, now, modelName, "", after, nil)
+			if cleaned := wikiStripper.feed(after); cleaned != "" {
+				fullAnswer.WriteString(cleaned)
+				h.writeOpenAIChunk(c, completionID, now, modelName, "", cleaned, nil)
+			}
 		}
 	}
 
@@ -681,8 +700,10 @@ func (h *Handler) streamEventsToOpenAIChunks(
 				// thinking events (LLM内生 reasoning_content) → <think> block
 				if evt.Type == types.ResponseTypeThinking {
 					if evt.Content != "" {
-						reasoningBuf.WriteString(evt.Content)
-						flushReasoning()
+						if cleaned := wikiStripper.feed(evt.Content); cleaned != "" {
+							reasoningBuf.WriteString(cleaned)
+							flushReasoning()
+						}
 					}
 					continue
 				}
@@ -706,7 +727,9 @@ func (h *Handler) streamEventsToOpenAIChunks(
 					// Also add a brief narration to the <think> block so the
 					// receiving client shows it inside the think section.
 					narration := fmt.Sprintf("\n[calling tool: %s]\n", toolName)
-					reasoningBuf.WriteString(narration)
+					if cleaned := wikiStripper.feed(narration); cleaned != "" {
+						reasoningBuf.WriteString(cleaned)
+					}
 					continue
 				}
 
@@ -718,7 +741,9 @@ func (h *Handler) streamEventsToOpenAIChunks(
 						success = s
 					}
 					narration := fmt.Sprintf("[tool result: %s (success=%v)]\n", toolName, success)
-					reasoningBuf.WriteString(narration)
+					if cleaned := wikiStripper.feed(narration); cleaned != "" {
+						reasoningBuf.WriteString(cleaned)
+					}
 					continue
 				}
 
@@ -749,8 +774,14 @@ func (h *Handler) streamEventsToOpenAIChunks(
 					// Flush any tail content from the marker scan buffer
 					tail := markerScanBuf.String()
 					if tail != "" && finalAnswerStarted {
-						fullAnswer.WriteString(tail)
-						h.writeOpenAIChunk(c, completionID, now, modelName, "", tail, nil)
+						cleaned := wikiStripper.feed(tail)
+						if p := wikiStripper.flush(); p != "" {
+							cleaned += p
+						}
+						if cleaned != "" {
+							fullAnswer.WriteString(cleaned)
+							h.writeOpenAIChunk(c, completionID, now, modelName, "", cleaned, nil)
+						}
 					}
 				}
 				// Send final chunk with finish_reason=stop
@@ -763,6 +794,57 @@ func (h *Handler) streamEventsToOpenAIChunks(
 			}
 		}
 	}
+}
+
+// wikiLinkPattern matches a complete [[slug|display name]] wiki link.
+var wikiLinkPattern = regexp.MustCompile(`\[\[[^\]]*\]\]`)
+
+// maxWikiLinkPending caps how much text is held back while waiting for a
+// closing "]]". Real wiki links are short; if the held tail exceeds this
+// length it is treated as ordinary text (e.g. an unclosed "[[" in code).
+const maxWikiLinkPending = 512
+
+// wikiLinkStripper incrementally removes [[...]] wiki links from text that
+// may be split at arbitrary streaming chunk boundaries. It holds back a tail
+// that could be the start of a wiki link until it can be resolved (either a
+// closing "]]" arrives and the whole link is dropped, or no closing bracket
+// arrives and the held text is flushed as ordinary content).
+type wikiLinkStripper struct {
+	pending string
+}
+
+// feed processes the next text fragment and returns the portion that is
+// safe to emit now (with complete wiki links removed). Any tail that could
+// be the start of a wiki link is buffered internally for the next call.
+func (s *wikiLinkStripper) feed(input string) string {
+	var out strings.Builder
+	if len(s.pending) > maxWikiLinkPending {
+		// Held tail is too long to be a real wiki link — emit it as-is.
+		out.WriteString(s.pending)
+		s.pending = ""
+	}
+	combined := s.pending + input
+	s.pending = ""
+
+	lastOpen := strings.LastIndex(combined, "[[")
+	if lastOpen >= 0 && !strings.Contains(combined[lastOpen:], "]]") {
+		// The last "[[" has no closing "]]" in this fragment — hold it.
+		if lastOpen > 0 {
+			out.WriteString(wikiLinkPattern.ReplaceAllString(combined[:lastOpen], ""))
+		}
+		s.pending = combined[lastOpen:]
+		return out.String()
+	}
+	out.WriteString(wikiLinkPattern.ReplaceAllString(combined, ""))
+	return out.String()
+}
+
+// flush returns any text still held (couldn't be resolved as a wiki link),
+// treating it as ordinary content. Called when the stream/marker ends.
+func (s *wikiLinkStripper) flush() string {
+	p := s.pending
+	s.pending = ""
+	return p
 }
 
 // splitPotentialPartialMarker checks if the tail of `content` could be the
@@ -1086,13 +1168,15 @@ pollLoop:
 			len(answerPart))
 	}
 
-	// Combine: <think>reasoning</think>\n + answer
+	// Combine: <think>reasoning</think>\n + answer, then strip any wiki
+	// links ([[slug|display name]]) from the entire response.
 	var content string
 	if reasoningPart != "" {
 		content = "<think>" + reasoningPart + "</think>\n" + answerPart
 	} else {
 		content = answerPart
 	}
+	content = wikiLinkPattern.ReplaceAllString(content, "")
 
 	log.Infof("[openai] non-stream response ready, reasoning_len=%d, answer_len=%d, total_len=%d",
 		len(reasoningPart), len(answerPart), len(content))
