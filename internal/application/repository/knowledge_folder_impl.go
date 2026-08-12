@@ -141,6 +141,53 @@ func (r *knowledgeFolderRepo) GetByNameInParent(ctx context.Context, tenantID ui
 	return &folder, nil
 }
 
+// GetPathChain returns the ancestor chain of the given folder, from root to
+// the folder itself (inclusive). Each entry contains the id and name of that
+// level. Used to build the breadcrumb in the UI so clicks can navigate to a
+// specific ancestor (not always back to root).
+//
+// Algorithm: starting from the folder's path (e.g. "/A/B/C"), issue one
+// batched query for all folders whose path is a prefix of the target path,
+// then assemble the chain in order. This avoids N+1 recursive lookups.
+func (r *knowledgeFolderRepo) GetPathChain(ctx context.Context, tenantID uint64, kbID, folderID string) ([]*types.KnowledgeFolder, error) {
+	// 1. Load the target folder to get its materialized path.
+	var target types.KnowledgeFolder
+	if err := r.db.WithContext(ctx).Where("id = ?", folderID).First(&target).Error; err != nil {
+		return nil, err
+	}
+	if target.Path == "" || target.Path == "/" {
+		return nil, nil
+	}
+
+	// 2. Split path into prefix candidates: "/A/B/C" -> ["/A", "/A/B", "/A/B/C"]
+	parts := strings.Split(strings.Trim(target.Path, "/"), "/")
+	prefixes := make([]string, 0, len(parts))
+	for i := 1; i <= len(parts); i++ {
+		prefixes = append(prefixes, "/"+strings.Join(parts[:i], "/"))
+	}
+
+	// 3. Batch query all ancestors + self.
+	var folders []*types.KnowledgeFolder
+	if err := r.db.WithContext(ctx).
+		Where("tenant_id = ? AND knowledge_base_id = ? AND path IN ?", tenantID, kbID, prefixes).
+		Find(&folders).Error; err != nil {
+		return nil, err
+	}
+
+	// 4. Order by materialized path depth (already in path order).
+	byPath := make(map[string]*types.KnowledgeFolder, len(folders))
+	for _, f := range folders {
+		byPath[f.Path] = f
+	}
+	chain := make([]*types.KnowledgeFolder, 0, len(prefixes))
+	for _, p := range prefixes {
+		if f, ok := byPath[p]; ok {
+			chain = append(chain, f)
+		}
+	}
+	return chain, nil
+}
+
 func (r *knowledgeFolderRepo) UpdateStatus(ctx context.Context, folderID, status string) error {
 	return r.db.WithContext(ctx).Model(&types.KnowledgeFolder{}).
 		Where("id = ?", folderID).

@@ -408,11 +408,17 @@ func (h *KnowledgeFolderHandler) ListFolderContent(c *gin.Context) {
 		return
 	}
 
-	// 3. current folder info (for breadcrumb)
+	// 3. current folder info + ancestor chain (for clickable breadcrumb)
 	var currentFolder *types.KnowledgeFolder
+	var pathChain []*types.KnowledgeFolder
 	if folderID != "" {
 		if f, ferr := h.folderService.GetByID(ctx, folderID); ferr == nil {
 			currentFolder = f
+			// Path chain is built from root to current (inclusive) so each
+			// crumb in the breadcrumb can carry the correct folder id.
+			if chain, cerr := h.folderService.GetPathChain(ctx, kbID, folderID); cerr == nil {
+				pathChain = chain
+			}
 		}
 	}
 
@@ -421,6 +427,7 @@ func (h *KnowledgeFolderHandler) ListFolderContent(c *gin.Context) {
 		Files:         files,
 		TotalFiles:    total,
 		CurrentFolder: currentFolder,
+		PathChain:     pathChain,
 	})
 }
 
@@ -462,6 +469,10 @@ type folderContentResponse struct {
 	Files         []*types.Knowledge           `json:"files"`
 	TotalFiles    int64                        `json:"total_files"`
 	CurrentFolder *types.KnowledgeFolder       `json:"current_folder"`
+	// PathChain is the ancestor chain from root to the current folder
+	// (inclusive). Each entry has id and name; used to render a clickable
+	// breadcrumb in the UI.
+	PathChain []*types.KnowledgeFolder `json:"path_chain"`
 }
 
 // moveSingleRequest is the request body for moving a single knowledge entry.

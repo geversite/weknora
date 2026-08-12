@@ -69,6 +69,10 @@ export interface FolderContent {
   files: KnowledgeFileItem[]
   total_files: number
   current_folder: KnowledgeFolder | null
+  // path_chain: ancestor chain from root to current folder (inclusive).
+  // Each entry has id+name so breadcrumb items can navigate to a specific
+  // ancestor instead of only returning to root.
+  path_chain: KnowledgeFolder[]
 }
 
 // 列出文件夹树（后端返回单层 nodes + file_count + has_children，前端自建层级）

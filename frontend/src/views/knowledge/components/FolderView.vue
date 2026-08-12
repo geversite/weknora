@@ -142,7 +142,8 @@ async function loadContent() {
     const res = await listFolderContent(props.kbId, currentFolderId.value)
     folders.value = res?.folders || []
     files.value = res?.files || []
-    updateBreadcrumb(res?.current_folder || null)
+    // path_chain 从后端返回，每层都有 id 和 name，可点击跳转到对应文件夹
+    updateBreadcrumb(res?.path_chain || [])
   } catch (e: any) {
     MessagePlugin.error(e?.message || '加载文件夹内容失败')
   } finally {
@@ -150,23 +151,10 @@ async function loadContent() {
   }
 }
 
-function updateBreadcrumb(current: KnowledgeFolder | null) {
-  if (!current) {
-    breadcrumb.value = []
-    return
-  }
-  // 用 path 字段解析（如 "/产品线A/子模块" → ["产品线A", "子模块"]）
-  const parts = (current.path || '').split('/').filter(Boolean)
-  // 通过 path 前缀逐步查找各层文件夹名
-  const crumbs: { id: string; name: string }[] = []
-  // 简化：breadcrumb 用 path 名称；id 用已知层级（逐级查询较复杂，这里用 name 做面包屑）
-  // 实际导航需要 id，这里从 folders 的父链推断不可得，故仅展示名称；点击回到根/通过当前 id。
-  // 为支持点击返回，这里用 current_folder.path 从根逐级匹配当前加载的祖先。
-  // 简化实现：只支持返回根（path 层级点击暂用当前文件夹的父级）。
-  for (const name of parts) {
-    crumbs.push({ id: '', name })
-  }
-  breadcrumb.value = crumbs
+function updateBreadcrumb(chain: KnowledgeFolder[]) {
+  // 后端返回祖先链（root -> ... -> current），每项有 id 和 name。
+  // 点击任意层级可跳转，避免总是回到根目录。
+  breadcrumb.value = chain.map((f) => ({ id: f.id, name: f.name }))
 }
 
 function enterFolder(folderId: string) {

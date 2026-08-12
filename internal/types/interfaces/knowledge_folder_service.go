@@ -28,6 +28,11 @@ type KnowledgeFolderService interface {
 	// GetByID returns a folder by its ID.
 	GetByID(ctx context.Context, folderID string) (*types.KnowledgeFolder, error)
 
+	// GetPathChain returns the ancestor chain from root to the given folder
+	// (inclusive). Used to build the breadcrumb so clicks can navigate to a
+	// specific ancestor instead of always returning to root.
+	GetPathChain(ctx context.Context, kbID, folderID string) ([]*types.KnowledgeFolder, error)
+
 	// ListChildrenWithMeta returns the direct child folders of a folder (or root
 	// when folderID="") enriched with file counts and has-children flags.
 	ListChildrenWithMeta(ctx context.Context, kbID, folderID string) ([]*types.KnowledgeFolderNode, error)

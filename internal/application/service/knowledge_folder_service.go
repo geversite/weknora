@@ -458,6 +458,14 @@ func (s *folderService) GetByID(ctx context.Context, folderID string) (*types.Kn
 	return s.folderRepo.GetByID(ctx, folderID)
 }
 
+// GetPathChain returns the ancestor chain from root to the given folder
+// (inclusive). Used for breadcrumb navigation so each crumb can carry a
+// clickable folder id (not just a name).
+func (s *folderService) GetPathChain(ctx context.Context, kbID, folderID string) ([]*types.KnowledgeFolder, error) {
+	tenantID := types.MustTenantIDFromContext(ctx)
+	return s.folderRepo.GetPathChain(ctx, tenantID, kbID, folderID)
+}
+
 // ListChildrenWithMeta returns the direct child folders of a folder (or root when
 // folderID="") enriched with file counts and has-children flags.
 func (s *folderService) ListChildrenWithMeta(ctx context.Context, kbID, folderID string) ([]*types.KnowledgeFolderNode, error) {

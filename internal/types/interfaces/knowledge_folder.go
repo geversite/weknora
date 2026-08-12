@@ -31,6 +31,11 @@ type KnowledgeFolderRepository interface {
 	// returning an error.
 	GetByNameInParent(ctx context.Context, tenantID uint64, kbID, parentID, name string) (*types.KnowledgeFolder, error)
 
+	// GetPathChain returns the ancestor chain of the given folder, from root
+	// to the folder itself (inclusive). Used for breadcrumb navigation so
+	// clicks can navigate to a specific ancestor rather than only back to root.
+	GetPathChain(ctx context.Context, tenantID uint64, kbID, folderID string) ([]*types.KnowledgeFolder, error)
+
 	// GetSubtree returns all folders under the given folder IDs (inclusive),
 	// using the materialized path prefix match.
 	GetSubtree(ctx context.Context, tenantID uint64, kbID string, folderIDs []string) ([]*types.KnowledgeFolder, error)
