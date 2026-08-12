@@ -35,6 +35,14 @@ type FolderSummaryService interface {
 	// folder and its entire ancestor chain (parents' "subfolder guide" depends
 	// on child themes).
 	ScheduleRefreshForFolderAndAncestors(ctx context.Context, folder *types.KnowledgeFolder)
+	// ScheduleRefreshForKnowledgeIDs resolves each knowledge ID to its owning
+	// folder and schedules a debounced refresh for that folder and its
+	// ancestors (M7). Used by the wiki finalize hook so folder summaries get
+	// regenerated once wiki pages land — the summaries embed [[slug]] cross
+	// links that could not be populated on the first generation pass (which
+	// fires before wiki ingest completes). Best-effort: unknown / deleted
+	// knowledge IDs are silently skipped.
+	ScheduleRefreshForKnowledgeIDs(ctx context.Context, kbID string, knowledgeIDs []string)
 	// ListSummariesByKB returns all folder summaries for a KB (used by the wiki
 	// governance system page).
 	ListSummariesByKB(ctx context.Context, tenantID uint64, kbID string) ([]*types.FolderSummary, error)

@@ -15,7 +15,7 @@
     </t-alert>
 
     <t-loading :loading="loading" class="summary-loading">
-      <div v-if="!editMode" class="summary-content" v-html="renderedContent"></div>
+      <div v-if="!editMode" class="summary-content" v-html="renderedContent" @click="handleContentClick"></div>
       <div v-else class="summary-editor">
         <t-textarea v-model="editContent" :autosize="{ minRows: 12, maxRows: 30 }" />
         <div class="summary-editor-actions">
@@ -36,6 +36,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
+import { useRouter, useRoute } from 'vue-router'
 import { MessagePlugin } from 'tdesign-vue-next'
 import {
   getFolderSummary,
@@ -44,6 +45,9 @@ import {
   type FolderSummary,
   type KnowledgeFolderNode,
 } from '@/api/knowledge-folder'
+
+const router = useRouter()
+const route = useRoute()
 
 const props = defineProps<{
   kbId: string
@@ -63,10 +67,29 @@ const saving = ref(false)
 const renderedContent = computed(() => {
   if (!summary.value?.content) return '<p class="summary-none">暂无摘要内容</p>'
   let html = summary.value.content
+  // Wiki links [[slug|name]] → clickable links that jump to the wiki tab.
+  // Process them BEFORE regular markdown links so the [[...]] syntax isn't
+  // mangled by the [text](url) pass.
+  html = html.replace(/\[\[([^\]]+)\]\]/g, (_, inner: string) => {
+    const pipeIdx = inner.indexOf('|')
+    const slug = pipeIdx > 0 ? inner.substring(0, pipeIdx).trim() : inner.trim()
+    const display = pipeIdx > 0 ? inner.substring(pipeIdx + 1).trim() : slug
+    return `<a href="#" class="folder-summary-wiki-link" data-slug="${slug}">${display}</a>`
+  })
   html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
   html = html.replace(/\n/g, '<br/>')
   return html
 })
+
+function handleContentClick(e: MouseEvent) {
+  const target = (e.target as HTMLElement)?.closest('a.folder-summary-wiki-link') as HTMLAnchorElement | null
+  if (!target) return
+  e.preventDefault()
+  const slug = target.dataset.slug
+  if (!slug) return
+  // Jump to the wiki tab with ?slug=... so WikiBrowser opens that page.
+  router.replace({ query: { ...route.query, tab: 'wiki', slug } })
+}
 
 async function loadSummary() {
   loading.value = true
@@ -160,5 +183,13 @@ watch(() => props.folder.id, loadSummary, { immediate: true })
 }
 .summary-none {
   color: var(--td-text-color-secondary);
+}
+:deep(.folder-summary-wiki-link) {
+  color: var(--td-brand-color);
+  text-decoration: none;
+  cursor: pointer;
+}
+:deep(.folder-summary-wiki-link:hover) {
+  text-decoration: underline;
 }
 </style>

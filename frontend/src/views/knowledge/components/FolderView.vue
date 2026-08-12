@@ -89,8 +89,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
-import { MessagePlugin, DialogPlugin } from 'tdesign-vue-next'
+import { ref, computed, onMounted, h } from 'vue'
+import { MessagePlugin, DialogPlugin, Input as TInput } from 'tdesign-vue-next'
 import {
   listFolderContent,
   deleteFolder,
@@ -226,22 +226,31 @@ function onFolderMenu(opt: any, folder: KnowledgeFolderNode) {
 }
 
 function renameFolder(folder: KnowledgeFolderNode) {
-  DialogPlugin.prompt({
+  const inputValue = ref(folder.name)
+  const dlg = DialogPlugin({
     header: '重命名文件夹',
-    label: '文件夹名称',
-    defaultValue: folder.name,
+    body: () => h('div', { style: 'padding: 8px 0;' }, [
+      h('div', { style: 'margin-bottom: 8px; font-size: 14px; color: var(--td-text-color-primary);' }, '文件夹名称'),
+      h(TInput, {
+        modelValue: inputValue.value,
+        'onUpdate:modelValue': (val: string) => { inputValue.value = val },
+        placeholder: '请输入文件夹名称',
+      }),
+    ]),
     confirmBtn: '确定',
-    onConfirm: async ({ value }) => {
-      const name = (value || '').trim()
+    onConfirm: async () => {
+      const name = (inputValue.value || '').trim()
       if (!name) return
       try {
         await updateFolder(props.kbId, folder.id, { name })
         MessagePlugin.success('已重命名')
+        dlg.destroy()
         loadContent()
       } catch (e: any) {
         MessagePlugin.error(e?.message || '重命名失败')
       }
     },
+    onClose: () => dlg.destroy(),
   })
 }
 
@@ -338,6 +347,7 @@ defineExpose({
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
   gap: 16px;
+  justify-content: start;
 }
 .folder-card,
 .file-card {

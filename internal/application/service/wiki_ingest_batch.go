@@ -750,12 +750,14 @@ func (s *wikiIngestService) ProcessWikiIngest(ctx context.Context, t *asynq.Task
 		for _, r := range docResults {
 			changes = append(changes, wikiFinalizeChange{
 				Action: wikiFinalizeAdded, DocTitle: r.DocTitle, DocSummary: r.Summary,
+				KnowledgeID: r.KnowledgeID,
 			})
 		}
 		for _, op := range pendingOps {
 			if op.Op == WikiOpRetract {
 				changes = append(changes, wikiFinalizeChange{
 					Action: wikiFinalizeRemoved, DocTitle: op.DocTitle, DocSummary: op.DocSummary,
+					KnowledgeID: op.KnowledgeID,
 				})
 			}
 		}
@@ -995,6 +997,10 @@ func (s *wikiIngestService) ProcessWikiFinalize(ctx context.Context, t *asynq.Ta
 	var freshRefs []linkRef
 	var folderPruneIDs []string
 	var changeDesc strings.Builder
+	// [M7] Collect knowledge IDs whose wiki pages just landed (or were
+	// retracted) so we can refresh the folder summaries that should now
+	// embed [[slug]] references to those pages.
+	affectedKnowledgeIDs := make(map[string]struct{})
 	for _, r := range rows {
 		ids = append(ids, r.ID)
 		if r.Op == wikiFinalizeOpFolderPrune {
@@ -1017,6 +1023,9 @@ func (s *wikiIngestService) ProcessWikiFinalize(ctx context.Context, t *asynq.Ta
 				fmt.Fprintf(&changeDesc, "<document_removed>\n<title>%s</title>\n<summary>%s</summary>\n</document_removed>\n\n", row.Change.DocTitle, row.Change.DocSummary)
 			} else {
 				fmt.Fprintf(&changeDesc, "<document_added>\n<title>%s</title>\n<summary>%s</summary>\n</document_added>\n\n", row.Change.DocTitle, row.Change.DocSummary)
+			}
+			if row.Change.KnowledgeID != "" {
+				affectedKnowledgeIDs[row.Change.KnowledgeID] = struct{}{}
 			}
 			continue
 		}
@@ -1126,6 +1135,15 @@ func (s *wikiIngestService) ProcessWikiFinalize(ctx context.Context, t *asynq.Ta
 		return fmt.Errorf("wiki finalize: trim pending rows: %w", err)
 	}
 
+	// [M7] Refresh folder summaries for every folder that owns a document
+	// whose wiki pages just landed. Folder summaries now embed [[slug]]
+	// cross-links to the wiki pages of their files, so they must be
+	// regenerated once those pages exist (the original post-process trigger
+	// fires before wiki ingest completes, so the first generation had no
+	// candidate slugs to link to). Best-effort: failures only degrade summary
+	// freshness, never the wiki finalize outcome.
+	s.triggerFolderSummaryRefreshForDocs(ctx, payload.KnowledgeBaseID, affectedKnowledgeIDs)
+
 	// If more finalize rows landed while we were working, reschedule so they
 	// get their own convergence pass.
 	rescheduled := false
@@ -1146,6 +1164,23 @@ func (s *wikiIngestService) ProcessWikiFinalize(ctx context.Context, t *asynq.Ta
 		time.Since(startedAt).Round(time.Millisecond),
 	)
 	return nil
+}
+
+// triggerFolderSummaryRefreshForDocs resolves each affected knowledge ID to
+// its owning folder and schedules a debounced folder-summary refresh (M7).
+// Folder summaries now embed [[slug]] cross-links to the wiki pages of their
+// files, so they must be regenerated once those pages exist. Best-effort:
+// lookup or scheduling failures are logged and skipped — they only degrade
+// summary freshness, never the wiki finalize outcome.
+func (s *wikiIngestService) triggerFolderSummaryRefreshForDocs(ctx context.Context, kbID string, affectedKnowledgeIDs map[string]struct{}) {
+	if s.folderSummarySvc == nil || len(affectedKnowledgeIDs) == 0 {
+		return
+	}
+	kids := make([]string, 0, len(affectedKnowledgeIDs))
+	for kid := range affectedKnowledgeIDs {
+		kids = append(kids, kid)
+	}
+	s.folderSummarySvc.ScheduleRefreshForKnowledgeIDs(ctx, kbID, kids)
 }
 
 func (s *wikiIngestService) mapOneDocument(

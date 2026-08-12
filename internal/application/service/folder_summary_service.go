@@ -431,6 +431,43 @@ func (s *folderSummaryService) cascadeRefreshToAncestors(ctx context.Context, fo
 	}
 }
 
+// ScheduleRefreshForKnowledgeIDs resolves each knowledge ID to its owning
+// folder and schedules a debounced refresh for that folder and its ancestors
+// (M7). Used by the wiki finalize hook: folder summaries now embed [[slug]]
+// cross-links to the wiki pages of their files, so they must be regenerated
+// once those pages exist — but the first generation pass (triggered from
+// knowledge_post_process) fires before wiki ingest completes, so it had no
+// candidate slugs to link to. This hook closes that gap by re-triggering
+// after wiki finalize. Best-effort: unknown / deleted knowledge IDs are
+// silently skipped.
+func (s *folderSummaryService) ScheduleRefreshForKnowledgeIDs(ctx context.Context, kbID string, knowledgeIDs []string) {
+	if len(knowledgeIDs) == 0 {
+		return
+	}
+	seenFolders := make(map[string]struct{})
+	for _, kid := range knowledgeIDs {
+		kn, err := s.repo.GetKnowledgeByIDOnly(ctx, kid)
+		if err != nil || kn == nil || kn.FolderID == "" {
+			continue
+		}
+		if kn.KnowledgeBaseID != kbID {
+			continue // safety: doc moved to another KB after the row was queued
+		}
+		if _, ok := seenFolders[kn.FolderID]; ok {
+			continue
+		}
+		seenFolders[kn.FolderID] = struct{}{}
+		folder, ferr := s.folderRepo.GetByID(ctx, kn.FolderID)
+		if ferr != nil || folder == nil {
+			continue
+		}
+		s.ScheduleRefreshForFolderAndAncestors(ctx, folder)
+	}
+	if len(seenFolders) > 0 {
+		logger.Infof(ctx, "[M7] scheduled folder summary refresh for %d folder(s) in kb %s", len(seenFolders), kbID)
+	}
+}
+
 // generateContent builds the folder-level summary from its knowledge entries.
 //
 // Aggregation policy (cascading):
@@ -444,6 +481,14 @@ func (s *folderSummaryService) cascadeRefreshToAncestors(ctx context.Context, fo
 //
 // This closes the M4 gap where parent folders stayed empty forever because
 // generateContent only read direct files.
+//
+// [M7] Wiki cross-link injection: when the KB has wiki enabled, we also
+// collect the wiki pages (entity/concept/summary) authored by each direct
+// file in the folder and expose them to the LLM as a candidate slug
+// listing. The LLM is then free to embed [[slug|name]] references in the
+// generated summary, mirroring how document-level wiki summaries already
+// cross-reference other pages. Hallucinated slugs are stripped after
+// generation via ExistsSlugs.
 func (s *folderSummaryService) generateContent(ctx context.Context, payload types.FolderSummaryGenerationPayload, folder *types.KnowledgeFolder, kb *types.KnowledgeBase) (string, *types.FolderSummaryInputSnapshot, error) {
 	// gather direct files of the folder
 	files, err := s.repo.ListByFolderIDs(ctx, payload.KnowledgeBaseID, []string{folder.ID})
@@ -476,6 +521,13 @@ func (s *folderSummaryService) generateContent(ctx context.Context, payload type
 	if err != nil {
 		citationCounts = nil
 	}
+
+	// [M7] Collect wiki page candidates for cross-link injection.
+	// For each direct file, look up its associated wiki pages (entities,
+	// concepts, summary) and build a slug→title listing that the LLM can
+	// reference via [[slug|name]]. Also include the folder-summary pages of
+	// child folders so the parent overview can link into them.
+	wikiSlugListing, wikiEnabled := s.collectWikiSlugListing(ctx, kb, files, children, childSummaries)
 
 	// build the prompt body: direct files section + child-folder summaries section
 	var titles []string
@@ -518,13 +570,25 @@ func (s *folderSummaryService) generateContent(ctx context.Context, payload type
 	}
 
 	modelCtx := types.WithLLMCallMetadata(ctx, "folder_summary", "")
-	prompt := s.folderSummaryPrompt(modelCtx, len(childSummaries) > 0)
+	prompt := s.folderSummaryPrompt(modelCtx, len(childSummaries) > 0, wikiEnabled, wikiSlugListing)
 	content, err := chatModel.Chat(modelCtx, []chat.Message{
 		{Role: "system", Content: prompt},
 		{Role: "user", Content: body.String()},
 	}, &chat.ChatOptions{Temperature: 0.3})
 	if err != nil {
 		return "", nil, err
+	}
+
+	// [M7] Strip hallucinated [[slug|name]] references whose targets do not
+	// exist in the wiki. This is best-effort: failures here do not block the
+	// summary pipeline, we just keep the raw LLM output.
+	generated := content.Content
+	if wikiEnabled && strings.Contains(generated, "[[") {
+		if cleaned, cErr := s.sanitizeWikiLinks(ctx, kb.ID, generated); cErr == nil {
+			generated = cleaned
+		} else {
+			logger.Warnf(ctx, "[M7] folder summary: sanitizeWikiLinks failed for folder %s: %v", folder.ID, cErr)
+		}
 	}
 
 	snapshot := &types.FolderSummaryInputSnapshot{
@@ -535,7 +599,181 @@ func (s *folderSummaryService) generateContent(ctx context.Context, payload type
 		ChildSummaryVersions: childSummaryVersions,
 		GeneratedAt:          time.Now(),
 	}
-	return content.Content, snapshot, nil
+	return generated, snapshot, nil
+}
+
+// collectWikiSlugListing builds a candidate wiki-page listing (one
+// "- [[slug]] = title (Aliases: ...)" line per page) that the LLM can
+// reference from the folder summary. Sources:
+//   - For each direct file in the folder: its entity/concept/summary wiki
+//     pages (looked up via ListPagesBySourceRef).
+//   - For each child folder that already has a summary: its folder_summary
+//     wiki page (slug = folder_summary/<childFolderID>).
+//
+// The listing is empty (and wikiEnabled=false) when the KB does not have
+// wiki enabled or the wikiPageService is unavailable, so callers can skip
+// the wiki-link instructions entirely on non-wiki deployments.
+func (s *folderSummaryService) collectWikiSlugListing(
+	ctx context.Context,
+	kb *types.KnowledgeBase,
+	files []*types.Knowledge,
+	children []*types.KnowledgeFolder,
+	childSummaries map[string]*types.FolderSummary,
+) (listing string, wikiEnabled bool) {
+	if s.wikiPageService == nil || !kb.IsWikiEnabled() {
+		return "", false
+	}
+
+	// Deduplicate slugs across files (the same wiki page can be referenced
+	// by multiple documents). Preserving insertion order keeps prompts
+	// stable across regenerations.
+	seen := make(map[string]struct{})
+	var entries []wikiSlugEntry
+
+	// (1) Per-file wiki pages: entities / concepts / summary.
+	for _, f := range files {
+		pages, err := s.wikiPageService.ListPagesBySourceRef(ctx, kb.ID, f.ID)
+		if err != nil {
+			logger.Warnf(ctx, "[M7] folder summary: ListPagesBySourceRef failed for knowledge %s: %v", f.ID, err)
+			continue
+		}
+		for _, p := range pages {
+			if p == nil || p.Status == types.WikiPageStatusArchived {
+				continue
+			}
+			// Skip the folder_summary page type here — those are added below
+			// from the child-folder set so we only link to siblings, not to
+			// the folder's own children's folder summaries that the file's
+			// wiki ingest wouldn't naturally produce.
+			if p.PageType == types.WikiPageTypeFolderSummary {
+				continue
+			}
+			if _, ok := seen[p.Slug]; ok {
+				continue
+			}
+			seen[p.Slug] = struct{}{}
+			entries = append(entries, wikiSlugEntry{
+				Slug:    p.Slug,
+				Title:   p.Title,
+				Aliases: p.Aliases,
+			})
+		}
+	}
+
+	// (2) Child folder-summary pages: let the parent summary link into each
+	// child folder's own summary page.
+	for _, child := range children {
+		if cs := childSummaries[child.ID]; cs == nil || strings.TrimSpace(cs.Content) == "" {
+			continue // child has no summary yet; nothing to link to
+		}
+		slug := types.WikiFolderSummarySlug(child.ID)
+		if _, ok := seen[slug]; ok {
+			continue
+		}
+		seen[slug] = struct{}{}
+		entries = append(entries, wikiSlugEntry{
+			Slug:  slug,
+			Title: fmt.Sprintf("📁 %s · 文件夹摘要", child.Name),
+		})
+	}
+
+	if len(entries) == 0 {
+		return "", true // wiki is enabled, but no candidate pages exist yet
+	}
+
+	var b strings.Builder
+	for _, e := range entries {
+		if len(e.Aliases) > 0 {
+			fmt.Fprintf(&b, "- [[%s]] = %s (Aliases: %s)\n", e.Slug, e.Title, strings.Join([]string(e.Aliases), ", "))
+		} else {
+			fmt.Fprintf(&b, "- [[%s]] = %s\n", e.Slug, e.Title)
+		}
+	}
+	return b.String(), true
+}
+
+// wikiSlugEntry is a lightweight row used to build the wiki-link candidate
+// listing injected into the folder summary prompt.
+type wikiSlugEntry struct {
+	Slug    string
+	Title   string
+	Aliases types.StringArray
+}
+
+// sanitizeWikiLinks rewrites the content so that every [[slug]] / [[slug|name]]
+// reference points to a live wiki page. Slugs that do not exist (or are
+// archived) are stripped to their display text (or removed entirely when no
+// display text was given), mirroring the behaviour of wiki ingest's
+// cleanDeadLinks pass.
+func (s *folderSummaryService) sanitizeWikiLinks(ctx context.Context, kbID, content string) (string, error) {
+	// Collect every [[...]] token in the content. Wiki link grammar:
+	//   [[slug]]            -> slug, display = slug
+	//   [[slug|display]]    -> slug, display = display
+	//   [[slug|display|alt]]-> slug, display = display (alt ignored)
+	type linkRef struct{ slug, display string }
+	var refs []linkRef
+	scanner := content
+	for {
+		start := strings.Index(scanner, "[[")
+		if start < 0 {
+			break
+		}
+		end := strings.Index(scanner[start+2:], "]]")
+		if end < 0 {
+			break
+		}
+		inner := scanner[start+2 : start+2+end]
+		scanner = scanner[start+2+end+2:]
+
+		parts := strings.SplitN(inner, "|", 3)
+		slug := strings.TrimSpace(parts[0])
+		display := slug
+		if len(parts) > 1 {
+			display = strings.TrimSpace(parts[1])
+		}
+		if slug == "" {
+			continue
+		}
+		refs = append(refs, linkRef{slug: slug, display: display})
+	}
+	if len(refs) == 0 {
+		return content, nil
+	}
+
+	// Batch existence check.
+	slugs := make([]string, 0, len(refs))
+	seen := make(map[string]struct{}, len(refs))
+	for _, r := range refs {
+		if _, ok := seen[r.slug]; ok {
+			continue
+		}
+		seen[r.slug] = struct{}{}
+		slugs = append(slugs, r.slug)
+	}
+	liveMap, err := s.wikiPageService.ExistsSlugs(ctx, kbID, slugs)
+	if err != nil {
+		return content, err
+	}
+
+	// Rewrite: replace dead links with their display text (or empty string
+	// when display == slug, i.e. [[slug]] with no display name).
+	out := content
+	for _, r := range refs {
+		if live, ok := liveMap[r.slug]; ok && live {
+			continue
+		}
+		// Dead link — strip the brackets. If the link had an explicit display
+		// name (different from the slug), keep the display text; otherwise
+		// drop the whole token (a bare slug is not useful prose).
+		var replacement string
+		if r.display != r.slug {
+			replacement = r.display
+		}
+		out = strings.ReplaceAll(out, fmt.Sprintf("[[%s|%s]]", r.slug, r.display), replacement)
+		// Also handle the no-display form just in case both appear.
+		out = strings.ReplaceAll(out, fmt.Sprintf("[[%s]]", r.slug), replacement)
+	}
+	return out, nil
 }
 
 // gatherChildSummaries returns the direct child folders of the given folder,
@@ -571,19 +809,38 @@ func (s *folderSummaryService) gatherChildSummaries(ctx context.Context, tenantI
 	return children, summaries, versions, nil
 }
 
-func (s *folderSummaryService) folderSummaryPrompt(ctx context.Context, hasChildSummaries bool) string {
+// folderSummaryPrompt builds the system prompt for the folder summary LLM
+// call. When wiki is enabled and a slug listing is available, an extra
+// instruction block teaches the model how to embed [[slug|name]] references
+// — mirroring how document-level wiki summaries already cross-link pages.
+func (s *folderSummaryService) folderSummaryPrompt(ctx context.Context, hasChildSummaries, wikiEnabled bool, wikiSlugListing string) string {
 	lang := types.LanguageNameFromContext(ctx)
-	// User-configured prompt takes precedence when present.
+	// User-configured prompt takes precedence when present. We still append
+	// the wiki-link instruction block afterwards so user customisation does
+	// not silently disable cross-linking.
+	var base string
 	if s.config != nil && s.config.Conversation != nil && strings.TrimSpace(s.config.Conversation.GenerateSummaryPrompt) != "" {
-		return types.RenderPromptPlaceholders(s.config.Conversation.GenerateSummaryPrompt, types.PlaceholderValues{
+		base = types.RenderPromptPlaceholders(s.config.Conversation.GenerateSummaryPrompt, types.PlaceholderValues{
 			"language": lang,
 		})
-	}
-	if hasChildSummaries {
-		return "你是一名知识库文件夹内容管理员。请根据以下文件夹直接包含的文件列表，以及各子文件夹的摘要内容，用 " + lang +
+	} else if hasChildSummaries {
+		base = "你是一名知识库文件夹内容管理员。请根据以下文件夹直接包含的文件列表，以及各子文件夹的摘要内容，用 " + lang +
 			" 生成一段精炼的结构化概述（Markdown），概括该文件夹覆盖的整体主题、各子文件夹之间的关系与知识要点、适用场景。不要编造列表中不存在的信息。"
+	} else {
+		base = "你是一名知识库文件夹内容管理员。请根据以下文件夹中的文件列表与摘要，用 " + lang + " 生成一段精炼的结构化概述（Markdown），概括该文件夹覆盖的主题、知识要点与适用场景。不要编造列表中不存在的信息。"
 	}
-	return "你是一名知识库文件夹内容管理员。请根据以下文件夹中的文件列表与摘要，用 " + lang + " 生成一段精炼的结构化概述（Markdown），概括该文件夹覆盖的主题、知识要点与适用场景。不要编造列表中不存在的信息。"
+
+	if !wikiEnabled || strings.TrimSpace(wikiSlugListing) == "" {
+		return base
+	}
+
+	return base + "\n\n" +
+		"<available_wiki_pages>\n" + wikiSlugListing + "</available_wiki_pages>\n" +
+		"<wiki_link_instructions>\n" +
+		"上面的 available_wiki_pages 列表把 slug 映射到显示名（及别名）。当你在摘要中提到与某个条目匹配的名称或别名时，" +
+		"请用 [[slug|显示名]] 的形式引用它（例如 [[entity/zhong-guo|中国]]），而不是加粗或裸写名称。" +
+		"只能使用列表中已给出的 slug，不要自行发明新的 slug。如果某个条目与摘要内容无实质关联，就不要引用它。\n" +
+		"</wiki_link_instructions>"
 }
 
 func (s *folderSummaryService) setFolderStatus(ctx context.Context, folderID, status string) {

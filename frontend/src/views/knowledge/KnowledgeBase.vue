@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch, reactive, computed, nextTick } from "vue";
-import { MessagePlugin, DialogPlugin } from "tdesign-vue-next";
+import { ref, onMounted, onUnmounted, watch, reactive, computed, nextTick, h } from "vue";
+import { MessagePlugin, DialogPlugin, Input as TInput } from "tdesign-vue-next";
 import DocContent from "@/components/doc-content.vue";
 import useKnowledgeBase from '@/hooks/useKnowledgeBase';
 import { useRoute, useRouter } from 'vue-router';
@@ -1721,13 +1721,21 @@ const handleManualCreate = () => {
 const handleCreateFolder = () => {
   if (!ensureDocumentKbReady()) return;
   const parentId = currentFolderId.value;
-  DialogPlugin.prompt({
+  const inputValue = ref('');
+  const dlg = DialogPlugin({
     header: t('knowledge.createFolder'),
-    label: t('knowledge.folderName'),
+    body: () => h('div', { style: 'padding: 8px 0;' }, [
+      h('div', { style: 'margin-bottom: 8px; font-size: 14px; color: var(--td-text-color-primary);' }, t('knowledge.folderName')),
+      h(TInput, {
+        modelValue: inputValue.value,
+        'onUpdate:modelValue': (val: string) => { inputValue.value = val; },
+        placeholder: t('knowledge.folderNamePlaceholder'),
+      }),
+    ]),
     confirmBtn: t('common.confirm'),
     cancelBtn: t('common.cancel'),
-    onConfirm: async ({ value }) => {
-      const name = (value || '').trim();
+    onConfirm: async () => {
+      const name = (inputValue.value || '').trim();
       if (!name) {
         MessagePlugin.warning(t('knowledge.folderNamePlaceholder'));
         return;
@@ -1735,11 +1743,13 @@ const handleCreateFolder = () => {
       try {
         await createFolder(kbId.value, { parent_id: parentId, name });
         MessagePlugin.success(t('knowledge.createFolderSuccess'));
+        dlg.destroy();
         folderViewRef.value?.refresh();
       } catch (e: any) {
         MessagePlugin.error(e?.message || t('knowledge.createFolderFailed'));
       }
     },
+    onClose: () => dlg.destroy(),
   });
 };
 

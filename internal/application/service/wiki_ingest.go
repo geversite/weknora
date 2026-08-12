@@ -225,6 +225,11 @@ type wikiFinalizeChange struct {
 	Action     string `json:"action"` // wikiFinalizeAdded | wikiFinalizeRemoved
 	DocTitle   string `json:"doc_title,omitempty"`
 	DocSummary string `json:"doc_summary,omitempty"`
+	// KnowledgeID is carried so ProcessWikiFinalize can resolve the affected
+	// document's FolderID and trigger a folder-summary refresh (M7: folder
+	// summaries now embed wiki cross-links, so they must be regenerated once
+	// the document's wiki pages exist). Empty for legacy rows.
+	KnowledgeID string `json:"knowledge_id,omitempty"`
 }
 
 // wikiFinalizeRow is the JSON payload of a task_pending_ops row in the
@@ -351,6 +356,12 @@ type wikiIngestService struct {
 	// promptWarmups serializes only the first request for a reusable Wiki page
 	// prefix. Other prefixes and already-warmed cohorts stay parallel.
 	promptWarmups sync.Map
+	// folderSummarySvc is an optional dependency (M7) used by
+	// ProcessWikiFinalize to refresh folder summaries after wiki pages land.
+	// Nil on deployments without folder governance; in that case the refresh
+	// trigger is a no-op. Injected via SetFolderSummaryService to avoid
+	// widening the constructor signature (and churning every test fixture).
+	folderSummarySvc interfaces.FolderSummaryService
 }
 
 type wikiPromptWarmup struct {
@@ -372,22 +383,33 @@ func NewWikiIngestService(
 	deadLetterRepo interfaces.TaskDeadLetterRepository,
 	redisClient *redis.Client,
 	spanTracker SpanTracker,
+	folderSummarySvc interfaces.FolderSummaryService,
 ) interfaces.TaskHandler {
 	svc := &wikiIngestService{
-		wikiService:    wikiService,
-		kbService:      kbService,
-		knowledgeSvc:   knowledgeSvc,
-		knowledgeRepo:  knowledgeRepo,
-		chunkRepo:      chunkRepo,
-		modelService:   modelService,
-		task:           task,
-		audit:          audit,
-		pendingRepo:    pendingRepo,
-		deadLetterRepo: deadLetterRepo,
-		redisClient:    redisClient,
-		spanTracker:    spanTracker,
+		wikiService:      wikiService,
+		kbService:        kbService,
+		knowledgeSvc:     knowledgeSvc,
+		knowledgeRepo:    knowledgeRepo,
+		chunkRepo:        chunkRepo,
+		modelService:     modelService,
+		task:             task,
+		audit:            audit,
+		pendingRepo:      pendingRepo,
+		deadLetterRepo:   deadLetterRepo,
+		redisClient:      redisClient,
+		spanTracker:      spanTracker,
+		folderSummarySvc: folderSummarySvc,
 	}
 	return svc
+}
+
+// SetFolderSummaryService injects the optional folder-summary service used
+// by ProcessWikiFinalize to refresh folder summaries once a document's wiki
+// pages have been written (M7). Safe to call with nil to disable the hook.
+// Retained for tests that construct wikiIngestService directly without going
+// through the container; production wiring injects via the constructor.
+func (s *wikiIngestService) SetFolderSummaryService(svc interfaces.FolderSummaryService) {
+	s.folderSummarySvc = svc
 }
 
 // tracker returns a non-nil span tracker so callers don't have to
