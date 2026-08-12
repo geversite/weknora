@@ -551,6 +551,10 @@ func (h *Handler) streamEventsToOpenAIChunks(
 
 	// flushReasoning sends the accumulated reasoningBuf as delta.content.
 	// On the very first flush it also prepends the opening <think> tag.
+	// NOTE: callers that may be followed by more pre-marker content should
+	// use flushReasoningIfClosed instead, to keep un-flushed reasoning
+	// recoverable as the final answer when the <!FINAL_ANSWER> marker
+	// never appears (LLM soft-constraint failure on simple questions).
 	flushReasoning := func() {
 		if reasoningBuf.Len() == 0 {
 			return
@@ -562,6 +566,22 @@ func (h *Handler) streamEventsToOpenAIChunks(
 		}
 		h.writeOpenAIChunk(c, completionID, now, modelName, "", prefix+reasoningBuf.String(), nil)
 		reasoningBuf.Reset()
+	}
+
+	// thinkFinalized becomes true once we have emitted </think>, meaning
+	// the reasoning content can no longer be "promoted" to the final answer.
+	thinkFinalized := false
+
+	// flushReasoningIfClosed flushes reasoning only when the think block
+	// has already been closed (post-marker). Pre-marker content is kept
+	// buffered so it can be re-routed as the final answer if the marker
+	// never arrives. Tool narrations and thinking events still call
+	// flushReasoning directly to preserve low-latency UX for long tool
+	// chains (where thinkOpened is already true from earlier thinking).
+	flushReasoningIfClosed := func() {
+		if thinkFinalized {
+			flushReasoning()
+		}
 	}
 
 	// closeThink flushes any remaining reasoning buffer, then emits
@@ -576,12 +596,43 @@ func (h *Handler) streamEventsToOpenAIChunks(
 		if thinkOpened {
 			h.writeOpenAIChunk(c, completionID, now, modelName, "", "</think>\n", nil)
 		}
+		thinkFinalized = true
 	}
 
 	// emitAnswerChunk routes content to the <think> block (pre-marker,
 	// optimistic) or delta.content (post-marker). It also scans for the
 	// <!FINAL_ANSWER> marker which may be split across streaming chunks.
 	var markerScanBuf strings.Builder // accumulates content for marker scanning
+
+	// promoteBufferedAsAnswer is the fallback for when the stream ends
+	// without the <!FINAL_ANSWER> marker (LLM soft-constraint failure on
+	// simple questions). It takes whatever content is still buffered in
+	// reasoningBuf + markerScanBuf + wikiStripper.pending and emits it as
+	// the final answer (delta.content), closing any open <think> block
+	// first. This prevents Dify (and other clients that don't render
+	// <think>) from showing an empty answer.
+	promoteBufferedAsAnswer := func() {
+		promoted := reasoningBuf.String()
+		reasoningBuf.Reset()
+		if tail := markerScanBuf.String(); tail != "" {
+			promoted += tail
+			markerScanBuf.Reset()
+		}
+		if p := wikiStripper.flush(); p != "" {
+			promoted += p
+		}
+		if promoted == "" {
+			return
+		}
+		if thinkOpened && !thinkFinalized {
+			h.writeOpenAIChunk(c, completionID, now, modelName, "", "</think>\n", nil)
+			thinkFinalized = true
+		}
+		fullAnswer.WriteString(promoted)
+		h.writeOpenAIChunk(c, completionID, now, modelName, "", promoted, nil)
+		log.Warnf("[openai] no <!FINAL_ANSWER> marker found; promoted %d bytes of buffered reasoning to final answer, session=%s",
+			len(promoted), sessionID)
+	}
 
 	emitAnswerChunk := func(content string) {
 		if content == "" {
@@ -609,9 +660,13 @@ func (h *Handler) streamEventsToOpenAIChunks(
 			if keep != "" {
 				if cleaned := wikiStripper.feed(keep); cleaned != "" {
 					reasoningBuf.WriteString(cleaned)
-					// Flush immediately for low-latency streaming (matching
-					// the web SSE behavior of forwarding every chunk ASAP).
-					flushReasoning()
+					// Defer flush while in pre-marker mode: keep the content
+					// buffered so it can be promoted to the final answer if
+					// the <!FINAL_ANSWER> marker never arrives (LLM
+					// soft-constraint failure on simple questions). Once the
+					// think block has been closed (post-marker), flush
+					// immediately as before.
+					flushReasoningIfClosed()
 				}
 			}
 			if hold != "" {
@@ -667,9 +722,9 @@ func (h *Handler) streamEventsToOpenAIChunks(
 							},
 						})
 					}
-					// Graceful close: flush any pending reasoning
+					// Graceful close: promote buffered content if marker never came
 					if !finalAnswerStarted {
-						closeThink()
+						promoteBufferedAsAnswer()
 					}
 					finishReason := "stop"
 					h.writeOpenAIChunk(c, completionID, now, modelName, "", "", &finishReason)
@@ -759,17 +814,11 @@ func (h *Handler) streamEventsToOpenAIChunks(
 			lastOffset = newOffset
 
 			if streamCompleted {
-				// Flush any tail reasoning content (marker never appeared)
 				if !finalAnswerStarted {
-					closeThink()
-					// Fallback: if no final answer was extracted, the
-					// reasoning content is all we have. Leave it inside
-					// the <think> block — the client will display it.
-					// This is a safety net — the system prompt should
-					// prevent this in normal operation.
-					if fullAnswer.Len() == 0 {
-						log.Warnf("[openai] no <!FINAL_ANSWER> marker found; reasoning left in <think>, session=%s", sessionID)
-					}
+					// The <!FINAL_ANSWER> marker never arrived — promote
+					// buffered reasoning to the final answer (see
+					// promoteBufferedAsAnswer docs).
+					promoteBufferedAsAnswer()
 				} else {
 					// Flush any tail content from the marker scan buffer
 					tail := markerScanBuf.String()
