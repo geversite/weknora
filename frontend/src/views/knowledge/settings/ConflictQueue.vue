@@ -31,10 +31,6 @@
         <span class="kb-conflict-stat-label">{{ t('knowledgeEditor.conflict.statPending') }}</span>
       </div>
       <div class="kb-conflict-stat">
-        <span class="kb-conflict-stat-value">{{ stats.not_conflict }}</span>
-        <span class="kb-conflict-stat-label">{{ t('knowledgeEditor.conflict.statNotConflict') }}</span>
-      </div>
-      <div class="kb-conflict-stat">
         <span class="kb-conflict-stat-value">{{ stats.newer_wins + stats.older_wins + stats.keep_both }}</span>
         <span class="kb-conflict-stat-label">{{ t('knowledgeEditor.conflict.statResolved') }}</span>
       </div>
@@ -43,7 +39,7 @@
     <div class="kb-conflict-filter">
       <t-radio-group v-model="activeStatus" variant="default-filled" @change="onStatusChange">
         <t-radio-button value="pending">{{ t('knowledgeEditor.conflict.filterPending') }}</t-radio-button>
-        <t-radio-button value="">{{ t('knowledgeEditor.conflict.filterAll') }}</t-radio-button>
+        <t-radio-button value="unresolved">{{ t('knowledgeEditor.conflict.filterUnresolved') }}</t-radio-button>
       </t-radio-group>
       <span class="kb-conflict-tip">{{ t('knowledgeEditor.conflict.cellTip') }}</span>
     </div>
@@ -79,34 +75,27 @@
         </template>
 
         <template #actions="{ row }">
-          <t-button size="small" variant="text" @click.stop="openDetail(row)">
-            {{ t('knowledgeEditor.conflict.viewDetail') }}
-          </t-button>
           <template v-if="row.status === 'pending'">
-            <t-popconfirm
-              :content="t('knowledgeEditor.conflict.confirmKeepBoth')"
-              @confirm="doResolve(row, 'resolved_keep_both')"
-            >
-              <t-button size="small" variant="outline">{{ t('knowledgeEditor.conflict.keepBoth') }}</t-button>
-            </t-popconfirm>
-            <t-popconfirm
-              :content="t('knowledgeEditor.conflict.confirmNewer')"
-              @confirm="doResolve(row, 'resolved_newer_wins')"
-            >
-              <t-button size="small" theme="primary" variant="outline">{{ t('knowledgeEditor.conflict.newerWins') }}</t-button>
-            </t-popconfirm>
-            <t-popconfirm
-              :content="t('knowledgeEditor.conflict.confirmOlder')"
-              @confirm="doResolve(row, 'resolved_older_wins')"
-            >
-              <t-button size="small" theme="warning" variant="outline">{{ t('knowledgeEditor.conflict.olderWins') }}</t-button>
-            </t-popconfirm>
-            <t-popconfirm
-              :content="t('knowledgeEditor.conflict.confirmNotConflict')"
-              @confirm="doResolve(row, 'resolved_not_conflict')"
-            >
-              <t-button size="small" theme="success" variant="text">{{ t('knowledgeEditor.conflict.notConflict') }}</t-button>
-            </t-popconfirm>
+            <div class="kb-conflict-actions">
+              <t-popconfirm
+                :content="t('knowledgeEditor.conflict.confirmKeepBoth')"
+                @confirm="doResolve(row, 'resolved_keep_both')"
+              >
+                <t-button size="small" variant="outline">{{ t('knowledgeEditor.conflict.keepBoth') }}</t-button>
+              </t-popconfirm>
+              <t-popconfirm
+                :content="t('knowledgeEditor.conflict.confirmNewer')"
+                @confirm="doResolve(row, 'resolved_newer_wins')"
+              >
+                <t-button size="small" theme="primary" variant="outline">{{ t('knowledgeEditor.conflict.newerWins') }}</t-button>
+              </t-popconfirm>
+              <t-popconfirm
+                :content="t('knowledgeEditor.conflict.confirmOlder')"
+                @confirm="doResolve(row, 'resolved_older_wins')"
+              >
+                <t-button size="small" theme="warning" variant="outline" block>{{ t('knowledgeEditor.conflict.olderWins') }}</t-button>
+              </t-popconfirm>
+            </div>
           </template>
           <span v-else class="kb-conflict-resolved">{{ statusLabel(row.status) }}</span>
         </template>
@@ -214,7 +203,7 @@ const loading = ref(false)
 const error = ref('')
 const conflicts = ref<KnowledgeConflict[]>([])
 const stats = ref<{ pending: number; not_conflict: number; newer_wins: number; older_wins: number; keep_both: number } | null>(null)
-const activeStatus = ref<'pending' | ''>('pending')
+const activeStatus = ref<'pending' | 'unresolved'>('pending')
 const page = ref(1)
 const pageSize = ref(20)
 
@@ -261,7 +250,7 @@ const columns = computed(() => [
   { colKey: 'contentB', title: t('knowledgeEditor.conflict.colContentB'), minWidth: 240, ellipsis: true },
   { colKey: 'reason', title: t('knowledgeEditor.conflict.colReason'), minWidth: 180, ellipsis: true },
   { colKey: 'created_at', title: t('knowledgeEditor.conflict.colTime'), width: 160 },
-  { colKey: 'actions', title: t('knowledgeEditor.conflict.colActions'), width: 300, fixed: 'right' as const },
+  { colKey: 'actions', title: t('knowledgeEditor.conflict.colActions'), width: 110, fixed: 'right' as const },
 ])
 
 const onStatusChange = () => {
@@ -289,7 +278,8 @@ const loadConflicts = async () => {
   error.value = ''
   try {
     const res: any = await getKnowledgeConflicts(props.kbId, {
-      status: activeStatus.value || undefined,
+      // 「待裁决」与「未裁决」等价，均过滤 pending 状态
+      status: 'pending',
       page: page.value,
       page_size: pageSize.value,
     })
@@ -533,6 +523,18 @@ onMounted(() => {
 .kb-conflict-resolved {
   color: var(--td-success-color);
   font-size: 12px;
+}
+
+.kb-conflict-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+
+  :deep(.t-button) {
+    width: 86px;
+    box-sizing: border-box;
+  }
 }
 
 .sq-refresh-spin {

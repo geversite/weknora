@@ -2934,7 +2934,7 @@ async function createNewSession(value: string): Promise<void> {
   padding: 0 0 12px 0;
   flex-shrink: 0;
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   grid-template-areas:
     'search trailing'
     'filters filters';
@@ -2975,6 +2975,8 @@ async function createNewSession(value: string): Promise<void> {
     align-items: center;
     gap: 8px;
     flex-shrink: 0;
+    min-width: 0;
+    white-space: nowrap;
   }
 
   @media (min-width: 1280px) {
@@ -3097,6 +3099,8 @@ async function createNewSession(value: string): Promise<void> {
 
   .doc-view-toggle {
     flex-shrink: 0;
+    flex: none;
+    min-width: max-content;
     display: inline-flex;
     align-items: center;
     padding: 2px;
