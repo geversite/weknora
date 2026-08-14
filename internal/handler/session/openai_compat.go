@@ -40,6 +40,11 @@ type OpenAIChatRequest struct {
 	KnowledgeBaseIDs []string `json:"knowledge_base_ids,omitempty"`
 	KnowledgeIDs     []string `json:"knowledge_ids,omitempty"`
 	WebSearchEnabled bool     `json:"web_search_enabled,omitempty"`
+	// AttachmentIDs lists pre-uploaded temporary document IDs to attach to this
+	// turn. Can also be supplied inline via a "[attachments:id1,id2]" marker on
+	// the second line of the last user message; the explicit field takes
+	// precedence when both are present.
+	AttachmentIDs []string `json:"attachment_ids,omitempty"`
 }
 
 // OpenAIMessage represents a single message in the OpenAI chat schema.
@@ -157,8 +162,9 @@ func (h *Handler) OpenAIChatCompletions(c *gin.Context) {
 	// - If xxx is non-empty but session not found → create a new session.
 	// - If no [sid:...] marker is present → create a new session.
 	// The response always returns the session_id so Dify can echo it back.
-	rawQuery, sessionIDHint := extractSessionIDFromMessages(req.Messages)
-	if strings.TrimSpace(rawQuery) == "" {
+	_, sessionIDHint := extractSessionIDFromMessages(req.Messages)
+	query, inlineAttachmentIDs := extractAttachmentIDsFromMessages(req.Messages)
+	if strings.TrimSpace(query) == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": gin.H{
 				"message": "No user message found in request",
@@ -167,7 +173,24 @@ func (h *Handler) OpenAIChatCompletions(c *gin.Context) {
 		})
 		return
 	}
-	query := rawQuery
+
+	// Merge attachment IDs: the explicit `attachment_ids` field wins when
+	// present; otherwise fall back to the inline "[attachments:...]" marker.
+	attachmentIDs := req.AttachmentIDs
+	if len(attachmentIDs) == 0 {
+		attachmentIDs = inlineAttachmentIDs
+	}
+	if normalized, err := normalizeTemporaryAttachmentIDs(attachmentIDs); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": gin.H{
+				"message": err.Error(),
+				"type":    "invalid_request_error",
+			},
+		})
+		return
+	} else {
+		attachmentIDs = normalized
+	}
 
 	requestID := secutils.SanitizeForLog(c.GetString(types.RequestIDContextKey.String()))
 	if requestID == "" {
@@ -240,8 +263,26 @@ func (h *Handler) OpenAIChatCompletions(c *gin.Context) {
 	// Use agent mode when a custom agent is resolved; otherwise normal RAG mode.
 	useAgentMode := customAgent != nil && customAgent.IsAgentMode()
 
+	// Build metadata-only view of the pre-uploaded attachments so the user
+	// message records them (content is resolved later, after the stream is up).
+	var attachmentMetas types.MessageAttachments
+	if len(attachmentIDs) > 0 {
+		attachmentMetas = make(types.MessageAttachments, 0, len(attachmentIDs))
+		for _, id := range attachmentIDs {
+			doc, getErr := h.temporaryDocuments.Get(ctx, session.TenantID, sessionID, id)
+			if getErr != nil || doc == nil {
+				logger.Warnf(ctx, "[openai] attachment %s not found for session %s: %v", id, sessionID, getErr)
+				continue
+			}
+			attachmentMetas = append(attachmentMetas, types.MessageAttachment{
+				ID: doc.ID, URL: doc.ResourceRef, FileName: doc.FileName,
+				FileType: doc.FileType, FileSize: doc.FileSize,
+			})
+		}
+	}
+
 	// Create user message
-	userMsg, err := h.createUserMessage(ctx, sessionID, query, requestID, nil, nil, nil, "api", nil)
+	userMsg, err := h.createUserMessage(ctx, sessionID, query, requestID, nil, nil, attachmentMetas, "api", nil)
 	if err != nil {
 		logger.Errorf(ctx, "[openai] failed to create user message: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -290,6 +331,8 @@ func (h *Handler) OpenAIChatCompletions(c *gin.Context) {
 		sharedAgentReadOnly: sharedAgentReadOnly,
 		channel:             "api",
 		userMessageID:       userMsg.ID,
+		attachmentIDs:       attachmentIDs,
+		attachmentMetas:     attachmentMetas,
 	}
 
 	// Resolve KB IDs from agent config if not explicitly provided
@@ -463,6 +506,19 @@ func (h *Handler) openAIStreamQA(
 			}
 		}()
 
+		// Resolve pre-uploaded attachments before building the QA request so
+		// their parsed content is injected into reqCtx.attachments (and thus
+		// into the prompt). Runs in the async goroutine with the stream context.
+		streamCtx := &sseStreamContext{
+			eventBus:         eventBus,
+			asyncCtx:         asyncCtx,
+			assistantMessage: reqCtx.assistantMessage,
+		}
+		h.resolveTemporaryAttachments(streamCtx, reqCtx)
+		// Analyze any image attachments with the VLM so vision content becomes
+		// text (mirrors the normal QA path's executeQA sequence).
+		h.runVLMAnalysisIfNeeded(streamCtx, reqCtx, mode)
+
 		qaReq := reqCtx.buildQARequest()
 		var serviceErr error
 		if mode == qaModeNormal {
@@ -551,10 +607,9 @@ func (h *Handler) streamEventsToOpenAIChunks(
 
 	// flushReasoning sends the accumulated reasoningBuf as delta.content.
 	// On the very first flush it also prepends the opening <think> tag.
-	// NOTE: callers that may be followed by more pre-marker content should
-	// use flushReasoningIfClosed instead, to keep un-flushed reasoning
-	// recoverable as the final answer when the <!FINAL_ANSWER> marker
-	// never appears (LLM soft-constraint failure on simple questions).
+	// Everything before the <!FINAL_ANSWER> marker is assumed to be thinking,
+	// so reasoning content is flushed immediately (streamed) rather than held
+	// back waiting for the marker.
 	flushReasoning := func() {
 		if reasoningBuf.Len() == 0 {
 			return
@@ -569,20 +624,8 @@ func (h *Handler) streamEventsToOpenAIChunks(
 	}
 
 	// thinkFinalized becomes true once we have emitted </think>, meaning
-	// the reasoning content can no longer be "promoted" to the final answer.
+	// the think block is closed.
 	thinkFinalized := false
-
-	// flushReasoningIfClosed flushes reasoning only when the think block
-	// has already been closed (post-marker). Pre-marker content is kept
-	// buffered so it can be re-routed as the final answer if the marker
-	// never arrives. Tool narrations and thinking events still call
-	// flushReasoning directly to preserve low-latency UX for long tool
-	// chains (where thinkOpened is already true from earlier thinking).
-	flushReasoningIfClosed := func() {
-		if thinkFinalized {
-			flushReasoning()
-		}
-	}
 
 	// closeThink flushes any remaining reasoning buffer, then emits
 	// </think>\n as delta.content to close the think block.
@@ -604,34 +647,27 @@ func (h *Handler) streamEventsToOpenAIChunks(
 	// <!FINAL_ANSWER> marker which may be split across streaming chunks.
 	var markerScanBuf strings.Builder // accumulates content for marker scanning
 
-	// promoteBufferedAsAnswer is the fallback for when the stream ends
-	// without the <!FINAL_ANSWER> marker (LLM soft-constraint failure on
-	// simple questions). It takes whatever content is still buffered in
-	// reasoningBuf + markerScanBuf + wikiStripper.pending and emits it as
-	// the final answer (delta.content), closing any open <think> block
-	// first. This prevents Dify (and other clients that don't render
-	// <think>) from showing an empty answer.
-	promoteBufferedAsAnswer := func() {
-		promoted := reasoningBuf.String()
-		reasoningBuf.Reset()
+	// finishWithoutMarker handles the stream ending without the <!FINAL_ANSWER>
+	// marker. Since everything before the marker is assumed to be thinking, any
+	// residual content (a partial-marker tail held in markerScanBuf, plus any
+	// pending wiki-stripped text) is flushed into the <think> block and the
+	// block is closed with </think>. No content is "promoted" to the answer.
+	finishWithoutMarker := func() {
 		if tail := markerScanBuf.String(); tail != "" {
-			promoted += tail
 			markerScanBuf.Reset()
+			if cleaned := wikiStripper.feed(tail); cleaned != "" {
+				reasoningBuf.WriteString(cleaned)
+			}
 		}
 		if p := wikiStripper.flush(); p != "" {
-			promoted += p
+			reasoningBuf.WriteString(p)
 		}
-		if promoted == "" {
-			return
-		}
+		flushReasoning()
 		if thinkOpened && !thinkFinalized {
 			h.writeOpenAIChunk(c, completionID, now, modelName, "", "</think>\n", nil)
 			thinkFinalized = true
 		}
-		fullAnswer.WriteString(promoted)
-		h.writeOpenAIChunk(c, completionID, now, modelName, "", promoted, nil)
-		log.Warnf("[openai] no <!FINAL_ANSWER> marker found; promoted %d bytes of buffered reasoning to final answer, session=%s",
-			len(promoted), sessionID)
+		log.Warnf("[openai] no <!FINAL_ANSWER> marker found; content emitted as thinking only, session=%s", sessionID)
 	}
 
 	emitAnswerChunk := func(content string) {
@@ -660,13 +696,10 @@ func (h *Handler) streamEventsToOpenAIChunks(
 			if keep != "" {
 				if cleaned := wikiStripper.feed(keep); cleaned != "" {
 					reasoningBuf.WriteString(cleaned)
-					// Defer flush while in pre-marker mode: keep the content
-					// buffered so it can be promoted to the final answer if
-					// the <!FINAL_ANSWER> marker never arrives (LLM
-					// soft-constraint failure on simple questions). Once the
-					// think block has been closed (post-marker), flush
-					// immediately as before.
-					flushReasoningIfClosed()
+					// Optimistic streaming: everything before the marker is
+					// assumed to be thinking, so flush it immediately into the
+					// <think> block for low-latency streaming UX.
+					flushReasoning()
 				}
 			}
 			if hold != "" {
@@ -722,9 +755,9 @@ func (h *Handler) streamEventsToOpenAIChunks(
 							},
 						})
 					}
-					// Graceful close: promote buffered content if marker never came
+					// Graceful close: flush residual thinking if marker never came
 					if !finalAnswerStarted {
-						promoteBufferedAsAnswer()
+						finishWithoutMarker()
 					}
 					finishReason := "stop"
 					h.writeOpenAIChunk(c, completionID, now, modelName, "", "", &finishReason)
@@ -815,10 +848,10 @@ func (h *Handler) streamEventsToOpenAIChunks(
 
 			if streamCompleted {
 				if !finalAnswerStarted {
-					// The <!FINAL_ANSWER> marker never arrived — promote
-					// buffered reasoning to the final answer (see
-					// promoteBufferedAsAnswer docs).
-					promoteBufferedAsAnswer()
+					// The <!FINAL_ANSWER> marker never arrived — everything
+					// before it is assumed to be thinking, so just flush any
+					// residual content into <think> and close the block.
+					finishWithoutMarker()
 				} else {
 					// Flush any tail content from the marker scan buffer
 					tail := markerScanBuf.String()
@@ -1075,7 +1108,6 @@ func (h *Handler) openAINonStreamQA(
 	})
 
 	// Execute QA synchronously (block until done)
-	qaReq := reqCtx.buildQARequest()
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
@@ -1097,6 +1129,18 @@ func (h *Handler) openAINonStreamQA(
 				h.completeAssistantMessage(updateCtx, reqCtx.assistantMessage, reqCtx.query, reqCtx.knowledgeBaseIDs)
 			}
 		}()
+
+		// Resolve pre-uploaded attachments before building the QA request.
+		streamCtx := &sseStreamContext{
+			eventBus:         eventBus,
+			asyncCtx:         asyncCtx,
+			assistantMessage: reqCtx.assistantMessage,
+		}
+		h.resolveTemporaryAttachments(streamCtx, reqCtx)
+		// Analyze any image attachments with the VLM so vision content becomes
+		// text (mirrors the normal QA path's executeQA sequence).
+		h.runVLMAnalysisIfNeeded(streamCtx, reqCtx, mode)
+		qaReq := reqCtx.buildQARequest()
 
 		var serviceErr error
 		if mode == qaModeNormal {
@@ -1313,6 +1357,60 @@ func extractSessionIDFromMessages(messages []OpenAIMessage) (query, sessionIDHin
 	}
 
 	return raw, ""
+}
+
+// extractAttachmentIDsFromMessages parses the user message to extract an
+// optional attachment-IDs marker and the remaining query content.
+//
+// Convention: the line immediately after the (optional) "[sid:xxx]" line may
+// be "[attachments:id1,id2]" where id1,id2 are pre-uploaded temporary document
+// IDs. Both the [sid:...] and [attachments:...] marker lines are stripped from
+// the query. Comma and whitespace are both accepted as separators.
+//
+// Examples:
+//
+//	"[sid:abc]\n[attachments:a1,a2]\nWhat is this?" → query="What is this?", ids=[a1 a2]
+//	"[sid:abc]\nWhat is this?"                      → query="What is this?", ids=nil
+func extractAttachmentIDsFromMessages(messages []OpenAIMessage) (query string, attachmentIDs []string) {
+	raw := buildQueryFromMessages(messages)
+
+	// Peel off the optional [sid:...] first line.
+	lines := strings.SplitN(raw, "\n", 2)
+	firstLine := strings.TrimSpace(lines[0])
+	body := raw
+	if strings.HasPrefix(firstLine, "[sid:") && strings.HasSuffix(firstLine, "]") {
+		if len(lines) > 1 {
+			body = lines[1]
+		} else {
+			body = ""
+		}
+	}
+
+	// Now check whether the (new) first line is an [attachments:...] marker.
+	bodyLines := strings.SplitN(body, "\n", 2)
+	firstBodyLine := strings.TrimSpace(bodyLines[0])
+	const prefix = "[attachments:"
+	const suffix = "]"
+	if strings.HasPrefix(firstBodyLine, prefix) && strings.HasSuffix(firstBodyLine, suffix) {
+		inner := strings.TrimSpace(firstBodyLine[len(prefix) : len(firstBodyLine)-len(suffix)])
+		if inner != "" {
+			fields := strings.FieldsFunc(inner, func(r rune) bool {
+				return r == ',' || r == '，' || r == ' ' || r == '\t'
+			})
+			for _, f := range fields {
+				f = strings.TrimSpace(f)
+				if f != "" {
+					attachmentIDs = append(attachmentIDs, f)
+				}
+			}
+		}
+		if len(bodyLines) > 1 {
+			return strings.TrimSpace(bodyLines[1]), attachmentIDs
+		}
+		return "", attachmentIDs
+	}
+
+	return strings.TrimSpace(body), attachmentIDs
 }
 
 // truncateString truncates a string to maxLen characters, appending "..." if truncated.
