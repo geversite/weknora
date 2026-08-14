@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"io"
 	"strings"
 
 	filesvc "github.com/Tencent/WeKnora/internal/application/service/file"
@@ -61,6 +62,11 @@ func (h *Handler) saveImageAttachments(ctx context.Context, images []ImageAttach
 // analyzeImageAttachments runs VLM analysis on saved images and populates Caption.
 // Used as a fallback for pure chat paths where the pipeline rewrite step won't run.
 // For RAG paths, image analysis is handled in the pipeline rewrite step instead.
+//
+// Image bytes come from either the inline Data (base64 data URI, direct uploads)
+// or the stored URL (a resource:// or storage reference, e.g. pre-uploaded
+// attachment images resolved via resolveTemporaryAttachments). Both paths are
+// handled so URL-only images are still seen by the VLM.
 func (h *Handler) analyzeImageAttachments(ctx context.Context, images []ImageAttachment, vlmModelID string, userQuery string) {
 	if len(images) == 0 || vlmModelID == "" {
 		return
@@ -74,12 +80,32 @@ func (h *Handler) analyzeImageAttachments(ctx context.Context, images []ImageAtt
 
 	for i := range images {
 		img := &images[i]
-		if img.Data == "" {
-			continue
-		}
-		imgBytes, _, decErr := decodeDataURI(img.Data)
-		if decErr != nil {
-			logger.Warnf(ctx, "Failed to decode image %d for VLM analysis: %v", i, decErr)
+		var imgBytes []byte
+		switch {
+		case img.Data != "":
+			bytes, _, decErr := decodeDataURI(img.Data)
+			if decErr != nil {
+				logger.Warnf(ctx, "Failed to decode image %d for VLM analysis: %v", i, decErr)
+				continue
+			}
+			imgBytes = bytes
+		case img.URL != "":
+			reader, getErr := h.fileService.GetFile(ctx, img.URL)
+			if getErr != nil {
+				logger.Warnf(ctx, "Failed to open image %d (%s) for VLM analysis: %v", i, img.URL, getErr)
+				continue
+			}
+			bytes, readErr := io.ReadAll(reader)
+			_ = reader.Close()
+			if readErr != nil {
+				logger.Warnf(ctx, "Failed to read image %d (%s) for VLM analysis: %v", i, img.URL, readErr)
+				continue
+			}
+			if len(bytes) == 0 {
+				continue
+			}
+			imgBytes = bytes
+		default:
 			continue
 		}
 		prompt := buildImageAnalysisPrompt(userQuery)
