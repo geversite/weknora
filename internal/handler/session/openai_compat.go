@@ -597,6 +597,11 @@ func (h *Handler) streamEventsToOpenAIChunks(
 	//   (a) when we detect the <!FINAL_ANSWER> marker (split around it)
 	//   (b) at the very end if the marker never appeared (graceful fallback)
 	var reasoningBuf strings.Builder
+	// sentReasoning accumulates the full text already streamed into the <think>
+	// block (raw body, without the <think>/</think> tags). It lets us re-emit
+	// the thinking content as the final answer if the <!FINAL_ANSWER> marker
+	// never arrives.
+	var sentReasoning strings.Builder
 	// fullAnswer accumulates only the final-answer text (post-marker) for logging.
 	var fullAnswer strings.Builder
 
@@ -614,12 +619,14 @@ func (h *Handler) streamEventsToOpenAIChunks(
 		if reasoningBuf.Len() == 0 {
 			return
 		}
+		body := reasoningBuf.String()
+		sentReasoning.WriteString(body)
 		prefix := ""
 		if !thinkOpened {
 			prefix = "<think>"
 			thinkOpened = true
 		}
-		h.writeOpenAIChunk(c, completionID, now, modelName, "", prefix+reasoningBuf.String(), nil)
+		h.writeOpenAIChunk(c, completionID, now, modelName, "", prefix+body, nil)
 		reasoningBuf.Reset()
 	}
 
@@ -651,7 +658,9 @@ func (h *Handler) streamEventsToOpenAIChunks(
 	// marker. Since everything before the marker is assumed to be thinking, any
 	// residual content (a partial-marker tail held in markerScanBuf, plus any
 	// pending wiki-stripped text) is flushed into the <think> block and the
-	// block is closed with </think>. No content is "promoted" to the answer.
+	// block is closed with </think>. Then the full accumulated thinking content
+	// is re-emitted as the final answer, so clients that don't render <think>
+	// (e.g. Dify) still receive the actual answer.
 	finishWithoutMarker := func() {
 		if tail := markerScanBuf.String(); tail != "" {
 			markerScanBuf.Reset()
@@ -667,7 +676,15 @@ func (h *Handler) streamEventsToOpenAIChunks(
 			h.writeOpenAIChunk(c, completionID, now, modelName, "", "</think>\n", nil)
 			thinkFinalized = true
 		}
-		log.Warnf("[openai] no <!FINAL_ANSWER> marker found; content emitted as thinking only, session=%s", sessionID)
+
+		// Re-emit the accumulated thinking content as the final answer.
+		if answer := sentReasoning.String(); answer != "" {
+			finalAnswerStarted = true
+			fullAnswer.WriteString(answer)
+			h.writeOpenAIChunk(c, completionID, now, modelName, "", answer, nil)
+		}
+		log.Warnf("[openai] no <!FINAL_ANSWER> marker found; re-emitted %d bytes of thinking as final answer, session=%s",
+			sentReasoning.Len(), sessionID)
 	}
 
 	emitAnswerChunk := func(content string) {
