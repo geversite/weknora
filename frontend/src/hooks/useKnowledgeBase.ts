@@ -35,6 +35,7 @@ export default function (knowledgeBaseId?: string) {
     parse_status: "",
     error_message: "",
 	custom_metadata: {} as Record<string, unknown>,
+    push_allowed: true,
     chunkLoading: false,
     chunkLoadError: "",
     tags: [] as Array<{ id: string; name: string; color?: string }>,
@@ -191,6 +192,8 @@ export default function (knowledgeBaseId?: string) {
       parse_status: "",
       error_message: "",
 	  custom_metadata: {},
+      // 重置推送开关，避免上一个文档的 toggle 状态残留到本次详情
+      push_allowed: true,
       chunkLoadError: "",
       tags: item?.tags ? [...item.tags] : [],
     });
@@ -211,6 +214,7 @@ export default function (knowledgeBaseId?: string) {
             parse_status: data.parse_status || '',
             error_message: data.error_message || '',
 			custom_metadata: data.custom_metadata || {},
+            push_allowed: data.push_allowed !== false,
             tags: data.tags?.length ? data.tags : (item?.tags || []),
           });
         }

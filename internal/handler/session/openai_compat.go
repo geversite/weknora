@@ -605,6 +605,11 @@ func (h *Handler) streamEventsToOpenAIChunks(
 	// fullAnswer accumulates only the final-answer text (post-marker) for logging.
 	var fullAnswer strings.Builder
 
+	// Rewrite storage references (resource://, provider://) embedded in the
+	// final answer into http(s) URLs so third-party OpenAI-compatible clients
+	// (Dify etc.) can render embedded images.
+	urlRewriter := newOpenAIResourceRewriter(c.Request.Context(), h.fileService)
+
 	// wikiStripper removes [[slug|display name]] wiki links from text that
 	// may be split across streaming chunks. It is applied to every piece of
 	// content before it is emitted to the client (both reasoning and answer).
@@ -679,9 +684,15 @@ func (h *Handler) streamEventsToOpenAIChunks(
 
 		// Re-emit the accumulated thinking content as the final answer.
 		if answer := sentReasoning.String(); answer != "" {
-			finalAnswerStarted = true
-			fullAnswer.WriteString(answer)
-			h.writeOpenAIChunk(c, completionID, now, modelName, "", answer, nil)
+			answer = urlRewriter.feed(answer)
+			if tail := urlRewriter.flush(); tail != "" {
+				answer += tail
+			}
+			if answer != "" {
+				finalAnswerStarted = true
+				fullAnswer.WriteString(answer)
+				h.writeOpenAIChunk(c, completionID, now, modelName, "", answer, nil)
+			}
 		}
 		log.Warnf("[openai] no <!FINAL_ANSWER> marker found; re-emitted %d bytes of thinking as final answer, session=%s",
 			sentReasoning.Len(), sessionID)
@@ -694,8 +705,11 @@ func (h *Handler) streamEventsToOpenAIChunks(
 		if finalAnswerStarted {
 			// Post-marker: route straight to content, stripping wiki links.
 			if cleaned := wikiStripper.feed(content); cleaned != "" {
-				fullAnswer.WriteString(cleaned)
-				h.writeOpenAIChunk(c, completionID, now, modelName, "", cleaned, nil)
+				processed := urlRewriter.feed(cleaned)
+				if processed != "" {
+					fullAnswer.WriteString(processed)
+					h.writeOpenAIChunk(c, completionID, now, modelName, "", processed, nil)
+				}
 			}
 			return
 		}
@@ -738,8 +752,11 @@ func (h *Handler) streamEventsToOpenAIChunks(
 		log.Infof("[openai] <!FINAL_ANSWER> marker detected, switching to content mode, session=%s", sessionID)
 		if after != "" {
 			if cleaned := wikiStripper.feed(after); cleaned != "" {
-				fullAnswer.WriteString(cleaned)
-				h.writeOpenAIChunk(c, completionID, now, modelName, "", cleaned, nil)
+				processed := urlRewriter.feed(cleaned)
+				if processed != "" {
+					fullAnswer.WriteString(processed)
+					h.writeOpenAIChunk(c, completionID, now, modelName, "", processed, nil)
+				}
 			}
 		}
 	}
@@ -776,8 +793,15 @@ func (h *Handler) streamEventsToOpenAIChunks(
 					if !finalAnswerStarted {
 						finishWithoutMarker()
 					}
+					if tail := urlRewriter.flush(); tail != "" {
+						fullAnswer.WriteString(tail)
+						h.writeOpenAIChunk(c, completionID, now, modelName, "", tail, nil)
+					}
 					finishReason := "stop"
 					h.writeOpenAIChunk(c, completionID, now, modelName, "", "", &finishReason)
+					// Terminate the SSE stream properly — without data: [DONE]
+					// clients treat the connection as abruptly closed by the server.
+					fmt.Fprintf(c.Writer, "data: [DONE]\n\n")
 					c.Writer.Flush()
 					return
 				}
@@ -878,14 +902,24 @@ func (h *Handler) streamEventsToOpenAIChunks(
 							cleaned += p
 						}
 						if cleaned != "" {
-							fullAnswer.WriteString(cleaned)
-							h.writeOpenAIChunk(c, completionID, now, modelName, "", cleaned, nil)
+							processed := urlRewriter.feed(cleaned)
+							if processed != "" {
+								fullAnswer.WriteString(processed)
+								h.writeOpenAIChunk(c, completionID, now, modelName, "", processed, nil)
+							}
 						}
 					}
+				}
+				if tail := urlRewriter.flush(); tail != "" {
+					fullAnswer.WriteString(tail)
+					h.writeOpenAIChunk(c, completionID, now, modelName, "", tail, nil)
 				}
 				// Send final chunk with finish_reason=stop
 				finishReason := "stop"
 				h.writeOpenAIChunk(c, completionID, now, modelName, "", "", &finishReason)
+				// Terminate the SSE stream properly — without data: [DONE]
+				// clients treat the connection as abruptly closed by the server.
+				fmt.Fprintf(c.Writer, "data: [DONE]\n\n")
 				c.Writer.Flush()
 				log.Infof("[openai] stream completed, session=%s, final_answer_len=%d, marker_found=%v",
 					sessionID, fullAnswer.Len(), finalAnswerStarted)
@@ -1287,6 +1321,7 @@ pollLoop:
 		content = answerPart
 	}
 	content = wikiLinkPattern.ReplaceAllString(content, "")
+	content = h.rewriteResourceURLsToString(ctx, content)
 
 	log.Infof("[openai] non-stream response ready, reasoning_len=%d, answer_len=%d, total_len=%d",
 		len(reasoningPart), len(answerPart), len(content))
