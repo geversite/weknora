@@ -32,8 +32,17 @@ Use this tool when the user explicitly requests a file (e.g. "把那份手册发
 - Does NOT generate links for files that have no downloadable storage path.
 
 ## Parameters
-- knowledge_ids (required): 1–10 short dN document IDs previously surfaced by knowledge_search / grep_chunks / list_knowledge_chunks.
+- knowledge_ids (required): 1–10 document identifiers. Use the EXACT value you saw, preferring a real knowledge_id. Sources of valid IDs:
+  - In a wiki workflow: the real knowledge_id value inside <source knowledge_id="..."> tags returned by wiki_read_page / wiki_search (under the sources section). Use that literal value directly.
+  - In a RAG workflow: the short dN document handles surfaced by knowledge_search / grep_chunks / list_knowledge_chunks.
 - expiry_hours (optional): link validity in hours (default 24, max 168=7d).
+
+## CRITICAL — handle integrity
+- Pass a REAL, literal identifier that appeared in your read/search results. NEVER invent, guess, extrapolate, or "index" a handle.
+- NEVER fabricate a dN-style token (e.g. d59) when you were never given one — a wiki workflow provides real knowledge_id UUIDs (use those), not dN tokens. A fabricated dN is unresolvable and the whole call is rejected.
+- In a wiki workflow, a document's summary page slug has the form summary/<knowledge_id>. You MAY pass that slug verbatim as a knowledge_ids value — the tool automatically strips the summary/ prefix and resolves it to the real document. This is the SAFEST option when a wiki page links to a document as [[summary/<id>|title]].
+- folder_summary/<id> and folder/<id> are folder nodes, NOT documents; stripping their prefix yields a folder id and the push will fail. Do not pass folder nodes — read the folder's page (wiki_read_page) to find the concrete document, then push that document (via its summary/<knowledge_id> slug or real knowledge_id).
+- A fabricated identifier makes the whole tool call fail (success=false, 0 links generated).
 
 ## Output
 Returns a file_push card list. Each card has: filename, file_type, file_size, download_url, expires_at.
@@ -43,7 +52,7 @@ The agent should briefly explain what each file is in the final answer alongside
   "properties": {
     "knowledge_ids": {
       "type": "array",
-      "description": "REQUIRED: 1-10 short dN document IDs to push (from prior search results)",
+      "description": "REQUIRED: 1-10 document IDs to push. Valid: (a) a document's summary/ page slug (e.g. summary/<knowledge_id>) — the tool strips the prefix automatically; (b) a real knowledge_id UUID from wiki_read_page/wiki_search <source knowledge_id=\"...\"> tags; (c) a short dN handle from knowledge_search/grep_chunks. Never invent/extrapolate an ID; never pass folder nodes (folder_summary/<id>, folder/<id>).",
       "items": {"type": "string"},
       "minItems": 1,
       "maxItems": 10
@@ -145,7 +154,10 @@ func (t *PushFilesTool) Execute(ctx context.Context, args json.RawMessage) (*typ
 	var failedIDs []string
 
 	for _, kid := range input.KnowledgeIDs {
-		card, sr, ok := t.pushOneFile(ctx, kid, allowedKB, expiryHours)
+		// The model may hand us a wiki page slug (summary/<id>, folder_summary/<id>)
+		// instead of the bare knowledge_id. Strip the wiki prefix so the lookup
+		// still reaches the underlying document.
+		card, sr, ok := t.pushOneFile(ctx, normalizeKnowledgeID(kid), allowedKB, expiryHours)
 		cards = append(cards, card)
 		if sr != nil {
 			searchResults = append(searchResults, sr)

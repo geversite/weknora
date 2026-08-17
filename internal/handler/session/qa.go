@@ -576,9 +576,16 @@ func (h *Handler) setupSSEStream(reqCtx *qaRequestContext, generateTitle bool) *
 		}
 	}
 
-	// Create EventBus and cancellable context
+	// Create EventBus and cancellable context.
+	// Detach asyncCtx from the HTTP request's cancellation chain so an SSE
+	// client disconnect does not cancel ongoing generation (the LLM call would
+	// otherwise fail mid-stream with "context canceled", dropping the answer
+	// the user already waited for). context.WithoutCancel keeps the values
+	// carried by baseCtx (tenant / model / effective-tenant) while suppressing
+	// request cancellation; the only way asyncCtx is cancelled is via cancel(),
+	// which the EventStop handler below triggers on a user-requested stop.
 	eventBus := event.NewEventBus()
-	asyncCtx, cancel := context.WithCancel(logger.CloneContext(baseCtx))
+	asyncCtx, cancel := context.WithCancel(logger.CloneContext(context.WithoutCancel(baseCtx)))
 
 	streamCtx := &sseStreamContext{
 		eventBus:         eventBus,

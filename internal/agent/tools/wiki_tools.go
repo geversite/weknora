@@ -397,6 +397,7 @@ func (p pendingWikiPage) render(body string) string {
 <sources>
 %s
 </sources>
+<!-- The knowledge_id values above are the real document identifiers. Use them verbatim as knowledge_ids for push_files / get_document_info. Do not invent or shorten them. -->
 <summary>
 %s
 </summary>
@@ -1003,9 +1004,19 @@ func (t *wikiSearchTool) Execute(ctx context.Context, args json.RawMessage) (*ty
 			if seen {
 				summary = "(summary omitted, already seen in previous search)"
 			}
+			// For a document's summary page (slug "summary/<knowledge_id>"), surface
+			// the fact that its trailing <knowledge_id> is the real document id the
+			// model can pass straight into push_files / get_document_info (prefix is
+			// stripped automatically). This avoids the model inventing a dN handle.
+			docHint := ""
+			if p.PageType == types.WikiPageTypeSummary && strings.HasPrefix(p.Slug, "summary/") {
+				if kid := strings.TrimPrefix(p.Slug, "summary/"); kid != "" && !strings.Contains(kid, "/") {
+					docHint = fmt.Sprintf("\n<document_knowledge_id>%s</document_knowledge_id><!-- use this id (or the summary/ slug above) as a knowledge_id for push_files / get_document_info -->", kid)
+				}
+			}
 			fmt.Fprintf(&sb,
-				"<page>\n<knowledge_base_id>%s</knowledge_base_id>\n<link>[[%s|%s]]</link>\n<type>%s</type>%s\n<summary>%s</summary>%s\n</page>\n",
-				h.kbID, p.Slug, p.Title, p.PageType, aliasesTag, summary, snippetTag,
+				"<page>\n<knowledge_base_id>%s</knowledge_base_id>\n<link>[[%s|%s]]</link>\n<type>%s</type>%s%s\n<summary>%s</summary>%s\n</page>\n",
+				h.kbID, p.Slug, p.Title, p.PageType, aliasesTag, docHint, summary, snippetTag,
 			)
 		}
 		sb.WriteString("</search_results>")

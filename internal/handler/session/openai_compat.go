@@ -435,8 +435,16 @@ func (h *Handler) openAIStreamQA(
 	baseCtx = types.WithFinalAnswerMarker(baseCtx)
 
 	eventBus := event.NewEventBus()
-	asyncCtx, cancel := context.WithCancel(logger.CloneContext(baseCtx))
-	defer cancel()
+	// Detach asyncCtx from the HTTP request's cancellation chain so an OpenAI
+	// client disconnect does not cancel ongoing generation. context.WithoutCancel
+	// keeps the values carried by baseCtx (tenant / model / final-answer marker)
+	// while suppressing request cancellation; asyncCtx is only cancelled via
+	// cancel(), which the EventStop handler triggers on a user-requested stop.
+	// There is intentionally NO `defer cancel()` here: for the streaming path the
+	// agent runs in a background goroutine and must survive the client closing
+	// the SSE stream (otherwise a disconnect mid-generation would surface as
+	// "context canceled" and drop the answer the user already waited for).
+	asyncCtx, cancel := context.WithCancel(logger.CloneContext(context.WithoutCancel(baseCtx)))
 
 	// Setup stop event handler
 	h.setupStopEventHandler(eventBus, sessionID, reqCtx.session.TenantID, reqCtx.assistantMessage, cancel)
@@ -761,10 +769,11 @@ func (h *Handler) streamEventsToOpenAIChunks(
 		}
 	}
 
+	log.Infof("[openai] streamEventsToOpenAIChunks entering poll loop, session=%s, msg=%s", sessionID, assistantMessageID)
 	for {
 		select {
 		case <-c.Request.Context().Done():
-			log.Infof("[openai] client disconnected, session=%s", sessionID)
+			log.Infof("[openai] client disconnected, session=%s (offset=%d, finalAnswerStarted=%v)", sessionID, lastOffset, finalAnswerStarted)
 			return
 
 		case <-ticker.C:
@@ -803,6 +812,7 @@ func (h *Handler) streamEventsToOpenAIChunks(
 					// clients treat the connection as abruptly closed by the server.
 					fmt.Fprintf(c.Writer, "data: [DONE]\n\n")
 					c.Writer.Flush()
+					log.Infof("[openai] stream ended via STOP event, session=%s (offset=%d, finalAnswerStarted=%v)", sessionID, lastOffset, finalAnswerStarted)
 					return
 				}
 
@@ -812,7 +822,15 @@ func (h *Handler) streamEventsToOpenAIChunks(
 					continue
 				}
 
-				// Check for error
+				// Check for error. Distinguish two cases:
+				//  - A *tool-result failure* (handleToolResult emits ResponseTypeError
+				//    with a tool_name in Data when a tool returns success=false, e.g.
+				//    "unresolved model handles"). This is NOT fatal — the agent will
+				//    see the error result and continue to the next round. Terminating
+				//    the SSE stream here would cut off the agent's eventual answer, so
+				//    we log it and keep polling.
+				//  - A real agent-level error (engine.go emits EventAgentError with
+				//    stage="agent_execution" and no tool_name). Only this is fatal.
 				if evt.Type == types.ResponseTypeError {
 					errMsg := evt.Content
 					if errMsg == "" {
@@ -820,9 +838,15 @@ func (h *Handler) streamEventsToOpenAIChunks(
 							errMsg = fmt.Sprintf("%v", d)
 						}
 					}
+					_, isToolResultFailure := evt.Data["tool_name"]
+					if isToolResultFailure {
+						log.Warnf("[openai] tool-result error (non-fatal, continuing stream): session=%s (offset=%d, err=%q)", sessionID, lastOffset, errMsg)
+						continue
+					}
 					// Send error as a chunk with finish_reason
 					h.writeOpenAIChunkError(c, completionID, now, modelName, errMsg)
 					c.Writer.Flush()
+					log.Infof("[openai] stream ended via ERROR event, session=%s (offset=%d, err=%q)", sessionID, lastOffset, errMsg)
 					return
 				}
 

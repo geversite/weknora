@@ -16,7 +16,8 @@ const sourceHandleProtocolPrompt = `
 ## Source handling protocol (system-owned)
 Retrieved content uses request-local source handles: cN identifies a knowledge chunk, wN a web page, dN a document, and bN a knowledge base.
 - Use dN and bN only as tool arguments when a tool requests a document or knowledge base.
-- Never reveal raw chunk IDs, knowledge IDs, knowledge-base IDs, or private source handles in user-visible output. This does not change separate instructions to preserve retrieved Markdown image URLs.`
+- Never reveal raw chunk IDs, knowledge IDs, knowledge-base IDs, or private source handles in user-visible output. This does not change separate instructions to preserve retrieved Markdown image URLs.
+- CRITICAL: Never invent, guess, or extrapolate a handle. Pass into tool arguments ONLY a cN/wN/dN/bN handle that literally appeared in the supplied context or in a prior tool result. A handle you fabricate (e.g. d41 when the search returned d1) is unresolvable and the tool call is rejected outright. If you do not have the exact handle you need, re-run a search/read tool to obtain it instead of guessing.`
 
 const citationEnabledProtocolPrompt = `
 - Source citations are enabled for this answer. Cite a knowledge chunk with exactly <ref id="cN"/> and a web page with exactly <ref id="wN"/>.

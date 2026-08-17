@@ -43,20 +43,25 @@ Do not use when:
 - Can check document processing status (parse_status)
 
 ## IDs
-- knowledge_ids: regular documents, using the short dN IDs from retrieval results
-- faq_ids: individual FAQ entries, using the short cN chunk IDs. Returns the standard question and answers, not the container title.`,
+- knowledge_ids: regular documents. Valid values: (a) a document's summary/ page slug (e.g. summary/<knowledge_id>) — the tool strips the prefix automatically; (b) the literal real knowledge_id UUID inside <source knowledge_id="..."> tags from wiki_read_page / wiki_search; (c) short dN IDs from retrieval results.
+- faq_ids: individual FAQ entries, using the short cN chunk IDs. Returns the standard question and answers, not the container title.
+
+## CRITICAL — handle integrity
+- Pass a REAL, literal identifier that appeared in your read/search results. NEVER invent, guess, or modify a handle (e.g. do not turn d1 into d41, and never fabricate d59 when you were only given a real UUID).
+- In a wiki workflow, when a document is linked as [[summary/<id>|title]], you may pass that summary/<id> slug verbatim as a knowledge_id — the tool strips the prefix and resolves the document. This is safer than guessing.
+- A fabricated handle is unresolvable and the whole tool call is rejected. If you lack the exact identifier, re-run wiki_read_page / knowledge_search / grep_chunks to obtain it.`,
 	schema: json.RawMessage(`{
   "type": "object",
   "properties": {
     "knowledge_ids": {
       "type": "array",
       "items": { "type": "string" },
-      "description": "Short dN document IDs for regular documents"
+      "description": "Document IDs. Valid: a document's summary/<knowledge_id> slug (prefix stripped automatically), a real knowledge_id UUID from wiki <source knowledge_id=\"...\">, or a short dN handle from knowledge_search. Use ONLY identifiers that literally appeared in prior output; never invent one."
     },
     "faq_ids": {
       "type": "array",
       "items": { "type": "string" },
-      "description": "Short cN FAQ chunk IDs from retrieval results. Use instead of knowledge_ids for a single FAQ Q&A."
+      "description": "Short cN FAQ chunk IDs from retrieval results. Use instead of knowledge_ids for a single FAQ Q&A. Use ONLY handles that literally appeared in prior output; never invent one."
     }
   }
 }`),
@@ -102,7 +107,13 @@ func (t *GetDocumentInfoTool) Execute(ctx context.Context, args json.RawMessage)
 		}, err
 	}
 
-	knowledgeIDs := input.KnowledgeIDs
+	// The model may hand us a wiki page slug (summary/<id>, folder_summary/<id>)
+	// instead of the bare knowledge_id. Strip the wiki prefix so the lookup
+	// still reaches the underlying document. FAQ ids are untouched (chunk ids).
+	knowledgeIDs := make([]string, 0, len(input.KnowledgeIDs))
+	for _, id := range input.KnowledgeIDs {
+		knowledgeIDs = append(knowledgeIDs, normalizeKnowledgeID(id))
+	}
 	faqIDs := input.FAQIDs
 	if len(knowledgeIDs) == 0 && len(faqIDs) == 0 {
 		return &types.ToolResult{
