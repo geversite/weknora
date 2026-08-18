@@ -32,6 +32,7 @@ type scriptedUploadSvc struct {
 	lastMetadata         map[string]string
 	lastEnableMultimodel *bool
 	lastChannel          string
+	lastOnConflict       string
 }
 
 func (s *scriptedUploadSvc) CreateKnowledgeFromFile(
@@ -41,11 +42,13 @@ func (s *scriptedUploadSvc) CreateKnowledgeFromFile(
 	enableMultimodel *bool,
 	_, channel string,
 	_ *sdk.KnowledgeProcessOverrides,
+	onConflict string,
 ) (*sdk.Knowledge, error) {
 	s.called = append(s.called, filepath.Base(filePath))
 	s.lastMetadata = metadata
 	s.lastEnableMultimodel = enableMultimodel
 	s.lastChannel = channel
+	s.lastOnConflict = onConflict
 	r, ok := s.results[filepath.Base(filePath)]
 	if !ok {
 		return &sdk.Knowledge{ID: "doc_" + filepath.Base(filePath), FileName: filepath.Base(filePath)}, nil

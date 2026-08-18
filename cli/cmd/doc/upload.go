@@ -50,6 +50,11 @@ type UploadOptions struct {
 	// Empty ⇒ uploadChannel ("api"). Free-form: server validates.
 	Channel string
 
+	// OnConflict selects the same-name conflict policy within the target
+	// folder: "reject" (default) fails with file_name_conflict; "replace"
+	// deletes the existing same-name knowledge (full cleanup) then uploads.
+	OnConflict string
+
 	DryRun bool
 }
 
@@ -63,6 +68,7 @@ type UploadService interface {
 		enableMultimodel *bool,
 		customFileName, channel string,
 		processConfig *sdk.KnowledgeProcessOverrides,
+		onConflict string,
 	) (*sdk.Knowledge, error)
 }
 
@@ -96,7 +102,14 @@ Server-side ingestion knobs:
                            Malformed values (no '=', empty key) ⇒
                            input.invalid_argument.
   --channel <name>         Override the ingestion-channel tag (default "api").
-                           Applies to file / --recursive.`,
+                           Applies to file / --recursive.
+  --on-conflict <mode>     Same-name conflict policy within the target folder.
+                           reject (default): fail with file_name_conflict.
+                           replace: delete the existing knowledge (vectors/
+                           chunks/graph/file fully cleaned) then upload the
+                           new file. Only applies to same-name conflicts in
+                           the same folder; content-level duplicates under a
+                           different name still return duplicate_file.`,
 		Example: `  weknora doc upload report.pdf
   weknora doc upload notes.md --kb a32a63ff-fb36-4874-bcaa-30f48570a694
   weknora doc upload notes.md --kb my-kb
@@ -187,6 +200,7 @@ Server-side ingestion knobs:
 	cmd.Flags().Lookup("enable-multimodel").NoOptDefVal = "true"
 	cmd.Flags().StringSliceVar(&opts.Metadata, "metadata", nil, "Attach metadata `key=value` (repeatable; empty value allowed, last-wins on duplicate keys)")
 	cmd.Flags().StringVar(&opts.Channel, "channel", "", "Ingestion-channel tag recorded server-side (default \"api\")")
+	cmd.Flags().StringVar(&opts.OnConflict, "on-conflict", "reject", "Same-name conflict policy within the target folder: reject (default) | replace")
 	cmdutil.AddFormatFlag(cmd, docUploadFields...)
 	cmdutil.AddDryRunFlag(cmd, &opts.DryRun)
 	cmdutil.SetAgentHelp(cmd, cmdutil.AgentHelp{
@@ -253,6 +267,22 @@ func validateUploadFlags(opts *UploadOptions, args []string) error {
 	return nil
 }
 
+// resolveOnConflict normalizes the --on-conflict flag into the value sent to
+// the server. "reject" (default) is the zero-difference behavior; "replace"
+// deletes same-name old knowledge before upload. Unknown values are rejected
+// fail-fast to avoid a typo silently degrading to reject.
+func resolveOnConflict(raw string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "", "reject":
+		return "", nil // empty ⇒ don't send the field; server defaults to reject
+	case "replace":
+		return "replace", nil
+	default:
+		return "", cmdutil.NewError(cmdutil.CodeInputInvalidArgument,
+			fmt.Sprintf("--on-conflict expects reject|replace, got %q", raw))
+	}
+}
+
 // renderUploadSuccess emits the post-upload result. JSON path is the bare
 // Knowledge object; text path prints a checkmark line. Shared by single-
 // file upload and URL ingest; verb varies (uploaded/ingested) and
@@ -299,7 +329,11 @@ func runUpload(ctx context.Context, opts *UploadOptions, fopts *cmdutil.FormatOp
 	if err != nil {
 		return err
 	}
-	k, err := svc.CreateKnowledgeFromFile(ctx, kbID, path, meta, opts.EnableMultimodel, opts.Name, cmp.Or(opts.Channel, uploadChannel), nil)
+	onConflict, err := resolveOnConflict(opts.OnConflict)
+	if err != nil {
+		return err
+	}
+	k, err := svc.CreateKnowledgeFromFile(ctx, kbID, path, meta, opts.EnableMultimodel, opts.Name, cmp.Or(opts.Channel, uploadChannel), nil, onConflict)
 	if err != nil {
 		if errors.Is(err, sdk.ErrDuplicateFile) {
 			// SDK returns sentinel without an "HTTP error <status>:" prefix

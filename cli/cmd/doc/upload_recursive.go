@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/Tencent/WeKnora/cli/internal/cmdutil"
 	"github.com/Tencent/WeKnora/cli/internal/iostreams"
@@ -16,8 +17,9 @@ import (
 // uploadedFile holds the server-side result for a successful per-file upload.
 // Keyed by file path in the uploadResults map populated by the RunBatch closure.
 type uploadedFile struct {
-	ID   string
-	Name string
+	ID          string
+	Name        string
+	ReplacedIDs []string
 }
 
 // runUploadRecursive walks dir, filters by Glob, and uploads each match
@@ -82,9 +84,13 @@ func runUploadRecursive(ctx context.Context, opts *UploadOptions, fopts *cmdutil
 	// Populated by the RunBatch closure; read by the resultFn below.
 	uploaded := make(map[string]uploadedFile, len(matches))
 	channel := cmp.Or(opts.Channel, uploadChannel)
+	onConflict, err := resolveOnConflict(opts.OnConflict)
+	if err != nil {
+		return err
+	}
 
 	outcomes, runErr := cmdutil.RunBatch(ctx, matches, func(ctx context.Context, p string) error {
-		k, err := svc.CreateKnowledgeFromFile(ctx, kbID, p, meta, opts.EnableMultimodel, "", channel, nil)
+		k, err := svc.CreateKnowledgeFromFile(ctx, kbID, p, meta, opts.EnableMultimodel, "", channel, nil, onConflict)
 		if err != nil {
 			// Per-file progress lines are human progress signal; suppress
 			// under --format json so they don't precede the JSON object on stdout.
@@ -94,13 +100,20 @@ func runUploadRecursive(ctx context.Context, opts *UploadOptions, fopts *cmdutil
 			return err
 		}
 		id, name := "", ""
+		var replaced []string
 		if k != nil {
 			id = k.ID
 			name = k.FileName
+			replaced = k.ReplacedKnowledgeIDs
 		}
-		uploaded[p] = uploadedFile{ID: id, Name: name}
+		uploaded[p] = uploadedFile{ID: id, Name: name, ReplacedIDs: replaced}
 		if !fopts.WantsJSON() {
-			fmt.Fprintf(iostreams.IO.Out, "OK   %s (id: %s)\n", filepath.Base(p), id)
+			if len(replaced) > 0 {
+				fmt.Fprintf(iostreams.IO.Out, "REPLACED %s (old: %s, new: %s)\n",
+					filepath.Base(p), strings.Join(replaced, ","), id)
+			} else {
+				fmt.Fprintf(iostreams.IO.Out, "OK   %s (id: %s)\n", filepath.Base(p), id)
+			}
 		}
 		return nil
 	})
@@ -115,7 +128,11 @@ func runUploadRecursive(ctx context.Context, opts *UploadOptions, fopts *cmdutil
 	if fopts.WantsJSON() {
 		if err := cmdutil.EmitBatch(outcomes, fopts, iostreams.IO.Out, func(p string) any {
 			f := uploaded[p]
-			return map[string]any{"id": f.ID, "name": f.Name}
+			item := map[string]any{"id": f.ID, "name": f.Name}
+			if len(f.ReplacedIDs) > 0 {
+				item["replaced_ids"] = f.ReplacedIDs
+			}
+			return item
 		}); err != nil {
 			return err
 		}

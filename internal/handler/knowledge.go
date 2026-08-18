@@ -307,9 +307,11 @@ func (h *KnowledgeHandler) enqueueKnowledgeListReparse(
 // @Param        enable_multimodel formData  bool    false  "启用多模态处理"
 // @Param        tag_ids       formData  string  false  "分类ID列表，逗号分隔"
 // @Param        process_config    formData  string  false  "处理配置JSON（KnowledgeProcessOverrides）"
+// @Param        on_conflict   formData  string  false  "冲突策略 reject|replace（默认 reject）"
 // @Success      200               {object}  map[string]interface{}  "创建的知识"
 // @Failure      400               {object}  errors.AppError         "请求参数错误"
 // @Failure      409               {object}  map[string]interface{}  "文件重复"
+// @Failure      500               {object}  map[string]interface{}  "替换删除失败"
 // @Security     Bearer
 // @Security     ApiKeyAuth
 // @Router       /knowledge-bases/{id}/knowledge/file [post]
@@ -415,10 +417,32 @@ func (h *KnowledgeHandler) CreateKnowledgeFromFile(c *gin.Context) {
 	// in different folders without conflict).
 	folderID := secutils.SanitizeForLog(c.PostForm("folder_id"))
 
+	// Parse on_conflict: "" / "reject" keep the existing 409 behavior;
+	// "replace" deletes same-name old knowledge before uploading. Unknown values
+	// fail fast to avoid silently degrading on a typo.
+	onConflict := strings.TrimSpace(strings.ToLower(c.PostForm("on_conflict")))
+	switch onConflict {
+	case "", types.UploadOnConflictReject:
+		onConflict = types.UploadOnConflictReject
+	case types.UploadOnConflictReplace:
+	default:
+		c.Error(errors.NewBadRequestError(
+			fmt.Sprintf("invalid on_conflict %q, expect reject|replace", onConflict)))
+		return
+	}
+
 	// Create knowledge entry from the file
-	knowledge, err := h.kgService.CreateKnowledgeFromFile(ctx, kbID, file, metadata, enableMultimodel, customFileName, tagIDs, channel, processOverrides, folderID)
+	knowledge, replacedIDs, err := h.kgService.CreateKnowledgeFromFile(ctx, kbID, file, metadata, enableMultimodel, customFileName, tagIDs, channel, processOverrides, onConflict, folderID)
 	// Check for duplicate knowledge error
 	if err != nil {
+		if goerrors.Is(err, service.ErrReplaceDeleteFailed) {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"success": false,
+				"message": err.Error(),
+				"code":    "replace_delete_failed",
+			})
+			return
+		}
 		if goerrors.Is(err, service.ErrFileNameConflict) {
 			c.JSON(http.StatusConflict, gin.H{
 				"success": false,
@@ -445,10 +469,14 @@ func (h *KnowledgeHandler) CreateKnowledgeFromFile(c *gin.Context) {
 		secutils.SanitizeForLog(knowledge.ID),
 		secutils.SanitizeForLog(knowledge.Title),
 	)
-	c.JSON(http.StatusOK, gin.H{
+	resp := gin.H{
 		"success": true,
 		"data":    knowledge,
-	})
+	}
+	if len(replacedIDs) > 0 {
+		resp["replaced_knowledge_ids"] = replacedIDs
+	}
+	c.JSON(http.StatusOK, resp)
 }
 
 // CreateKnowledgeFromURL godoc

@@ -18,6 +18,15 @@ const (
 	KnowledgeTypeFAQ = "faq"
 )
 
+// Upload conflict policies for the file upload endpoint's on_conflict field.
+const (
+	// UploadOnConflictReject is the default: a same-name conflict returns 409.
+	UploadOnConflictReject = "reject"
+	// UploadOnConflictReplace deletes the existing same-name knowledge (full
+	// cleanup chain) before uploading the new file.
+	UploadOnConflictReplace = "replace"
+)
+
 // Channel constants identify through which channel a knowledge entry was ingested.
 // Aligned with Message.Channel values ("web", "api", "im") but allows finer granularity.
 const (

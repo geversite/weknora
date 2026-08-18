@@ -370,6 +370,25 @@ func (r *knowledgeRepository) ExistsFileByNameInFolder(ctx context.Context, tena
 	return count > 0, nil
 }
 
+// ListKnowledgeByFileNameInFolder returns the live (non-failed, non-deleted)
+// knowledge rows that share fileName within the same folder of the KB.
+// Mirrors ExistsFileByNameInFolder's predicate exactly so a replace deletes
+// precisely the rows the conflict check matched.
+func (r *knowledgeRepository) ListKnowledgeByFileNameInFolder(
+	ctx context.Context, tenantID uint64, kbID, folderID, fileName string,
+) ([]*types.Knowledge, error) {
+	q := r.db.WithContext(ctx).Table("knowledges").
+		Where("tenant_id = ? AND knowledge_base_id = ? AND file_name = ? AND parse_status <> 'failed'",
+			tenantID, kbID, fileName).
+		Where("deleted_at IS NULL")
+	q = scopedByFolder(q, folderID)
+	var rows []*types.Knowledge
+	if err := q.Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
 // AminusB returns the IDs of knowledge in A that have no counterpart in B,
 // comparing by file_hash as a MULTISET rather than a plain set.
 //

@@ -25,6 +25,7 @@ type fakeUploadSvc struct {
 		kbID, filePath, customName, channel string
 		metadata                            map[string]string
 		enableMultimodel                    *bool
+		onConflict                          string
 	}
 }
 
@@ -35,6 +36,7 @@ func (f *fakeUploadSvc) CreateKnowledgeFromFile(
 	enableMultimodel *bool,
 	customFileName, channel string,
 	_ *sdk.KnowledgeProcessOverrides,
+	onConflict string,
 ) (*sdk.Knowledge, error) {
 	f.got.kbID = kbID
 	f.got.filePath = filePath
@@ -42,6 +44,7 @@ func (f *fakeUploadSvc) CreateKnowledgeFromFile(
 	f.got.enableMultimodel = enableMultimodel
 	f.got.customName = customFileName
 	f.got.channel = channel
+	f.got.onConflict = onConflict
 	return f.resp, f.err
 }
 

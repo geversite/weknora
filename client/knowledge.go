@@ -46,6 +46,10 @@ type Knowledge struct {
 	UpdatedAt        time.Time       `json:"updated_at"`
 	ProcessedAt      *time.Time      `json:"processed_at"`
 	ErrorMessage     string          `json:"error_message"`
+	// ReplacedKnowledgeIDs carries the IDs of old same-name knowledge entries
+	// deleted when this knowledge was created with on_conflict=replace.
+	// Empty (and omitted) for ordinary uploads.
+	ReplacedKnowledgeIDs []string `json:"replaced_knowledge_ids,omitempty"`
 }
 
 // KnowledgeResponse represents the API response containing a single knowledge entry
@@ -54,6 +58,9 @@ type KnowledgeResponse struct {
 	Data    Knowledge `json:"data"`
 	Code    string    `json:"code"`
 	Message string    `json:"message"`
+	// ReplacedKnowledgeIDs carries the IDs of old same-name knowledge entries
+	// deleted when the upload used on_conflict=replace. Empty otherwise.
+	ReplacedKnowledgeIDs []string `json:"replaced_knowledge_ids"`
 }
 
 // KnowledgeListResponse represents the API response containing a list of knowledge entries with pagination
@@ -86,14 +93,14 @@ var ErrDuplicateURL = errors.New("URL already exists")
 // KnowledgeProcessOverrides stores per-upload parse config overrides sent as process_config.
 // When nil, the server uses the knowledge base defaults only.
 type KnowledgeProcessOverrides struct {
-	ParserEngineRules        []ParserEngineRule            `json:"parser_engine_rules,omitempty"`
-	ChunkingConfig           *ChunkingConfig               `json:"chunking_config,omitempty"`
-	EnableMultimodel         *bool                         `json:"enable_multimodel,omitempty"`
-	VLMConfig                *VLMConfig                    `json:"vlm_config,omitempty"`
-	ASRConfig                *ASRConfig                    `json:"asr_config,omitempty"`
-	QuestionGenerationConfig *QuestionGenerationConfig     `json:"question_generation_config,omitempty"`
-	GraphEnabled             *bool                         `json:"graph_enabled,omitempty"`
-	ExtractConfig            *ExtractConfig                `json:"extract_config,omitempty"`
+	ParserEngineRules        []ParserEngineRule        `json:"parser_engine_rules,omitempty"`
+	ChunkingConfig           *ChunkingConfig           `json:"chunking_config,omitempty"`
+	EnableMultimodel         *bool                     `json:"enable_multimodel,omitempty"`
+	VLMConfig                *VLMConfig                `json:"vlm_config,omitempty"`
+	ASRConfig                *ASRConfig                `json:"asr_config,omitempty"`
+	QuestionGenerationConfig *QuestionGenerationConfig `json:"question_generation_config,omitempty"`
+	GraphEnabled             *bool                     `json:"graph_enabled,omitempty"`
+	ExtractConfig            *ExtractConfig            `json:"extract_config,omitempty"`
 }
 
 // CreateKnowledgeFromFile creates a knowledge entry from a local file path
@@ -105,9 +112,11 @@ type KnowledgeProcessOverrides struct {
 //   - customFileName: Optional custom file name (useful for folder uploads with path)
 //   - channel: Optional ingestion channel (e.g. "web", "api", "wechat"); empty defaults to "web"
 //   - processConfig: Optional parse config overrides (serialized as process_config form field)
+//   - onConflict: Optional same-name conflict policy: "" / "reject" (default) /
+//     "replace". Empty string does not send the field.
 func (c *Client) CreateKnowledgeFromFile(ctx context.Context,
 	knowledgeBaseID string, filePath string, metadata map[string]string, enableMultimodel *bool, customFileName string, channel string,
-	processConfig *KnowledgeProcessOverrides,
+	processConfig *KnowledgeProcessOverrides, onConflict string,
 ) (*Knowledge, error) {
 	// Open the local file
 	file, err := os.Open(filePath)
@@ -184,6 +193,12 @@ func (c *Client) CreateKnowledgeFromFile(ctx context.Context,
 		}
 	}
 
+	if onConflict != "" {
+		if err := writer.WriteField("on_conflict", onConflict); err != nil {
+			return nil, fmt.Errorf("failed to write on_conflict field: %w", err)
+		}
+	}
+
 	// Close the multipart writer
 	err = writer.Close()
 	if err != nil {
@@ -213,6 +228,7 @@ func (c *Client) CreateKnowledgeFromFile(ctx context.Context,
 	} else if err := parseResponse(resp, &response); err != nil {
 		return nil, err
 	}
+	response.Data.ReplacedKnowledgeIDs = response.ReplacedKnowledgeIDs
 	return &response.Data, nil
 }
 
@@ -527,7 +543,7 @@ func (c *Client) ReparseKnowledge(ctx context.Context, knowledgeID string) (*Kno
 //   - pending      — task has not started
 //   - processing   — DocReader / chunking / embedding stage
 //   - finalizing   — primary parse done, enrichment subtasks (summary,
-//                    question generation, graph extract) still running
+//     question generation, graph extract) still running
 //
 // Returns an error when the knowledge is in a terminal state
 // (completed, failed) or already being deleted.

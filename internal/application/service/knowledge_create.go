@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"mime/multipart"
 	"net/url"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Tencent/WeKnora/internal/application/repository"
 	werrors "github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/infrastructure/chunker"
 	"github.com/Tencent/WeKnora/internal/infrastructure/docparser"
@@ -25,8 +27,8 @@ import (
 func (s *knowledgeService) CreateKnowledgeFromFile(ctx context.Context,
 	kbID string, file *multipart.FileHeader, metadata map[string]string, enableMultimodel *bool, customFileName string, tagIDs []string, channel string,
 	processOverrides *types.KnowledgeProcessOverrides,
-	folderIDs ...string,
-) (*types.Knowledge, error) {
+	onConflict string, folderIDs ...string,
+) (*types.Knowledge, []string, error) {
 	logger.Info(ctx, "Start creating knowledge from file")
 
 	// M4: optional target folder (first variadic arg wins).
@@ -46,7 +48,7 @@ func (s *knowledgeService) CreateKnowledgeFromFile(ctx context.Context,
 
 	if IsVideoType(getFileType(fileName)) {
 		logger.Error(ctx, "Video file upload is not supported")
-		return nil, werrors.NewBadRequestError("暂不支持上传视频文件")
+		return nil, nil, werrors.NewBadRequestError("暂不支持上传视频文件")
 	}
 
 	// Get knowledge base configuration
@@ -54,16 +56,16 @@ func (s *knowledgeService) CreateKnowledgeFromFile(ctx context.Context,
 	kb, err := s.kbService.GetKnowledgeBaseByID(ctx, kbID)
 	if err != nil {
 		logger.Errorf(ctx, "Failed to get knowledge base: %v", err)
-		return nil, err
+		return nil, nil, err
 	}
 
 	// FAQ knowledge bases should not accept file uploads — use the FAQ import API instead
 	if kb.Type == types.KnowledgeBaseTypeFAQ {
-		return nil, werrors.NewBadRequestError("FAQ 知识库不支持文件上传，请使用 FAQ 导入功能")
+		return nil, nil, werrors.NewBadRequestError("FAQ 知识库不支持文件上传，请使用 FAQ 导入功能")
 	}
 
 	if err := s.checkStorageEngineConfigured(ctx, kb); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	// Early reject before the whole-file hash below. resolveFileImportProcessConfig
@@ -72,7 +74,7 @@ func (s *knowledgeService) CreateKnowledgeFromFile(ctx context.Context,
 	logger.Infof(ctx, "Checking file type: %s", fileName)
 	if !isValidFileType(fileName) {
 		logger.Error(ctx, "Invalid file type")
-		return nil, ErrInvalidFileType
+		return nil, nil, ErrInvalidFileType
 	}
 
 	// Calculate file hash for deduplication
@@ -80,22 +82,42 @@ func (s *knowledgeService) CreateKnowledgeFromFile(ctx context.Context,
 	hash, err := calculateFileHash(file)
 	if err != nil {
 		logger.Errorf(ctx, "Failed to calculate file hash: %v", err)
-		return nil, err
+		return nil, nil, err
 	}
 
 	// Check if file already exists
 	tenantID := ctx.Value(types.TenantIDContextKey).(uint64)
 	logger.Infof(ctx, "Checking if file exists, tenant ID: %d", tenantID)
 
-	// 同路径下不允许同名文件（即使内容不同也视为冲突，避免 UI 混淆）
-	nameConflict, err := s.repo.ExistsFileByNameInFolder(ctx, tenantID, kbID, folderID, fileName, "")
+	// 同路径下不允许同名文件（即使内容不同也视为冲突，避免 UI 混淆）；
+	// onConflict=replace 时先完整清理同名旧知识再上传。
+	nameConflicts, err := s.repo.ListKnowledgeByFileNameInFolder(ctx, tenantID, kbID, folderID, fileName)
 	if err != nil {
 		logger.Errorf(ctx, "Failed to check file name conflict: %v", err)
-		return nil, err
+		return nil, nil, err
 	}
-	if nameConflict {
-		logger.Infof(ctx, "File name already exists in folder: %s", fileName)
-		return nil, ErrFileNameConflict
+
+	var replacedIDs []string
+	if len(nameConflicts) > 0 {
+		if onConflict != types.UploadOnConflictReplace {
+			logger.Infof(ctx, "File name already exists in folder: %s", fileName)
+			return nil, nil, ErrFileNameConflict
+		}
+		// replace: full cleanup of same-name old knowledge (vectors/chunks/
+		// graph/wiki/file/quota/etc. via DeleteKnowledge).
+		replacedIDs = make([]string, 0, len(nameConflicts))
+		for _, old := range nameConflicts {
+			if err := s.DeleteKnowledge(ctx, old.ID); err != nil {
+				// Concurrent race: someone else already deleted it → treat as cleaned.
+				if errors.Is(err, repository.ErrKnowledgeNotFound) {
+					continue
+				}
+				logger.Errorf(ctx, "replace: delete old knowledge %s failed: %v", old.ID, err)
+				return nil, nil, fmt.Errorf("%w: delete old knowledge %s: %v",
+					ErrReplaceDeleteFailed, old.ID, err)
+			}
+			replacedIDs = append(replacedIDs, old.ID)
+		}
 	}
 
 	exists, existingKnowledge, err := s.repo.CheckKnowledgeExists(ctx, tenantID, kbID, &types.KnowledgeCheckParams{
@@ -110,23 +132,23 @@ func (s *knowledgeService) CreateKnowledgeFromFile(ctx context.Context,
 	})
 	if err != nil {
 		logger.Errorf(ctx, "Failed to check knowledge existence: %v", err)
-		return nil, err
+		return nil, nil, err
 	}
 	if exists {
 		logger.Infof(ctx, "File already exists: %s", fileName)
 		// Update creation time for existing knowledge
 		if err := s.repo.UpdateKnowledgeColumn(ctx, existingKnowledge.ID, "created_at", time.Now()); err != nil {
 			logger.Errorf(ctx, "Failed to update existing knowledge: %v", err)
-			return nil, err
+			return nil, nil, err
 		}
-		return existingKnowledge, types.NewDuplicateFileError(existingKnowledge)
+		return existingKnowledge, nil, types.NewDuplicateFileError(existingKnowledge)
 	}
 
 	// Check storage quota
 	tenantInfo := ctx.Value(types.TenantInfoContextKey).(*types.Tenant)
 	if tenantInfo.StorageQuota > 0 && tenantInfo.StorageUsed >= tenantInfo.StorageQuota {
 		logger.Error(ctx, "Storage quota exceeded")
-		return nil, types.NewStorageQuotaExceededError()
+		return nil, nil, types.NewStorageQuotaExceededError()
 	}
 
 	// Convert metadata to JSON format if provided
@@ -135,7 +157,7 @@ func (s *knowledgeService) CreateKnowledgeFromFile(ctx context.Context,
 		metadataBytes, err := json.Marshal(metadata)
 		if err != nil {
 			logger.Errorf(ctx, "Failed to marshal metadata: %v", err)
-			return nil, err
+			return nil, nil, err
 		}
 		metadataJSON = types.JSON(metadataBytes)
 	}
@@ -144,12 +166,12 @@ func (s *knowledgeService) CreateKnowledgeFromFile(ctx context.Context,
 	safeFilename, isValid := secutils.ValidateInput(fileName)
 	if !isValid {
 		logger.Errorf(ctx, "Invalid filename: %s", fileName)
-		return nil, werrors.NewValidationError("文件名包含非法字符")
+		return nil, nil, werrors.NewValidationError("文件名包含非法字符")
 	}
 
 	eff, err := resolveFileImportProcessConfig(ctx, kb, getFileType(safeFilename), processOverrides, enableMultimodel)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	// Prepare knowledge record
@@ -177,7 +199,7 @@ func (s *knowledgeService) CreateKnowledgeFromFile(ctx context.Context,
 	if processOverrides != nil {
 		if err := knowledge.SetProcessOverrides(processOverrides); err != nil {
 			logger.Errorf(ctx, "Failed to set process overrides: %v", err)
-			return nil, err
+			return nil, nil, err
 		}
 	}
 
@@ -187,7 +209,7 @@ func (s *knowledgeService) CreateKnowledgeFromFile(ctx context.Context,
 	filePath, err := fileSvc.SaveFile(ctx, file, knowledge.TenantID, knowledge.ID)
 	if err != nil {
 		logger.Errorf(ctx, "Failed to save file, knowledge ID: %s, error: %v", knowledge.ID, err)
-		return nil, err
+		return nil, nil, err
 	}
 	knowledge.FilePath = filePath
 
@@ -198,12 +220,12 @@ func (s *knowledgeService) CreateKnowledgeFromFile(ctx context.Context,
 		if deleteErr := fileSvc.DeleteFile(ctx, filePath); deleteErr != nil {
 			logger.Errorf(ctx, "Failed to delete saved file after knowledge creation failed, path: %s, error: %v", filePath, deleteErr)
 		}
-		return nil, err
+		return nil, nil, err
 	}
 	// Set tag relations
 	if err := s.setAndAttachKnowledgeTags(ctx, tenantID, kbID, knowledge, tagIDs); err != nil {
 		logger.Errorf(ctx, "Failed to set knowledge tags, knowledge ID: %s, error: %v", knowledge.ID, err)
-		return nil, err
+		return nil, nil, err
 	}
 
 	// Enqueue document processing task to Asynq
@@ -241,7 +263,7 @@ func (s *knowledgeService) CreateKnowledgeFromFile(ctx context.Context,
 				"processing_status": "failed", "failure_stage": "enqueue",
 			})
 		// 即使入队失败，也返回knowledge，因为文件已保存
-		return knowledge, nil
+		return knowledge, replacedIDs, nil
 	}
 
 	task := asynq.NewTask(
@@ -259,7 +281,7 @@ func (s *knowledgeService) CreateKnowledgeFromFile(ctx context.Context,
 				"processing_status": "failed", "failure_stage": "enqueue",
 			})
 		// 即使入队失败，也返回knowledge，因为文件已保存
-		return knowledge, nil
+		return knowledge, replacedIDs, nil
 	}
 	recordKBActivity(ctx, s.audit, knowledge.TenantID, kbID, types.AuditActionKnowledgeCreated,
 		"knowledge", knowledge.ID, types.AuditOutcomeAccepted, map[string]any{
@@ -277,7 +299,7 @@ func (s *knowledgeService) CreateKnowledgeFromFile(ctx context.Context,
 	enqueueDataTableSummaryIfNeeded(ctx, s.task, tenantID, knowledge.ID, safeFilename, getFileType(safeFilename), kb.SummaryModelID, kb.EmbeddingModelID)
 
 	logger.Infof(ctx, "Knowledge from file created successfully, ID: %s", knowledge.ID)
-	return knowledge, nil
+	return knowledge, replacedIDs, nil
 }
 
 // CreateKnowledgeFromURL creates a knowledge entry from a URL source

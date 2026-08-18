@@ -48,6 +48,9 @@ var (
 	// 同路径下不允许出现同名文件夹 / 同名文件
 	ErrFolderNameConflict = errors.New("folder name already exists in the same parent folder")
 	ErrFileNameConflict   = errors.New("file name already exists in the same folder")
+	// ErrReplaceDeleteFailed is returned when on_conflict=replace failed to
+	// delete one of the existing same-name knowledge entries.
+	ErrReplaceDeleteFailed = errors.New("failed to delete existing knowledge during replace")
 )
 
 // knowledgeService implements the knowledge service interface

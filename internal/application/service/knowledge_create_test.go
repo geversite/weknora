@@ -32,6 +32,14 @@ func (r *createKnowledgeFileRepoStub) CheckKnowledgeExists(
 	return false, nil, nil
 }
 
+func (r *createKnowledgeFileRepoStub) ListKnowledgeByFileNameInFolder(
+	ctx context.Context,
+	tenantID uint64,
+	kbID, folderID, fileName string,
+) ([]*types.Knowledge, error) {
+	return nil, nil
+}
+
 func (r *createKnowledgeFileRepoStub) CreateKnowledge(ctx context.Context, knowledge *types.Knowledge) error {
 	r.createCalls++
 	copied := *knowledge
@@ -138,7 +146,7 @@ func TestCreateKnowledgeFromFileDoesNotPersistWhenStorageSaveFails(t *testing.T)
 		fileSvc:   fileSvc,
 	}
 
-	knowledge, err := svc.CreateKnowledgeFromFile(
+	knowledge, _, err := svc.CreateKnowledgeFromFile(
 		newCreateKnowledgeFileContext(),
 		"kb-1",
 		newMultipartFileHeader(t, "doc.txt", "hello"),
@@ -148,6 +156,7 @@ func TestCreateKnowledgeFromFileDoesNotPersistWhenStorageSaveFails(t *testing.T)
 		nil,
 		"",
 		nil,
+		"",
 	)
 
 	require.Error(t, err)
@@ -169,7 +178,7 @@ func TestCreateKnowledgeFromFilePersistsStoredFilePathOnCreate(t *testing.T) {
 		task:      task,
 	}
 
-	knowledge, err := svc.CreateKnowledgeFromFile(
+	knowledge, _, err := svc.CreateKnowledgeFromFile(
 		newCreateKnowledgeFileContext(),
 		"kb-1",
 		newMultipartFileHeader(t, "doc.txt", "hello"),
@@ -179,6 +188,7 @@ func TestCreateKnowledgeFromFilePersistsStoredFilePathOnCreate(t *testing.T) {
 		nil,
 		"",
 		nil,
+		"",
 	)
 
 	require.NoError(t, err)
@@ -216,7 +226,7 @@ func TestCreateKnowledgeFromImageFallsBackWhenLegacyStorageConfigIsIncomplete(t 
 		},
 	})
 
-	knowledge, err := svc.CreateKnowledgeFromFile(
+	knowledge, _, err := svc.CreateKnowledgeFromFile(
 		ctx,
 		"kb-1",
 		newMultipartFileHeader(t, "image.png", "image bytes"),
@@ -226,6 +236,7 @@ func TestCreateKnowledgeFromImageFallsBackWhenLegacyStorageConfigIsIncomplete(t 
 		nil,
 		"",
 		nil,
+		"",
 	)
 
 	require.NoError(t, err)
@@ -246,7 +257,7 @@ func TestCreateKnowledgeFromFileDeletesStoredFileWhenCreateFails(t *testing.T) {
 		fileSvc:   fileSvc,
 	}
 
-	knowledge, err := svc.CreateKnowledgeFromFile(
+	knowledge, _, err := svc.CreateKnowledgeFromFile(
 		newCreateKnowledgeFileContext(),
 		"kb-1",
 		newMultipartFileHeader(t, "doc.txt", "hello"),
@@ -256,6 +267,7 @@ func TestCreateKnowledgeFromFileDeletesStoredFileWhenCreateFails(t *testing.T) {
 		nil,
 		"",
 		nil,
+		"",
 	)
 
 	require.EqualError(t, err, "database unavailable")
@@ -284,7 +296,7 @@ func TestCreateKnowledgeFromFile_PersistsProcessOverrides(t *testing.T) {
 		ChunkingConfig: &types.ChunkingConfig{ChunkSize: chunkSize},
 	}
 
-	knowledge, err := svc.CreateKnowledgeFromFile(
+	knowledge, _, err := svc.CreateKnowledgeFromFile(
 		newCreateKnowledgeFileContext(),
 		"kb-1",
 		newMultipartFileHeader(t, "doc.txt", "hello"),
@@ -294,6 +306,7 @@ func TestCreateKnowledgeFromFile_PersistsProcessOverrides(t *testing.T) {
 		nil,
 		"",
 		overrides,
+		"",
 	)
 
 	require.NoError(t, err)

@@ -14,10 +14,14 @@ import (
 type KnowledgeService interface {
 	// CreateKnowledgeFromFile creates knowledge from a file.
 	// channel identifies the ingestion channel (e.g. "web", "api", "wechat"); empty defaults to "web".
+	// onConflict selects the same-name conflict policy: "" or "reject" keeps the
+	// existing 409 behavior; "replace" deletes the existing same-name knowledge
+	// (full cleanup chain) before uploading. Callers not using replace pass "".
 	// folderIDs is an optional trailing variadic: when a folder id is supplied,
 	// the file-hash dedup is scoped to that folder (M4) and the created
 	// knowledge is assigned to it. Existing callers that don't pass it are
 	// unaffected (dedup stays KB-wide).
+	// The second return value is the list of knowledge IDs deleted by a replace.
 	CreateKnowledgeFromFile(
 		ctx context.Context,
 		kbID string,
@@ -28,8 +32,9 @@ type KnowledgeService interface {
 		tagIDs []string,
 		channel string,
 		processOverrides *types.KnowledgeProcessOverrides,
+		onConflict string,
 		folderIDs ...string,
-	) (*types.Knowledge, error)
+	) (*types.Knowledge, []string, error)
 	// CreateKnowledgeFromURL creates knowledge from a URL.
 	// When fileName or fileType is provided (or the URL path has a known file extension),
 	// the URL is treated as a direct file download instead of a web page crawl.
@@ -260,6 +265,10 @@ type KnowledgeRepository interface {
 	// with the given file_name exists in folderID (empty = root) of the KB.
 	// excludeID allows the rename path to skip the knowledge itself.
 	ExistsFileByNameInFolder(ctx context.Context, tenantID uint64, kbID, folderID, fileName, excludeID string) (bool, error)
+	// ListKnowledgeByFileNameInFolder returns the live knowledge rows sharing
+	// fileName within the same folder of the KB, mirroring
+	// ExistsFileByNameInFolder's predicate exactly (used by on_conflict=replace).
+	ListKnowledgeByFileNameInFolder(ctx context.Context, tenantID uint64, kbID, folderID, fileName string) ([]*types.Knowledge, error)
 	// AminusB returns the IDs of knowledge in A that have no counterpart in B,
 	// comparing file_hash as a multiset (so duplicate-count differences and
 	// NULL/empty hashes are handled correctly, letting a clone converge).
