@@ -1570,8 +1570,12 @@ const pushAllowedValue = ref(true);
 const showPushAllowedSwitch = computed(() =>
   props.canEditKB && props.details?.id && (props.details.type === 'file' || props.details.type === 'manual')
 );
-watch(() => [props.details?.id, props.details?.push_allowed], () => {
-  pushAllowedValue.value = props.details?.push_allowed !== false;
+// 开关状态严格跟随 details.push_allowed 的真实值。
+// 仅监听 push_allowed 单个字段，避免与 id 变更的 watch 交叠造成竞态；
+// 当值尚未加载（null/undefined）时保持上一状态，待真实值到达后再同步。
+watch(() => props.details?.push_allowed, (val) => {
+  if (val === null || val === undefined) return;
+  pushAllowedValue.value = val !== false;
 }, { immediate: true });
 const onTogglePushAllowed = async (val: boolean) => {
   if (!props.details?.id || pushAllowedLoading.value) return;
