@@ -1114,7 +1114,9 @@ export default {
       statusResolved: '已处理',
       statusFailed: '判定失败',
       markResolved: '标记已处理',
-      markUnresolved: '取消标记'
+      markUnresolved: '取消标记',
+      exportCsv: '导出 CSV',
+      exportFailed: '导出失败'
     },
     navGroups: {
       basic: '基础',

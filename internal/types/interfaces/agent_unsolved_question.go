@@ -20,6 +20,9 @@ type AgentUnsolvedQuestionRepository interface {
 	// for a given agent. When onlyUnsolved is true, rows with resolved=true or
 	// status!=unsolved are excluded.
 	ListByAgent(ctx context.Context, tenantID uint64, agentID string, onlyUnsolved bool, limit, offset int) ([]types.AgentUnsolvedQuestion, int64, error)
+	// ListAllByAgent returns every row for an agent (no pagination), optionally
+	// filtered to unresolved-only. Used by the CSV export endpoint.
+	ListAllByAgent(ctx context.Context, tenantID uint64, agentID string, onlyUnsolved bool) ([]types.AgentUnsolvedQuestion, error)
 	// CountByAgent returns the total and unsolved counts for an agent.
 	CountByAgent(ctx context.Context, tenantID uint64, agentID string) (total int64, unsolved int64, err error)
 	// MarkResolved flips the resolved flag of a single row owned by (tenant, agent).
@@ -39,6 +42,8 @@ type AgentUnsolvedQuestionService interface {
 	EnsureJudgement(ctx context.Context, sessionID, assistantMessageID string, regenerate bool) (*types.AgentUnsolvedQuestion, error)
 	// ListByAgent returns the paginated unsolved-question list for an agent.
 	ListByAgent(ctx context.Context, agentID string, onlyUnsolved bool, limit, offset int) (*types.AgentUnsolvedQuestionListResult, error)
+	// ExportByAgent returns all rows for an agent for CSV export.
+	ExportByAgent(ctx context.Context, agentID string, onlyUnsolved bool) ([]types.AgentUnsolvedQuestion, error)
 	// MarkResolved toggles the manually-resolved flag of a single record.
 	MarkResolved(ctx context.Context, agentID, id string, resolved bool) error
 }

@@ -163,10 +163,19 @@ func (s *agentUnsolvedQuestionService) ListByAgent(
 		return nil, err
 	}
 	return &types.AgentUnsolvedQuestionListResult{
-		Items:          records,
-		Total:          total,
-		UnsolvedCount:  unsolved,
+		Items:         records,
+		Total:         total,
+		UnsolvedCount: unsolved,
 	}, nil
+}
+
+func (s *agentUnsolvedQuestionService) ExportByAgent(
+	ctx context.Context,
+	agentID string,
+	onlyUnsolved bool,
+) ([]types.AgentUnsolvedQuestion, error) {
+	tenantID := types.MustTenantIDFromContext(ctx)
+	return s.repo.ListAllByAgent(ctx, tenantID, agentID, onlyUnsolved)
 }
 
 func (s *agentUnsolvedQuestionService) MarkResolved(

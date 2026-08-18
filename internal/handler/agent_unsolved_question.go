@@ -1,10 +1,14 @@
 package handler
 
 import (
+	"bytes"
+	"encoding/csv"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	apperrors "github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/logger"
@@ -95,6 +99,94 @@ func (h *AgentUnsolvedQuestionHandler) ListByAgent(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": result})
+}
+
+// ExportByAgent godoc
+// @Summary      导出智能体的未解决问题为 CSV
+// @Description  将该智能体名下的未解决问题（可筛选仅未解决）全部导出为 CSV 文件
+// @Tags         智能体
+// @Produce      text/csv
+// @Param        id             path   string  true   "智能体 ID"
+// @Param        only_unsolved  query  bool    false  "仅导出未解决（resolved=false 且 status=unsolved）的记录"
+// @Success      200  {file}  file  "CSV 文件"
+// @Security     Bearer
+// @Security     ApiKeyAuth
+// @Router       /agents/{id}/unsolved-questions/export [get]
+func (h *AgentUnsolvedQuestionHandler) ExportByAgent(c *gin.Context) {
+	agentID := secutils.SanitizeForLog(c.Param("id"))
+	if agentID == "" {
+		c.Error(apperrors.NewBadRequestError("agent id is required"))
+		return
+	}
+	onlyUnsolved, _ := strconv.ParseBool(c.DefaultQuery("only_unsolved", "true"))
+	records, err := h.service.ExportByAgent(c.Request.Context(), agentID, onlyUnsolved)
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+
+	var buf bytes.Buffer
+	// UTF-8 BOM so Excel can render Chinese/UTF-8 content correctly.
+	buf.WriteString("\xEF\xBB\xBF")
+	writer := csv.NewWriter(&buf)
+	writer.UseCRLF = true
+
+	header := []string{
+		"ID", "用户问题", "回答摘要", "未解决原因", "状态", "是否已处理",
+		"判定模型", "Prompt Tokens", "Completion Tokens", "判定耗时(ms)",
+		"错误码", "会话ID", "助手消息ID", "判定时间", "创建时间",
+	}
+	if err := writer.Write(header); err != nil {
+		h.writeError(c, err)
+		return
+	}
+	for _, record := range records {
+		row := []string{
+			record.ID,
+			record.UserQuestion,
+			record.AnswerSummary,
+			record.Reason,
+			record.Status,
+			strconv.FormatBool(record.Resolved),
+			record.ModelID,
+			strconv.Itoa(record.PromptTokens),
+			strconv.Itoa(record.CompletionTokens),
+			strconv.FormatInt(record.LatencyMs, 10),
+			record.ErrorCode,
+			record.SessionID,
+			record.AssistantMessageID,
+			formatTimePtr(record.GeneratedAt),
+			formatTime(record.CreatedAt),
+		}
+		if err := writer.Write(row); err != nil {
+			h.writeError(c, err)
+			return
+		}
+	}
+	writer.Flush()
+	if err := writer.Error(); err != nil {
+		h.writeError(c, err)
+		return
+	}
+
+	filename := fmt.Sprintf("agent_unsolved_questions_%s_%s.csv", agentID, time.Now().Format("20060102_150405"))
+	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
+	c.Header("Content-Type", "text/csv; charset=utf-8")
+	c.Data(http.StatusOK, "text/csv; charset=utf-8", buf.Bytes())
+}
+
+func formatTime(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.Format("2006-01-02 15:04:05")
+}
+
+func formatTimePtr(t *time.Time) string {
+	if t == nil || t.IsZero() {
+		return ""
+	}
+	return t.Format("2006-01-02 15:04:05")
 }
 
 type resolveUnsolvedRequest struct {

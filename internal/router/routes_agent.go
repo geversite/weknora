@@ -47,6 +47,8 @@ func RegisterCustomAgentRoutes(r *gin.RouterGroup, agentHandler *handler.CustomA
 		// 智能体"未解决问题"列表 — Viewer+（运营可读）
 		if unsolvedHandler != nil {
 			agentsRead.GET("/:id/unsolved-questions", g.Viewer(), unsolvedHandler.ListByAgent)
+			// 导出未解决问题为 CSV — Viewer+（运营可读可导出）
+			agentsRead.GET("/:id/unsolved-questions/export", g.Viewer(), unsolvedHandler.ExportByAgent)
 			// 标记已处理/未处理 — OwnedAgentOrAdmin
 			agentsWrite.PUT("/:id/unsolved-questions/:question_id/resolve", g.OwnedAgentOrAdmin(), unsolvedHandler.MarkResolved)
 		}

@@ -86,6 +86,25 @@ func (r *agentUnsolvedQuestionRepository) ListByAgent(
 	return records, total, nil
 }
 
+func (r *agentUnsolvedQuestionRepository) ListAllByAgent(
+	ctx context.Context,
+	tenantID uint64,
+	agentID string,
+	onlyUnsolved bool,
+) ([]types.AgentUnsolvedQuestion, error) {
+	query := r.db.WithContext(ctx).Model(&types.AgentUnsolvedQuestion{}).
+		Where("tenant_id = ? AND agent_id = ?", tenantID, agentID)
+	if onlyUnsolved {
+		query = query.Where("resolved = ? AND status = ?", false, types.UnsolvedStatusUnsolved)
+	}
+	var records []types.AgentUnsolvedQuestion
+	err := query.Order("created_at DESC").Find(&records).Error
+	if err != nil {
+		return nil, err
+	}
+	return records, nil
+}
+
 func (r *agentUnsolvedQuestionRepository) CountByAgent(
 	ctx context.Context,
 	tenantID uint64,

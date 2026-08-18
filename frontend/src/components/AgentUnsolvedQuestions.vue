@@ -23,6 +23,10 @@
         <t-button variant="outline" size="small" @click="fetchList" :loading="loading">
           <template #icon><t-icon name="refresh" /></template>
         </t-button>
+        <t-button variant="outline" size="small" @click="exportCsv" :loading="exporting">
+          <template #icon><t-icon name="download" /></template>
+          {{ $t('agentEditor.unsolvedQuestions.exportCsv') }}
+        </t-button>
       </div>
     </div>
 
@@ -77,6 +81,7 @@
 import { ref, watch, onMounted } from 'vue';
 import { MessagePlugin } from 'tdesign-vue-next';
 import {
+  exportAgentUnsolvedQuestions,
   listAgentUnsolvedQuestions,
   markUnsolvedQuestionResolved,
   type AgentUnsolvedQuestion,
@@ -89,6 +94,7 @@ const props = defineProps<{
 }>();
 
 const loading = ref(false);
+const exporting = ref(false);
 const items = ref<AgentUnsolvedQuestion[]>([]);
 const result = ref<AgentUnsolvedQuestionListResult | null>(null);
 const filter = ref<'unsolved' | 'all'>('unsolved');
@@ -111,8 +117,7 @@ const fetchList = async () => {
   }
 };
 
-const toggleResolve = async (item: AgentUnsolvedQuestion) => {
-  const next = !item.resolved;
+const toggleResolve = async (item: AgentUnsolvedQuestion) => {  const next = !item.resolved;
   const prev = item.resolved;
   item.resolved = next;
   try {
@@ -133,6 +138,28 @@ const formatTime = (iso?: string) => {
   if (isNaN(d.getTime())) return iso;
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+};
+
+const exportCsv = async () => {
+  exporting.value = true;
+  try {
+    const blob = await exportAgentUnsolvedQuestions(props.agentId, {
+      only_unsolved: filter.value === 'unsolved',
+    });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `unsolved_questions_${props.agentId}_${Date.now()}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  } catch (err) {
+    console.warn('[UnsolvedQuestions] Export failed:', err);
+    MessagePlugin.error('导出失败');
+  } finally {
+    exporting.value = false;
+  }
 };
 
 watch(filter, fetchList);

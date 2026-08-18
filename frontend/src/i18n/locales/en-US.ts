@@ -4827,7 +4827,9 @@ export default {
       statusResolved: 'Handled',
       statusFailed: 'Judgement failed',
       markResolved: 'Mark handled',
-      markUnresolved: 'Unmark'
+      markUnresolved: 'Unmark',
+      exportCsv: 'Export CSV',
+      exportFailed: 'Export failed'
     },
     placeholders: {
       available: 'Available variables: ',

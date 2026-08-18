@@ -1,4 +1,4 @@
-import { get, post, put } from '@/utils/request'
+import { get, getDown, post, put } from '@/utils/request'
 
 // 智能体未解决问题记录
 export interface AgentUnsolvedQuestion {
@@ -59,4 +59,14 @@ export function markUnsolvedQuestionResolved(agentId: string, questionId: string
     `/api/v1/agents/${agentId}/unsolved-questions/${questionId}/resolve`,
     { resolved },
   )
+}
+
+/** 导出智能体的未解决问题为 CSV 文件（返回 Blob） */
+export function exportAgentUnsolvedQuestions(
+  agentId: string,
+  params?: { only_unsolved?: boolean },
+) {
+  const query = new URLSearchParams()
+  query.set('only_unsolved', String(params?.only_unsolved ?? true))
+  return getDown(`/api/v1/agents/${agentId}/unsolved-questions/export?${query.toString()}`)
 }
