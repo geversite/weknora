@@ -1377,6 +1377,25 @@ func (h *Handler) completeAssistantMessage(ctx context.Context, assistantMessage
 	tenantID := types.MustTenantIDFromContext(ctx)
 	h.messageService.RecordReferenceEvents(ctx, tenantID, assistantMessage)
 
+	// M5: asynchronously judge whether the assistant answer actually resolves
+	// the user's question and, when it does not, record it as an unsolved
+	// question on the agent. Runs on every completion path (Web UI, OpenAI API,
+	// Dify, embed) so API consumers get the same unsolved-question marking
+	// without a frontend round-trip. Skipped for non-agent replies
+	// (assistantMessage.AgentID == "") and for stop events (empty userQuery).
+	// The service itself deduplicates via GetByAssistantMessageID.
+	// NOTE: this must stay ABOVE the M5 feedback block, which may `return`
+	// early when the request carries explicit feedback-enabled KBs.
+	if h.unsolvedQuestionService != nil && userQuery != "" && assistantMessage.AgentID != "" {
+		go func() {
+			if _, err := h.unsolvedQuestionService.EnsureJudgement(
+				bgCtx, assistantMessage.SessionID, assistantMessage.ID, false,
+			); err != nil {
+				logger.Warnf(bgCtx, "[UnsolvedJudge] judgement failed for message %s: %v", assistantMessage.ID, err)
+			}
+		}()
+	}
+
 	// M5: asynchronously scan the user message for new factual info and append
 	// it to the relevant wiki page(s). The pipeline itself checks each KB's
 	// UserFeedbackEnabled flag and silently returns when disabled.

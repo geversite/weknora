@@ -302,6 +302,19 @@ func (h *Handler) OpenAIChatCompletions(c *gin.Context) {
 		CreatedAt:   time.Now(),
 		IsCompleted: false,
 	}
+	// Agent-bound fields so the post-answer answerability judgement
+	// (AgentUnsolvedQuestionService.EnsureJudgement) can run for API consumers
+	// exactly like Web UI replies. Mirrors buildMessageExecutionContext:
+	// effectiveTenantID wins, falling back to the agent's own tenant.
+	if useAgentMode && customAgent != nil {
+		agentTenantID := effectiveTenantID
+		if agentTenantID == 0 {
+			agentTenantID = customAgent.TenantID
+		}
+		assistantMsg.AgentID = customAgent.ID
+		assistantMsg.AgentTenantID = agentTenantID
+		assistantMsg.ModelID = customAgent.Config.ModelID
+	}
 	assistantMessagePtr, err := h.createAssistantMessage(ctx, assistantMsg)
 	if err != nil {
 		logger.Errorf(ctx, "[openai] failed to create assistant message: %v", err)

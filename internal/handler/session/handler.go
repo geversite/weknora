@@ -17,22 +17,23 @@ import (
 
 // Handler handles all HTTP requests related to conversation sessions
 type Handler struct {
-	messageService       interfaces.MessageService // Service for managing messages
-	suggestionService    interfaces.MessageSuggestionService
-	sessionService       interfaces.SessionService       // Service for managing sessions
-	streamManager        interfaces.StreamManager        // Manager for handling streaming responses
-	config               *config.Config                  // Application configuration
-	knowledgebaseService interfaces.KnowledgeBaseService // Service for managing knowledge bases
-	customAgentService   interfaces.CustomAgentService   // Service for managing custom agents
-	tenantService        interfaces.TenantService        // Service for loading tenant (shared agent context)
-	agentShareService    interfaces.AgentShareService    // Service for resolving shared agents (KB scope in retrieval)
-	kbShareService       interfaces.KBShareService       // Service for resolving shared KB permissions
-	fileService          interfaces.FileService          // Service for file storage (image uploads)
-	storageResolver      interfaces.StorageBackendResolver
-	modelService         interfaces.ModelService // Service for model management (VLM access)
-	attachmentProcessor  *AttachmentProcessor    // Processor for file attachments
-	temporaryDocuments   interfaces.TemporaryDocumentService
-	feedbackService      service.FeedbackPipelineService // M5: async user-feedback-to-wiki pipeline (nil = disabled)
+	messageService          interfaces.MessageService // Service for managing messages
+	suggestionService       interfaces.MessageSuggestionService
+	sessionService          interfaces.SessionService       // Service for managing sessions
+	streamManager           interfaces.StreamManager        // Manager for handling streaming responses
+	config                  *config.Config                  // Application configuration
+	knowledgebaseService    interfaces.KnowledgeBaseService // Service for managing knowledge bases
+	customAgentService      interfaces.CustomAgentService   // Service for managing custom agents
+	tenantService           interfaces.TenantService        // Service for loading tenant (shared agent context)
+	agentShareService       interfaces.AgentShareService    // Service for resolving shared agents (KB scope in retrieval)
+	kbShareService          interfaces.KBShareService       // Service for resolving shared KB permissions
+	fileService             interfaces.FileService          // Service for file storage (image uploads)
+	storageResolver         interfaces.StorageBackendResolver
+	modelService            interfaces.ModelService // Service for model management (VLM access)
+	attachmentProcessor     *AttachmentProcessor    // Processor for file attachments
+	temporaryDocuments      interfaces.TemporaryDocumentService
+	feedbackService         service.FeedbackPipelineService         // M5: async user-feedback-to-wiki pipeline (nil = disabled)
+	unsolvedQuestionService interfaces.AgentUnsolvedQuestionService // M5: async post-answer answerability judgement (nil = disabled)
 }
 
 // NewHandler creates a new instance of Handler with all necessary dependencies
@@ -54,23 +55,25 @@ func NewHandler(
 	imageResolver *docparser.ImageResolver,
 	temporaryDocuments interfaces.TemporaryDocumentService,
 	feedbackService service.FeedbackPipelineService,
+	unsolvedQuestionService interfaces.AgentUnsolvedQuestionService,
 ) *Handler {
 	return &Handler{
-		sessionService:       sessionService,
-		messageService:       messageService,
-		suggestionService:    suggestionService,
-		streamManager:        streamManager,
-		config:               config,
-		knowledgebaseService: knowledgebaseService,
-		customAgentService:   customAgentService,
-		tenantService:        tenantService,
-		agentShareService:    agentShareService,
-		kbShareService:       kbShareService,
-		fileService:          fileService,
-		storageResolver:      storageResolver,
-		modelService:         modelService,
-		temporaryDocuments:   temporaryDocuments,
-		feedbackService:      feedbackService,
+		sessionService:          sessionService,
+		messageService:          messageService,
+		suggestionService:       suggestionService,
+		streamManager:           streamManager,
+		config:                  config,
+		knowledgebaseService:    knowledgebaseService,
+		customAgentService:      customAgentService,
+		tenantService:           tenantService,
+		agentShareService:       agentShareService,
+		kbShareService:          kbShareService,
+		fileService:             fileService,
+		storageResolver:         storageResolver,
+		modelService:            modelService,
+		temporaryDocuments:      temporaryDocuments,
+		feedbackService:         feedbackService,
+		unsolvedQuestionService: unsolvedQuestionService,
 		attachmentProcessor: NewAttachmentProcessor(
 			fileService,
 			documentReader,
