@@ -226,24 +226,23 @@ func streamStoredFile(c *gin.Context, reader io.ReadCloser, contentType string, 
 	defer reader.Close()
 	c.Header("Content-Type", contentType)
 	c.Header("X-Content-Type-Options", "nosniff")
-	if !inline {
-		if len(filename) > 0 && filename[0] != "" {
-			// RFC 6266/5987: ASCII fallback (filename="...") plus the real
-			// UTF-8 name (filename*=UTF-8''...), so Chinese filenames download
-			// with the correct name on all browsers instead of a token id.
-			ascii := sanitizeDownloadFilename(filename[0])
-			utf8Name := url.PathEscape(filename[0])
-			disposition := "attachment"
-			if ascii != "" {
-				disposition += `; filename="` + ascii + `"`
-			}
-			if utf8Name != "" {
-				disposition += "; filename*=UTF-8''" + utf8Name
-			}
-			c.Header("Content-Disposition", disposition)
-		} else {
-			c.Header("Content-Disposition", "attachment")
+	// Always force attachment download regardless of whether the type could
+	// otherwise be displayed inline. The filename parameter is preserved so
+	// browsers download under the real name (RFC 6266/5987) instead of a
+	// token/resource id; Chinese filenames travel via filename*=UTF-8''.
+	if len(filename) > 0 && filename[0] != "" {
+		ascii := sanitizeDownloadFilename(filename[0])
+		utf8Name := url.PathEscape(filename[0])
+		disposition := "attachment"
+		if ascii != "" {
+			disposition += `; filename="` + ascii + `"`
 		}
+		if utf8Name != "" {
+			disposition += "; filename*=UTF-8''" + utf8Name
+		}
+		c.Header("Content-Disposition", disposition)
+	} else {
+		c.Header("Content-Disposition", "attachment")
 	}
 	c.Header("Cache-Control", cacheControl)
 	c.Status(http.StatusOK)
