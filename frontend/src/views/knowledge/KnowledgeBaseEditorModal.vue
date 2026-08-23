@@ -825,6 +825,7 @@ const initFormData = (type: 'document' | 'faq' = 'document') => {
       conflictEnabled: false,
       folderGovernanceEnabled: false,
       userFeedbackEnabled: false,
+      claimExtractEnabled: false,
     },
     // Vector-store binding. Empty string means "use the env-configured
     // store"; create mode defaults to that, edit mode loads the
@@ -953,6 +954,7 @@ const loadKBData = async (kbIdOverride?: string) => {
         conflictEnabled: kb.indexing_strategy?.conflict_detect_enabled ?? false,
         folderGovernanceEnabled: kb.indexing_strategy?.folder_governance_enabled ?? false,
         userFeedbackEnabled: kb.indexing_strategy?.user_feedback_enabled ?? false,
+        claimExtractEnabled: kb.indexing_strategy?.claim_extract_enabled ?? false,
       },
       // Vector-store binding. vectorStoreId is editor-only state; it
       // is only included in the create request, never the update
@@ -1319,6 +1321,7 @@ const buildSubmitData = () => {
       conflict_detect_enabled: true,
       folder_governance_enabled: true,
       user_feedback_enabled: true,
+      claim_extract_enabled: formData.value.indexingStrategy?.claimExtractEnabled ?? false,
     }
   }
 
@@ -1425,6 +1428,7 @@ const doSubmit = async () => {
           conflict_detect_enabled: formData.value.indexingStrategy?.conflictEnabled ?? false,
           folder_governance_enabled: formData.value.indexingStrategy?.folderGovernanceEnabled ?? false,
           user_feedback_enabled: formData.value.indexingStrategy?.userFeedbackEnabled ?? false,
+          claim_extract_enabled: formData.value.indexingStrategy?.claimExtractEnabled ?? false,
         }
       }
       await updateKnowledgeBase(kbId, {

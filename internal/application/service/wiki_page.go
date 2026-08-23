@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
@@ -16,6 +17,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"github.com/google/uuid"
+	"github.com/hibiken/asynq"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -47,6 +49,8 @@ type wikiPageService struct {
 	kbService       interfaces.KnowledgeBaseService
 	taskPendingRepo interfaces.TaskPendingOpsRepository
 	redisClient     *redis.Client
+	taskEnqueuer    interfaces.TaskEnqueuer  // C1: claim re-extraction on user edits (nil-safe)
+	claimRepo       interfaces.ClaimRepository // C1: claim cleanup on page deletion (nil-safe)
 }
 
 // NewWikiPageService creates a new wiki page service
@@ -56,6 +60,8 @@ func NewWikiPageService(
 	kbService interfaces.KnowledgeBaseService,
 	taskPendingRepo interfaces.TaskPendingOpsRepository,
 	redisClient *redis.Client,
+	taskEnqueuer interfaces.TaskEnqueuer,
+	claimRepo interfaces.ClaimRepository,
 ) interfaces.WikiPageService {
 	return &wikiPageService{
 		repo:            repo,
@@ -63,6 +69,8 @@ func NewWikiPageService(
 		kbService:       kbService,
 		taskPendingRepo: taskPendingRepo,
 		redisClient:     redisClient,
+		taskEnqueuer:    taskEnqueuer,
+		claimRepo:       claimRepo,
 	}
 }
 
@@ -200,7 +208,53 @@ func (s *wikiPageService) UpdatePage(ctx context.Context, page *types.WikiPage) 
 	s.removeInLinks(ctx, existing.KnowledgeBaseID, existing.Slug, oldOutLinks)
 	s.updateInLinks(ctx, existing.KnowledgeBaseID, existing.Slug, existing.OutLinks)
 
+	// [C1] User edits re-enter claim extraction (debounced). ONLY the user
+	// edit source triggers: pipeline / agent / revert write-backs must not
+	// (loop-breaker gate 1, Conflict V2 design §6.2). Bookkeeping writes
+	// (contentChanged=false) never trigger either.
+	if contentChanged && types.WikiEditSourceFromContext(ctx) == types.WikiEditSourceUser {
+		s.maybeEnqueueClaimExtract(ctx, existing)
+	}
+
 	return existing, nil
+}
+
+// maybeEnqueueClaimExtract queues a debounced claim re-extraction for a
+// user-edited wiki page when the KB has claim extraction enabled (C1).
+// Best-effort and nil-safe: failures are logged only.
+func (s *wikiPageService) maybeEnqueueClaimExtract(ctx context.Context, page *types.WikiPage) {
+	if s.taskEnqueuer == nil || s.kbService == nil || page == nil {
+		return
+	}
+	kb, err := s.kbService.GetKnowledgeBaseByID(ctx, page.KnowledgeBaseID)
+	if err != nil || kb == nil || !kb.IsClaimExtractEnabled() {
+		return
+	}
+	payload := types.ClaimExtractPayload{
+		TenantID:        page.TenantID,
+		KnowledgeBaseID: page.KnowledgeBaseID,
+		SourceType:      types.ClaimSourceWikiPage,
+		WikiPageID:      page.ID,
+		Reason:          "wiki_user_edit",
+	}
+	bytes, err := json.Marshal(payload)
+	if err != nil {
+		logger.Warnf(ctx, "wiki claim extract: marshal payload for page %s failed: %v", page.ID, err)
+		return
+	}
+	task := asynq.NewTask(types.TypeClaimExtract, bytes,
+		asynq.TaskID(fmt.Sprintf("claim:wiki:%s", page.ID)),
+		asynq.Queue(types.QueueConflict),
+		asynq.MaxRetry(2),
+		asynq.Timeout(10*time.Minute),
+		asynq.ProcessIn(2*time.Minute), // debounce window (design §6.2)
+	)
+	if _, err := s.taskEnqueuer.Enqueue(task); err != nil {
+		if errors.Is(err, asynq.ErrTaskIDConflict) || errors.Is(err, asynq.ErrDuplicateTask) {
+			return // debounce hit: extraction already pending for this page
+		}
+		logger.Warnf(ctx, "wiki claim extract: enqueue for page %s failed: %v", page.ID, err)
+	}
 }
 
 // UpdatePageMeta updates only metadata (status, source_refs) without version bump or link re-parse.
@@ -425,6 +479,14 @@ func (s *wikiPageService) DeletePage(ctx context.Context, kbID string, slug stri
 
 	// Delete synced chunk
 	s.deleteChunkForPage(ctx, page)
+
+	// [C1] Drop the page's claims: the page left every read path, so its
+	// claims must leave the conflict pairing index too. Best-effort.
+	if s.claimRepo != nil {
+		if err := s.claimRepo.DeleteBySource(ctx, types.ClaimSourceWikiPage, page.ID); err != nil {
+			logger.Warnf(ctx, "delete claims for wiki page %s failed: %v", page.ID, err)
+		}
+	}
 
 	return nil
 }

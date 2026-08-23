@@ -1,0 +1,10 @@
+{
+  "doc": "doc3_dr_cole_log.md",
+  "claims": [
+    {"id": "d3-01", "subject": "反应堆全负荷测试", "predicate": "目的", "value": "验证虚空共振理论", "value_kind": "text", "qualifiers": {"time": "上周"}, "quote": "旨在验证“虚空共振理论”"},
+    {"id": "d3-02", "subject": "反应堆堆芯", "predicate": "添加物", "value": "未经稀释的星晶", "value_kind": "text", "qualifiers": {"scope": "全负荷测试"}, "quote": "我们往堆芯里添加了未经稀释的**星晶 (StarQuartz)**"},
+    {"id": "d3-03", "subject": "因极度幻觉送医的工程师", "predicate": "人数", "value": "2 名", "value_kind": "number", "qualifiers": {"time": "当天"}, "quote": "今天又有两个工程师因为极度幻觉被送去医务室了"},
+    {"id": "d3-04", "subject": "艾琳·科尔博士", "predicate": "建议", "value": "立即暂停所有引擎相关实验", "value_kind": "text", "qualifiers": {}, "quote": "我建议立即暂停所有引擎相关的实验"},
+    {"id": "d3-05", "subject": "项目推进", "predicate": "死亡率容忍阈值", "value": "15%", "value_kind": "number", "qualifiers": {"scope": "测试人员"}, "quote": "只要测试人员的死亡率不超过 15%，项目推进的优先级依然最高"}
+  ]
+}

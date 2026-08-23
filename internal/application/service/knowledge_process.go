@@ -703,6 +703,15 @@ func (s *knowledgeService) processChunks(ctx context.Context,
 		}
 	}
 
+	// Enqueue post-upload claim extraction (C1) BEFORE conflict detection so
+	// the claim index is (best-effort) fresh when the detector's claim-key
+	// pairing channel runs. Same queue → FIFO gives a weak ordering
+	// guarantee; the detector tolerates missing claims via its fallback
+	// channel either way.
+	if kb.IsClaimExtractEnabled() {
+		s.enqueueClaimExtractTask(ctx, knowledge)
+	}
+
 	// Enqueue post-upload conflict detection (M3) when the KB has it enabled.
 	// This runs as its own task (not counted in the finalizing slots) so a
 	// detection failure never blocks the document from completing.
@@ -716,6 +725,41 @@ func (s *knowledgeService) processChunks(ctx context.Context,
 		logger.GetLogger(ctx).WithField("error", err).Errorf("processChunks update tenant storage used failed")
 	}
 	logger.GetLogger(ctx).Infof("processChunks successfully")
+}
+
+// enqueueClaimExtractTask queues a claim extraction task (C1) for a
+// freshly-uploaded knowledge. Best-effort: a failure is logged and does not
+// fail the upload. TaskID dedup collapses concurrent re-triggers.
+func (s *knowledgeService) enqueueClaimExtractTask(ctx context.Context, knowledge *types.Knowledge) {
+	if s.task == nil || knowledge == nil {
+		return
+	}
+	payload := types.ClaimExtractPayload{
+		TenantID:        knowledge.TenantID,
+		KnowledgeBaseID: knowledge.KnowledgeBaseID,
+		SourceType:      types.ClaimSourceChunk,
+		KnowledgeID:     knowledge.ID,
+		Reason:          "ingest",
+	}
+	bytes, err := json.Marshal(payload)
+	if err != nil {
+		logger.GetLogger(ctx).WithField("error", err).Errorf("enqueueClaimExtractTask marshal failed for %s", knowledge.ID)
+		return
+	}
+	task := asynq.NewTask(types.TypeClaimExtract, bytes,
+		asynq.TaskID(fmt.Sprintf("claim:knowledge:%s", knowledge.ID)),
+		asynq.Queue(types.QueueConflict),
+		asynq.MaxRetry(2),
+		asynq.Timeout(10*time.Minute),
+	)
+	if _, err := s.task.Enqueue(task); err != nil {
+		if errors.Is(err, asynq.ErrTaskIDConflict) || errors.Is(err, asynq.ErrDuplicateTask) {
+			return
+		}
+		logger.GetLogger(ctx).WithField("error", err).Errorf("enqueueClaimExtractTask enqueue failed for %s", knowledge.ID)
+		return
+	}
+	logger.GetLogger(ctx).Infof("Enqueued claim extract task for knowledge %s", knowledge.ID)
 }
 
 // enqueueConflictDetectTask queues a file-level conflict detection task for a

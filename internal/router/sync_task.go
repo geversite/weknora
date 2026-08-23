@@ -127,6 +127,7 @@ type SyncTaskParams struct {
 	ImageMultimodal      interfaces.TaskHandler `name:"imageMultimodal"`
 	KnowledgePostProcess interfaces.TaskHandler `name:"knowledgePostProcess"`
 	ConflictDetect       interfaces.ConflictDetectService
+	ClaimExtract         interfaces.ClaimExtractService
 	WikiIngest           interfaces.TaskHandler `name:"wikiIngest"`
 	TemporaryDocument    interfaces.TemporaryDocumentService
 }
@@ -152,6 +153,9 @@ func RegisterSyncHandlers(params SyncTaskParams) {
 	params.Executor.RegisterHandler(types.TypeKnowledgePostProcess, params.KnowledgePostProcess.Handle)
 	if params.ConflictDetect != nil {
 		params.Executor.RegisterHandler(types.TypeConflictDetect, params.ConflictDetect.Handle)
+	}
+	if params.ClaimExtract != nil {
+		params.Executor.RegisterHandler(types.TypeClaimExtract, params.ClaimExtract.Handle)
 	}
 	params.Executor.RegisterHandler(types.TypeDataSourceSync, params.DataSourceService.ProcessSync)
 	params.Executor.RegisterHandler(types.TypeWikiIngest, params.WikiIngest.Handle)

@@ -1,0 +1,24 @@
+{
+  "doc": "doc4_travel_policy.md",
+  "claims": [
+    {"id": "d4-01", "subject": "差旅与报销管理制度", "predicate": "生效日期", "value": "2148年3月1日", "value_kind": "date", "qualifiers": {}, "quote": "**生效日期**：2148年3月1日"},
+    {"id": "d4-02", "subject": "差旅与报销管理制度", "predicate": "适用范围", "value": "全体正式员工及实习生", "value_kind": "text", "qualifiers": {}, "quote": "**适用范围**：全体正式员工及实习生"},
+    {"id": "d4-03", "subject": "国内出差住宿费", "predicate": "一线城市每晚上限", "value": "650 元", "value_kind": "number", "qualifiers": {"scope": "一线城市"}, "quote": "一线城市每晚上限为 650 元"},
+    {"id": "d4-04", "subject": "国内出差住宿费", "predicate": "其他城市每晚上限", "value": "450 元", "value_kind": "number", "qualifiers": {"scope": "其他城市"}, "quote": "其他城市每晚上限为 450 元"},
+    {"id": "d4-05", "subject": "国际出差住宿费", "predicate": "每晚上限", "value": "1200 元", "value_kind": "number", "qualifiers": {}, "quote": "国际出差住宿费每晚上限为 1200 元"},
+    {"id": "d4-06", "subject": "长途出行", "predicate": "交通标准", "value": "高铁二等座", "value_kind": "enum", "qualifiers": {"condition": "原则上"}, "quote": "长途出行原则上乘坐高铁二等座"},
+    {"id": "d4-07", "subject": "高铁商务座", "predicate": "适用人群", "value": "总监级及以上员工", "value_kind": "text", "qualifiers": {}, "quote": "总监级及以上员工可乘坐高铁商务座"},
+    {"id": "d4-08", "subject": "飞机舱位", "predicate": "标准", "value": "经济舱", "value_kind": "enum", "qualifiers": {}, "quote": "乘坐飞机时应选择经济舱"},
+    {"id": "d4-09", "subject": "公务舱升级", "predicate": "条件", "value": "单程飞行时长超过 8 小时", "value_kind": "number", "qualifiers": {}, "quote": "单程飞行时长超过 8 小时的，可申请升级公务舱"},
+    {"id": "d4-10", "subject": "市内交通费", "predicate": "每日上限", "value": "120 元", "value_kind": "number", "qualifiers": {"scope": "出差期间"}, "quote": "出差期间市内交通费每日上限为 120 元"},
+    {"id": "d4-11", "subject": "租用车辆", "predicate": "审批要求", "value": "须事前审批且仅限无公共交通覆盖地区", "value_kind": "text", "qualifiers": {}, "quote": "租用车辆须事前审批，且仅限于无公共交通覆盖的地区"},
+    {"id": "d4-12", "subject": "国内出差餐费补贴", "predicate": "每天标准", "value": "150 元", "value_kind": "number", "qualifiers": {}, "quote": "国内出差餐费补贴为每天 150 元"},
+    {"id": "d4-13", "subject": "国际出差餐费补贴", "predicate": "每天标准", "value": "300 元", "value_kind": "number", "qualifiers": {}, "quote": "国际出差餐费补贴为每天 300 元"},
+    {"id": "d4-14", "subject": "国际漫游通讯补贴", "predicate": "每天标准", "value": "80 元", "value_kind": "number", "qualifiers": {"scope": "国际出差期间"}, "quote": "国际出差期间的漫游通讯补贴为每天 80 元"},
+    {"id": "d4-15", "subject": "深渊之门实验室驻场津贴", "predicate": "每天标准", "value": "500 元", "value_kind": "number", "qualifiers": {"scope": "派驻员工"}, "quote": "可领取驻场津贴每天 500 元"},
+    {"id": "d4-16", "subject": "报销申请", "predicate": "提交时限", "value": "费用发生后 30 个自然日内", "value_kind": "number", "qualifiers": {}, "quote": "报销申请须在费用发生后 30 个自然日内提交"},
+    {"id": "d4-17", "subject": "财务部报销审核", "predicate": "时限", "value": "7 个工作日内", "value_kind": "number", "qualifiers": {"condition": "收到完整报销材料后"}, "quote": "财务部应在收到完整报销材料后的 7 个工作日内完成审核"},
+    {"id": "d4-18", "subject": "增值税发票", "predicate": "抬头要求", "value": "天穹财团控股有限公司", "value_kind": "text", "qualifiers": {}, "quote": "增值税发票抬头须为\"天穹财团控股有限公司\""},
+    {"id": "d4-19", "subject": "虚报伪造报销费用", "predicate": "处理", "value": "解除劳动合同", "value_kind": "text", "qualifiers": {"condition": "一经查实"}, "quote": "虚报、伪造报销费用的，一经查实立即解除劳动合同"}
+  ]
+}

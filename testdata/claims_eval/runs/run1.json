@@ -1,0 +1,80 @@
+{
+  "run": "run1",
+  "extractor": "assistant-model (in-session, prompt=附录A v1)",
+  "date": "2026-08-21",
+  "docs": {
+    "doc1_stardust_memo.md": [
+      {"subject": "星尘计划", "predicate": "机密级别", "value": "极密", "value_kind": "enum", "qualifiers": {}, "quote": "**机密级别**：极密"},
+      {"subject": "星尘计划", "predicate": "发布机构", "value": "天穹财团 (SkyVault Consortium) 董事会", "value_kind": "text", "qualifiers": {}, "quote": "**发布机构**：天穹财团 (SkyVault Consortium) 董事会"},
+      {"subject": "星尘计划", "predicate": "首席科学家", "value": "艾琳·科尔博士 (Dr. Elara Cole)", "value_kind": "text", "qualifiers": {}, "quote": "**首席科学家**：艾琳·科尔博士 (Dr. Elara Cole)"},
+      {"subject": "星尘计划", "predicate": "项目目标", "value": "开发幽能引擎推进系统", "value_kind": "text", "qualifiers": {}, "quote": "星尘计划旨在开发一种革命性的推进系统——“幽能引擎 (Psionic Engine)”"},
+      {"subject": "幽能引擎", "predicate": "原型机测试时间节点", "value": "2150 年前", "value_kind": "date", "qualifiers": {}, "quote": "以确保幽能引擎能够在 2150 年前进入原型机测试阶段"},
+      {"subject": "星尘计划", "predicate": "项目资金", "value": "不设上限", "value_kind": "text", "qualifiers": {}, "quote": "项目资金不设上限"},
+      {"subject": "天穹财团", "predicate": "资源调拨", "value": "深渊之门实验室全部资源供艾琳·科尔博士使用", "value_kind": "text", "qualifiers": {}, "quote": "天穹财团将调拨“深渊之门”实验室的全部资源供艾琳·科尔博士使用"}
+    ],
+    "doc2_psionic_engine.md": [
+      {"subject": "幽能引擎", "predicate": "核心原理", "value": "虚空共振理论", "value_kind": "text", "qualifiers": {}, "quote": "建立在备受争议的**虚空共振理论 (Void Resonance Theory)** 之上"},
+      {"subject": "幽能引擎反应堆核心", "predicate": "催化剂", "value": "星晶 (StarQuartz)", "value_kind": "text", "qualifiers": {}, "quote": "必须使用一种极端稀有的矿物作为反应堆核心的催化剂。这种矿物被称为**星晶 (StarQuartz)**"},
+      {"subject": "星晶", "predicate": "物理特性", "value": "室温下超导、特定频段下自发振荡", "value_kind": "text", "qualifiers": {}, "quote": "星晶具有在室温下超导并在特定频段下自发振荡的特性"},
+      {"subject": "星晶", "predicate": "稀有度", "value": "极端稀有", "value_kind": "text", "qualifiers": {}, "quote": "必须使用一种极端稀有的矿物作为反应堆核心的催化剂"},
+      {"subject": "工业级星晶", "predicate": "供应实体", "value": "仅天穹财团（唯一）", "value_kind": "enum", "qualifiers": {"time": "目前"}, "quote": "地球上唯一能稳定合成并从陨石中提纯出工业级星晶的实体，是拥有庞大资本和尖端技术的**天穹财团 (SkyVault Consortium)**"}
+    ],
+    "doc3_dr_cole_log.md": [
+      {"subject": "反应堆堆芯", "predicate": "添加物", "value": "未经稀释的星晶", "value_kind": "text", "qualifiers": {"scope": "全负荷测试"}, "quote": "我们往堆芯里添加了未经稀释的**星晶 (StarQuartz)**"},
+      {"subject": "实验室辐射数值", "predicate": "状态", "value": "正常", "value_kind": "enum", "qualifiers": {}, "quote": "辐射数值正常"},
+      {"subject": "因极度幻觉送医的工程师", "predicate": "人数", "value": "两个", "value_kind": "number", "qualifiers": {"time": "今天"}, "quote": "今天又有两个工程师因为极度幻觉被送去医务室了"},
+      {"subject": "艾琳·科尔博士", "predicate": "建议", "value": "立即暂停所有引擎相关的实验", "value_kind": "text", "qualifiers": {}, "quote": "我建议立即暂停所有引擎相关的实验"},
+      {"subject": "项目推进", "predicate": "死亡率容忍阈值", "value": "不超过 15%", "value_kind": "number", "qualifiers": {"scope": "测试人员"}, "quote": "只要测试人员的死亡率不超过 15%，项目推进的优先级依然最高"}
+    ],
+    "doc4_travel_policy.md": [
+      {"subject": "差旅与报销管理制度", "predicate": "生效日期", "value": "2148年3月1日", "value_kind": "date", "qualifiers": {}, "quote": "**生效日期**：2148年3月1日"},
+      {"subject": "差旅与报销管理制度", "predicate": "适用范围", "value": "全体正式员工及实习生", "value_kind": "text", "qualifiers": {}, "quote": "**适用范围**：全体正式员工及实习生"},
+      {"subject": "国内出差住宿费", "predicate": "一线城市每晚上限", "value": "650 元", "value_kind": "number", "qualifiers": {"scope": "一线城市"}, "quote": "一线城市每晚上限为 650 元"},
+      {"subject": "国内出差住宿费", "predicate": "其他城市每晚上限", "value": "450 元", "value_kind": "number", "qualifiers": {"scope": "其他城市"}, "quote": "其他城市每晚上限为 450 元"},
+      {"subject": "国际出差住宿费", "predicate": "每晚上限", "value": "1200 元", "value_kind": "number", "qualifiers": {}, "quote": "国际出差住宿费每晚上限为 1200 元"},
+      {"subject": "长途出行", "predicate": "交通标准", "value": "高铁二等座", "value_kind": "enum", "qualifiers": {"condition": "原则上"}, "quote": "长途出行原则上乘坐高铁二等座"},
+      {"subject": "高铁商务座", "predicate": "适用人群", "value": "总监级及以上员工", "value_kind": "text", "qualifiers": {}, "quote": "总监级及以上员工可乘坐高铁商务座"},
+      {"subject": "飞机舱位", "predicate": "选择标准", "value": "经济舱", "value_kind": "enum", "qualifiers": {}, "quote": "乘坐飞机时应选择经济舱"},
+      {"subject": "公务舱升级", "predicate": "申请条件", "value": "单程飞行时长超过 8 小时", "value_kind": "number", "qualifiers": {}, "quote": "单程飞行时长超过 8 小时的，可申请升级公务舱"},
+      {"subject": "市内交通费", "predicate": "每日上限", "value": "120 元", "value_kind": "number", "qualifiers": {"scope": "出差期间"}, "quote": "出差期间市内交通费每日上限为 120 元"},
+      {"subject": "国内出差餐费补贴", "predicate": "每天标准", "value": "150 元", "value_kind": "number", "qualifiers": {}, "quote": "国内出差餐费补贴为每天 150 元"},
+      {"subject": "国际出差餐费补贴", "predicate": "每天标准", "value": "300 元", "value_kind": "number", "qualifiers": {}, "quote": "国际出差餐费补贴为每天 300 元"},
+      {"subject": "国际漫游通讯补贴", "predicate": "每天标准", "value": "80 元", "value_kind": "number", "qualifiers": {"scope": "国际出差期间"}, "quote": "国际出差期间的漫游通讯补贴为每天 80 元"},
+      {"subject": "深渊之门实验室驻场津贴", "predicate": "每天标准", "value": "500 元", "value_kind": "number", "qualifiers": {}, "quote": "可领取驻场津贴每天 500 元"},
+      {"subject": "报销申请", "predicate": "提交时限", "value": "费用发生后 30 个自然日内", "value_kind": "number", "qualifiers": {}, "quote": "报销申请须在费用发生后 30 个自然日内提交"},
+      {"subject": "财务部报销审核", "predicate": "完成时限", "value": "7 个工作日内", "value_kind": "number", "qualifiers": {"condition": "收到完整报销材料后"}, "quote": "财务部应在收到完整报销材料后的 7 个工作日内完成审核"},
+      {"subject": "增值税发票", "predicate": "抬头要求", "value": "天穹财团控股有限公司", "value_kind": "text", "qualifiers": {}, "quote": "增值税发票抬头须为\"天穹财团控股有限公司\""},
+      {"subject": "虚报伪造报销费用", "predicate": "处理方式", "value": "解除劳动合同", "value_kind": "text", "qualifiers": {"condition": "一经查实"}, "quote": "虚报、伪造报销费用的，一经查实立即解除劳动合同"}
+    ],
+    "doc5_reactor_manual.md": [
+      {"subject": "星晶反应堆 SQ-7", "predicate": "用途", "value": "幽能引擎的地面测试用反应堆", "value_kind": "text", "qualifiers": {}, "quote": "星晶反应堆 SQ-7 是幽能引擎 (Psionic Engine) 的地面测试用反应堆"},
+      {"subject": "星晶反应堆 SQ-7", "predicate": "额定输出功率", "value": "12.5 太瓦", "value_kind": "number", "qualifiers": {}, "quote": "额定输出功率为 12.5 太瓦"},
+      {"subject": "星晶反应堆 SQ-7 堆芯", "predicate": "催化剂", "value": "工业级星晶", "value_kind": "text", "qualifiers": {}, "quote": "堆芯催化剂为工业级星晶 (StarQuartz)"},
+      {"subject": "工业级星晶", "predicate": "纯度要求", "value": "不低于 99.2%", "value_kind": "number", "qualifiers": {}, "quote": "纯度不低于 99.2%"},
+      {"subject": "工业级星晶", "predicate": "供应实体", "value": "天穹财团与新弦工业两家", "value_kind": "enum", "qualifiers": {"time": "目前"}, "quote": "目前工业级星晶由天穹财团与新弦工业 (NeoString Industries) 两家实体供应"},
+      {"subject": "星晶反应堆 SQ-7", "predicate": "工作温度区间", "value": "-40℃ 至 850℃", "value_kind": "number", "qualifiers": {}, "quote": "反应堆工作温度区间为 -40℃ 至 850℃"},
+      {"subject": "星晶", "predicate": "自发振荡频段", "value": "17.3 千赫兹", "value_kind": "number", "qualifiers": {"scope": "堆芯内"}, "quote": "星晶在堆芯内的自发振荡频段为 17.3 千赫兹"},
+      {"subject": "星晶反应堆 SQ-7", "predicate": "连续运行时长上限", "value": "72 小时", "value_kind": "number", "qualifiers": {}, "quote": "反应堆连续运行时长上限为 72 小时"},
+      {"subject": "冷却周期", "predicate": "最短时长", "value": "不得少于 12 小时", "value_kind": "number", "qualifiers": {}, "quote": "每次冷却周期不得少于 12 小时"},
+      {"subject": "反应堆操作人员", "predicate": "上岗资质", "value": "三级幽能安全证书", "value_kind": "text", "qualifiers": {}, "quote": "操作人员须持有三级幽能安全证书方可上岗"},
+      {"subject": "全负荷测试", "predicate": "安全半径", "value": "300 米", "value_kind": "number", "qualifiers": {}, "quote": "全负荷测试时，安全半径为 300 米"},
+      {"subject": "反应堆操作区", "predicate": "防护要求", "value": "必须部署谐波屏蔽罩", "value_kind": "text", "qualifiers": {"condition": "抑制星晶的神经干扰效应"}, "quote": "操作区必须部署谐波屏蔽罩"},
+      {"subject": "星晶反应堆 SQ-7", "predicate": "例行维护周期", "value": "每运行 500 小时一次", "value_kind": "number", "qualifiers": {}, "quote": "反应堆每运行 500 小时须进行一次例行维护"},
+      {"subject": "幽能引擎原型机", "predicate": "测试阶段时间", "value": "推迟至 2153 年", "value_kind": "date", "qualifiers": {}, "quote": "幽能引擎原型机测试阶段已推迟至 2153 年"}
+    ],
+    "doc6_admin_faq.md": [
+      {"subject": "报销单", "predicate": "提交时限", "value": "费用发生后 45 天内", "value_kind": "number", "qualifiers": {}, "quote": "请在费用发生后 45 天内提交报销单"},
+      {"subject": "国际漫游通讯补贴", "predicate": "每天标准", "value": "100 元", "value_kind": "number", "qualifiers": {}, "quote": "国际漫游通讯补贴为每天 100 元"},
+      {"subject": "市内交通费", "predicate": "每日上限", "value": "150 元", "value_kind": "number", "qualifiers": {"scope": "出差期间"}, "quote": "出差期间市内交通费每日上限为 150 元"},
+      {"subject": "国内出差餐费补贴", "predicate": "每天标准", "value": "150 元", "value_kind": "number", "qualifiers": {}, "quote": "国内出差餐费补贴为每天 150 元"},
+      {"subject": "带薪年假", "predicate": "年度天数", "value": "15 天", "value_kind": "number", "qualifiers": {"condition": "入职满一年"}, "quote": "入职满一年的员工，每年享有 15 天带薪年假"},
+      {"subject": "病假", "predicate": "提报时限", "value": "24 小时内", "value_kind": "number", "qualifiers": {"scope": "向直属主管"}, "quote": "病假须在 24 小时内向直属主管提报"},
+      {"subject": "工卡补办", "predicate": "工本费", "value": "50 元", "value_kind": "number", "qualifiers": {}, "quote": "工卡补办收取工本费 50 元"},
+      {"subject": "工卡补办", "predicate": "制作时长", "value": "3 个工作日内", "value_kind": "number", "qualifiers": {}, "quote": "行政服务中心在 3 个工作日内制作完成"},
+      {"subject": "园区班车早班", "predicate": "发车时间", "value": "7:30", "value_kind": "number", "qualifiers": {}, "quote": "早班 7:30 发车"},
+      {"subject": "园区班车晚班", "predicate": "发车时间", "value": "18:30", "value_kind": "number", "qualifiers": {}, "quote": "晚班 18:30 发车"},
+      {"subject": "员工健身房", "predicate": "开放时间", "value": "工作日 6:00 至 22:00", "value_kind": "number", "qualifiers": {"condition": "节假日闭馆"}, "quote": "员工健身房在工作日 6:00 至 22:00 开放"},
+      {"subject": "深渊之门实验室", "predicate": "进入权限要求", "value": "二级以上权限", "value_kind": "text", "qualifiers": {}, "quote": "“深渊之门”实验室须持二级以上权限方可进入"}
+    ]
+  }
+}
