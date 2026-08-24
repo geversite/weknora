@@ -34,7 +34,7 @@ const (
 	// LLM (aligned with conflictContentMaxRunes experience value).
 	claimExtractChunkContentMaxRunes = 6000
 	// claimExtractWikiWindowRunes / Overlap chunk overlong wiki pages.
-	claimExtractWikiWindowRunes  = 8000
+	claimExtractWikiWindowRunes   = 8000
 	claimExtractWikiWindowOverlap = 500
 	// claimExtractWikiDebounce delays wiki-edit triggered extraction so rapid
 	// consecutive saves collapse into one run (asynq TaskID dedup + delay).

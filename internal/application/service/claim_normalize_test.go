@@ -116,8 +116,9 @@ func TestNormalizeClaimValue(t *testing.T) {
 		{"推迟至 2153 年", "", "2153", types.ClaimValueKindDate},
 		// clock time
 		{"7:30", "", "07:30", types.ClaimValueKindNumber},
-		// range
-		{"-40℃ 至 850℃", "", "-40~850|℃", types.ClaimValueKindNumber},
+		// range (NFKC canonicalizes ℃ (U+2103) into °C → lowercased °c —
+		// desired: "850℃" and "850 °C" spellings normalize identically)
+		{"-40℃ 至 850℃", "", "-40~850|°c", types.ClaimValueKindNumber},
 		// Chinese numeral count
 		{"两个", "", "2|个", types.ClaimValueKindNumber},
 		{"2 名", "", "2|个", types.ClaimValueKindNumber},
@@ -137,14 +138,17 @@ func TestNormalizeClaimValue(t *testing.T) {
 func TestNormalizeClaimValueConflictPairs(t *testing.T) {
 	// The five planted contradiction pairs from the calibration corpus must
 	// keep DIFFERENT value norms; the agreement control must keep EQUAL ones.
-	type pair struct{ a, b string; wantEqual bool }
+	type pair struct {
+		a, b      string
+		wantEqual bool
+	}
 	pairs := []pair{
-		{"2150 年前", "推迟至 2153 年", false},                 // P1
+		{"2150 年前", "推迟至 2153 年", false},             // P1
 		{"仅天穹财团（唯一）", "天穹财团与新弦工业两家", false}, // P2
 		{"费用发生后 30 个自然日内", "费用发生后 45 天内", false}, // P3
-		{"80 元", "100 元", false},                            // P4
-		{"120 元", "150 元", false},                           // P5
-		{"150 元", "150 元", true},                            // N1 control
+		{"80 元", "100 元", false},  // P4
+		{"120 元", "150 元", false}, // P5
+		{"150 元", "150 元", true},  // N1 control
 	}
 	for _, p := range pairs {
 		na, _ := NormalizeClaimValue(p.a, "")

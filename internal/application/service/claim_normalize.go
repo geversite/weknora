@@ -32,10 +32,10 @@ var (
 	claimCountSuffixRE = regexp.MustCompile(`[零一两二三四五六七八九十百千0-9]+[家个项条名位]$`)
 	claimSpacesRE      = regexp.MustCompile(`\s+`)
 
-	claimDateRE = regexp.MustCompile(`([0-9]{4})\s*年\s*([0-9]{1,2})\s*月(?:\s*([0-9]{1,2})\s*日)?`)
-	claimYearRE = regexp.MustCompile(`([0-9]{4})\s*年`)
-	claimTimeRE = regexp.MustCompile(`\b([0-9]{1,2}):([0-9]{2})\b`)
-	claimNumRE  = regexp.MustCompile(`(?i)(-?[0-9]+(?:\.[0-9]+)?)([万亿]?)\s*([%％]|[a-zａ-ｚＡ-Ｚ℃°]+|\p{Han}{1,4})?`)
+	claimDateRE  = regexp.MustCompile(`([0-9]{4})\s*年\s*([0-9]{1,2})\s*月(?:\s*([0-9]{1,2})\s*日)?`)
+	claimYearRE  = regexp.MustCompile(`([0-9]{4})\s*年`)
+	claimTimeRE  = regexp.MustCompile(`\b([0-9]{1,2}):([0-9]{2})\b`)
+	claimNumRE   = regexp.MustCompile(`(?i)(-?[0-9]+(?:\.[0-9]+)?)([万亿]?)\s*([%％]|[a-zａ-ｚＡ-Ｚ℃°]+|\p{Han}{1,4})?`)
 	claimRangeRE = regexp.MustCompile(`至|~|—|--`)
 )
 
