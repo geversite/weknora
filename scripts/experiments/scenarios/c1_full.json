@@ -1,0 +1,64 @@
+{
+  "schema_version": 1,
+  "name": "c1_full",
+  "description": "Six-document production-model C1 extraction and conflict smoke/benchmark scenario. The order deliberately uploads source documents before their contradictory successors.",
+  "min_claims_per_document": 1,
+  "documents": [
+    {
+      "id": "doc1",
+      "path": "testdata/claims_eval/docs/doc1_stardust_memo.md",
+      "gold_doc": "doc1_stardust_memo.md",
+      "title": "doc1_stardust_memo"
+    },
+    {
+      "id": "doc2",
+      "path": "testdata/claims_eval/docs/doc2_psionic_engine.md",
+      "gold_doc": "doc2_psionic_engine.md",
+      "title": "doc2_psionic_engine"
+    },
+    {
+      "id": "doc3",
+      "path": "testdata/claims_eval/docs/doc3_dr_cole_log.md",
+      "gold_doc": "doc3_dr_cole_log.md",
+      "title": "doc3_dr_cole_log"
+    },
+    {
+      "id": "doc4",
+      "path": "testdata/claims_eval/docs/doc4_travel_policy.md",
+      "gold_doc": "doc4_travel_policy.md",
+      "title": "doc4_travel_policy"
+    },
+    {
+      "id": "doc5",
+      "path": "testdata/claims_eval/docs/doc5_reactor_manual.md",
+      "gold_doc": "doc5_reactor_manual.md",
+      "title": "doc5_reactor_manual"
+    },
+    {
+      "id": "doc6",
+      "path": "testdata/claims_eval/docs/doc6_admin_faq.md",
+      "gold_doc": "doc6_admin_faq.md",
+      "title": "doc6_admin_faq"
+    }
+  ],
+  "expected_conflict_document_pairs": [
+    {
+      "id": "P1",
+      "left": "doc1",
+      "right": "doc5",
+      "note": "原型机测试时间：2150 前 vs 推迟至 2153"
+    },
+    {
+      "id": "P2",
+      "left": "doc2",
+      "right": "doc5",
+      "note": "工业级星晶供应实体：唯一 vs 两家"
+    },
+    {
+      "id": "P3_P4_P5",
+      "left": "doc4",
+      "right": "doc6",
+      "note": "报销时限、国际漫游补贴、市内交通费；P3 的 fallback 真实性另由 p3_fallback 场景验证"
+    }
+  ]
+}

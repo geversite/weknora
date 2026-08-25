@@ -1,4 +1,4 @@
-.PHONY: help build run test clean docker-build-app docker-build-docreader docker-build-frontend docker-build-all docker-run migrate-up migrate-down docker-restart docker-stop start-all stop-all start-ollama stop-ollama build-images build-images-app build-images-docreader build-images-frontend clean-images check-env list-containers pull-images show-platform dev-start dev-stop dev-restart dev-logs dev-status dev-app dev-frontend docs install-swagger build-lite run-lite package-lite
+.PHONY: help build run test clean docker-build-app docker-build-docreader docker-build-frontend docker-build-all docker-run migrate-up migrate-down docker-restart docker-stop start-all stop-all start-ollama stop-ollama build-images build-images-app build-images-docreader build-images-frontend clean-images check-env list-containers pull-images show-platform dev-start dev-stop dev-restart dev-logs dev-status dev-app dev-frontend docs install-swagger build-lite run-lite package-lite experiment-check experiment-c1 experiment-p3 experiment-v1
 
 # Show help
 help:
@@ -57,6 +57,12 @@ help:
 	@echo "  dev-status        查看开发环境状态"
 	@echo "  dev-app           启动后端应用（本地运行，需先运行 dev-start）"
 	@echo "  dev-frontend      启动前端（本地运行，需先运行 dev-start）"
+	@echo ""
+	@echo "研究实验（脚本化，无需 UI）:"
+	@echo "  experiment-check  检查 C1.5 实验 API/数据库导出环境"
+	@echo "  experiment-c1     运行六文档 C1 生产模型实验"
+	@echo "  experiment-p3     运行 P3 fallback 隔离回归实验"
+	@echo "  experiment-v1     运行关闭 claims 的 V1 消融对照"
 	@echo ""
 	@echo "Lite 模式（零外部依赖）:"
 	@echo "  build-lite        构建 Lite 版本（先构建前端到 web/，再构建 Go；SKIP_FRONTEND=1 跳过前端）"
@@ -331,5 +337,23 @@ dev-app:
 
 dev-frontend:
 	./scripts/dev.sh frontend
+
+# Research experiment runner (C1.5). The app and dev infrastructure must
+# already be running; credentials/configuration are taken from environment
+# variables documented in scripts/experiments/README.md.
+experiment-check:
+	python3 scripts/experiments/run_claims_eval.py --check --check-db
+
+experiment-c1:
+	python3 scripts/experiments/run_claims_eval.py \
+		--scenario scripts/experiments/scenarios/c1_full.json --variant c1
+
+experiment-p3:
+	python3 scripts/experiments/run_claims_eval.py \
+		--scenario scripts/experiments/scenarios/p3_fallback.json --variant c1
+
+experiment-v1:
+	python3 scripts/experiments/run_claims_eval.py \
+		--scenario scripts/experiments/scenarios/c1_full.json --variant v1
 
 

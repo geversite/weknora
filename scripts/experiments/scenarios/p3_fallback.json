@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "name": "p3_fallback",
+  "description": "Isolated fallback regression: no exact subject claim-key should be available, so the conflict must be reachable through the semantic fallback channel.",
+  "min_claims_per_document": 1,
+  "documents": [
+    {
+      "id": "p3_policy",
+      "path": "testdata/claims_eval/docs/p3_reimbursement_policy.md",
+      "title": "p3_reimbursement_policy"
+    },
+    {
+      "id": "p3_faq",
+      "path": "testdata/claims_eval/docs/p3_reimbursement_faq.md",
+      "title": "p3_reimbursement_faq"
+    }
+  ],
+  "expected_conflict_document_pairs": [
+    {
+      "id": "P3-fallback",
+      "left": "p3_policy",
+      "right": "p3_faq",
+      "note": "报销申请 vs 报销单；30 个自然日 vs 45 天"
+    }
+  ]
+}

@@ -1,0 +1,3 @@
+# Raw experiment artifacts can contain large snapshots and model outputs.
+# Keep the directory itself so scripts have a stable default destination.
+runs/
