@@ -744,6 +744,14 @@ func (kb *KnowledgeBase) IsFolderGovernanceEnabled() bool {
 	return kb != nil
 }
 
+// IsClaimExtractEnabled reports whether post-ingest atomic claim extraction
+// (C1, Conflict V2) is enabled for this knowledge base. Real toggle, default
+// false: claim extraction costs LLM calls per ingested document and is rolled
+// out per KB.
+func (kb *KnowledgeBase) IsClaimExtractEnabled() bool {
+	return kb != nil && kb.IndexingStrategy.ClaimExtractEnabled
+}
+
 // IsUserFeedbackEnabled reports whether the M5 automatic user-feedback-to-wiki
 // pipeline is active for this knowledge base. Always true when wiki indexing is
 // enabled: the feature is no longer user-toggleable and runs whenever the wiki

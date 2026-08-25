@@ -31,6 +31,12 @@ type IndexingStrategy struct {
 	// Requires WikiEnabled. Default false. It does NOT produce indexing
 	// requirements by itself, so it is excluded from the indexing helpers.
 	UserFeedbackEnabled bool `yaml:"user_feedback_enabled" json:"user_feedback_enabled"`
+	// ClaimExtractEnabled enables post-ingest atomic claim extraction (C1,
+	// Conflict V2). Claims power claim-key based conflict candidate pairing
+	// and (later) corpus sweeps. Default false; per KB. It does NOT produce
+	// indexing requirements by itself, so it is excluded from
+	// HasAnyIndexing / IsZero / NeedsChunks / NeedsEmbedding.
+	ClaimExtractEnabled bool `yaml:"claim_extract_enabled" json:"claim_extract_enabled"`
 }
 
 // DefaultIndexingStrategy returns the default strategy matching the legacy behavior:

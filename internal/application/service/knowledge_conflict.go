@@ -55,6 +55,8 @@ type KnowledgeConflictService struct {
 	modelService interfaces.ModelService
 	taskEnqueuer interfaces.TaskEnqueuer
 	pendingRepo  interfaces.TaskPendingOpsRepository
+	claimRepo    interfaces.ClaimRepository     // C1: claim-key pairing channel (nil-safe)
+	wikiRepo     interfaces.WikiPageRepository  // C1: wiki counterpart resolution (nil-safe)
 }
 
 // NewKnowledgeConflictService constructs the conflict detect + adjudicate service.
@@ -66,6 +68,8 @@ func NewKnowledgeConflictService(
 	modelService interfaces.ModelService,
 	taskEnqueuer interfaces.TaskEnqueuer,
 	pendingRepo interfaces.TaskPendingOpsRepository,
+	claimRepo interfaces.ClaimRepository,
+	wikiRepo interfaces.WikiPageRepository,
 ) *KnowledgeConflictService {
 	return &KnowledgeConflictService{
 		conflictRepo: conflictRepo,
@@ -75,6 +79,8 @@ func NewKnowledgeConflictService(
 		modelService: modelService,
 		taskEnqueuer: taskEnqueuer,
 		pendingRepo:  pendingRepo,
+		claimRepo:    claimRepo,
+		wikiRepo:     wikiRepo,
 	}
 }
 
@@ -153,8 +159,25 @@ func (s *KnowledgeConflictService) Handle(ctx context.Context, task *asynq.Task)
 		newTitle = newKb.Title
 	}
 
-	// 3. Coarse filter: semantic search for similar existing chunks in the KB.
-	pairs := s.coarseFilterBySearch(detectCtx, kb, payload.TenantID, payload.KnowledgeBaseID, payload.KnowledgeID, newTitle, enabledNew)
+	// 3. Coarse candidate generation, dual channel (C1):
+	//    main channel — claim-key pairing over the claims index;
+	//    fallback     — semantic HybridSearch, only for chunks the claim
+	//    channel cannot cover (no claims extracted / extraction disabled).
+	pairs, coveredChunkIDs := s.coarseFilterByClaims(
+		detectCtx, payload.TenantID, payload.KnowledgeBaseID, payload.KnowledgeID, newTitle, enabledNew)
+	uncovered := make([]*types.Chunk, 0, len(enabledNew))
+	for _, c := range enabledNew {
+		if !coveredChunkIDs[c.ID] {
+			uncovered = append(uncovered, c)
+		}
+	}
+	if len(uncovered) > 0 {
+		pairs = append(pairs, s.coarseFilterBySearch(
+			detectCtx, kb, payload.TenantID, payload.KnowledgeBaseID, payload.KnowledgeID, newTitle, uncovered)...)
+	}
+	logger.GetLogger(ctx).Infof(
+		"[ConflictDetect] Coarse candidates for knowledge %s: %d pairs (claim-channel chunks=%d, fallback chunks=%d)",
+		payload.KnowledgeID, len(pairs), len(coveredChunkIDs), len(uncovered))
 	if len(pairs) == 0 {
 		logger.GetLogger(ctx).Infof("[ConflictDetect] No coarse candidates for knowledge %s", payload.KnowledgeID)
 		return nil
@@ -173,6 +196,13 @@ func (s *KnowledgeConflictService) Handle(ctx context.Context, task *asynq.Task)
 
 	conflicts := make([]*types.KnowledgeConflict, 0, len(adjudicated))
 	for _, p := range adjudicated {
+		reason := p.Reason
+		if p.ExistWikiSlug != "" {
+			// C1 transitional wiki marker: the counterpart is a wiki page
+			// (KnowledgeIDB stays empty; ChunkIDB carries the page ID). The
+			// C4 migration replaces this with first-class wiki columns.
+			reason = "[wiki:" + p.ExistWikiSlug + "] " + reason
+		}
 		conflicts = append(conflicts, &types.KnowledgeConflict{
 			ID:              uuid.New().String(),
 			TenantID:        payload.TenantID,
@@ -184,7 +214,7 @@ func (s *KnowledgeConflictService) Handle(ctx context.Context, task *asynq.Task)
 			ContentA:        conflictTruncateRunes(p.NewChunk.Content, conflictContentMaxRunes),
 			ContentB:        conflictTruncateRunes(p.ExistingChunk.Content, conflictContentMaxRunes),
 			ConflictType:    p.ConflictType,
-			LLMReason:       conflictTruncateRunes(p.Reason, conflictReasonMaxRunes),
+			LLMReason:       conflictTruncateRunes(reason, conflictReasonMaxRunes),
 			Status:          types.ConflictStatusPending,
 			DetectedBy:      types.ConflictDetectedByUpload,
 			CreatedAt:       time.Now(),
@@ -210,7 +240,197 @@ type conflictPair struct {
 	ExistingTitle string // 候选文件标题（用于上下文判断主体）
 	ConflictType  string
 	Reason        string
+	// C1 claim-channel provenance (empty for fallback-channel pairs). Carried
+	// through adjudication for logging now and for C2/C4 (cascade routing /
+	// DisputedFact clustering) later.
+	ClaimKeyHit   string
+	NewClaimIDs   []string
+	ExistClaimIDs []string
+	// ExistWikiSlug is set when the counterpart is a wiki page (C1: pseudo
+	// chunk, no disable side-effects; formalized by the C4 migration).
+	ExistWikiSlug string
 }
+
+// coarseFilterByClaims is the C1 main candidate channel: pair new-file claims
+// with same-claim-key claims elsewhere in the KB (documents AND wiki pages).
+// Returns the pairs plus the set of new-chunk IDs the channel covered (chunks
+// that produced at least one claim) — the caller runs the HybridSearch
+// fallback only for uncovered chunks. Nil-safe: without a claim repo the
+// channel reports zero coverage and the detector degrades to V1 behavior.
+func (s *KnowledgeConflictService) coarseFilterByClaims(
+	ctx context.Context,
+	tenantID uint64,
+	kbID, newKnowledgeID, newTitle string,
+	newChunks []*types.Chunk,
+) ([]conflictPair, map[string]bool) {
+	covered := make(map[string]bool)
+	if s.claimRepo == nil {
+		return nil, covered
+	}
+	newClaims, err := s.claimRepo.ListByKnowledge(ctx, tenantID, newKnowledgeID)
+	if err != nil {
+		logger.GetLogger(ctx).Warnf("[ConflictDetect] ListByKnowledge claims for %s failed: %v", newKnowledgeID, err)
+		return nil, covered
+	}
+	if len(newClaims) == 0 {
+		return nil, covered
+	}
+
+	chunkByID := make(map[string]*types.Chunk, len(newChunks))
+	for _, c := range newChunks {
+		chunkByID[c.ID] = c
+	}
+	// Group the new file's claims by key, keeping only claims whose source
+	// chunk is enabled and part of this detection run.
+	newByKey := make(map[string][]*types.Claim)
+	for _, c := range newClaims {
+		if c == nil || c.ClaimKey == "" {
+			continue
+		}
+		if _, ok := chunkByID[c.SourceID]; !ok {
+			continue
+		}
+		covered[c.SourceID] = true
+		newByKey[c.ClaimKey] = append(newByKey[c.ClaimKey], c)
+	}
+	if len(newByKey) == 0 {
+		return nil, covered
+	}
+	keys := make([]string, 0, len(newByKey))
+	for k := range newByKey {
+		keys = append(keys, k)
+	}
+
+	existing, err := s.claimRepo.ListByKeys(ctx, tenantID, kbID, keys, "", newKnowledgeID)
+	if err != nil {
+		logger.GetLogger(ctx).Warnf("[ConflictDetect] ListByKeys claims for %s failed: %v", newKnowledgeID, err)
+		return nil, covered
+	}
+	if len(existing) == 0 {
+		return nil, covered
+	}
+
+	// Merge hits into at most one pair per (new chunk, counterpart source):
+	// multiple key hits between the same pair of sources enrich the claim ID
+	// lists instead of spawning duplicate LLM adjudications.
+	type pairKey struct{ newChunkID, existSourceID string }
+	merged := make(map[pairKey]*conflictPair)
+	titleCache := make(map[string]string) // knowledgeID -> title
+	var order []pairKey
+
+	for _, ex := range existing {
+		if ex == nil || ex.ClaimKey == "" {
+			continue
+		}
+		newSide := newByKey[ex.ClaimKey]
+		if len(newSide) == 0 {
+			continue
+		}
+		counterpart, existTitle, wikiSlug := s.resolveClaimCounterpart(ctx, tenantID, ex, titleCache)
+		if counterpart == nil {
+			continue
+		}
+		for _, nc := range newSide {
+			newChunk := chunkByID[nc.SourceID]
+			if newChunk == nil || counterpart.ID == newChunk.ID {
+				continue
+			}
+			pk := pairKey{newChunkID: newChunk.ID, existSourceID: counterpart.ID}
+			if p, ok := merged[pk]; ok {
+				p.NewClaimIDs = appendUnique(p.NewClaimIDs, nc.ID)
+				p.ExistClaimIDs = appendUnique(p.ExistClaimIDs, ex.ID)
+				continue
+			}
+			merged[pk] = &conflictPair{
+				NewChunk:      newChunk,
+				ExistingChunk: counterpart,
+				NewTitle:      newTitle,
+				ExistingTitle: existTitle,
+				ClaimKeyHit:   ex.ClaimKey,
+				NewClaimIDs:   []string{nc.ID},
+				ExistClaimIDs: []string{ex.ID},
+				ExistWikiSlug: wikiSlug,
+			}
+			order = append(order, pk)
+		}
+	}
+
+	pairs := make([]conflictPair, 0, len(order))
+	for _, pk := range order {
+		pairs = append(pairs, *merged[pk])
+	}
+	return pairs, covered
+}
+
+// resolveClaimCounterpart loads the counterpart source of an existing claim:
+// a real chunk for chunk sources, or a pseudo chunk carved from the claim's
+// span neighbourhood for wiki pages (C1 transitional representation — the
+// pseudo chunk's KnowledgeID stays empty so no disable side-effects apply).
+func (s *KnowledgeConflictService) resolveClaimCounterpart(
+	ctx context.Context, tenantID uint64, ex *types.Claim, titleCache map[string]string,
+) (chunk *types.Chunk, title string, wikiSlug string) {
+	switch ex.SourceType {
+	case types.ClaimSourceChunk:
+		c, err := s.chunkRepo.GetChunkByID(ctx, tenantID, ex.SourceID)
+		if err != nil || c == nil || !c.IsEnabled {
+			return nil, "", ""
+		}
+		t, ok := titleCache[c.KnowledgeID]
+		if !ok {
+			if k, err := s.knowledgeSvc.GetKnowledgeByID(ctx, c.KnowledgeID); err == nil && k != nil {
+				t = k.Title
+			}
+			titleCache[c.KnowledgeID] = t
+		}
+		return c, t, ""
+	case types.ClaimSourceWikiPage:
+		if s.wikiRepo == nil {
+			return nil, "", ""
+		}
+		page, err := s.wikiRepo.GetByID(ctx, ex.SourceID)
+		if err != nil || page == nil {
+			return nil, "", ""
+		}
+		return &types.Chunk{
+			ID:              page.ID,
+			TenantID:        page.TenantID,
+			KnowledgeID:     "", // empty on purpose: no chunk-disable side effects
+			KnowledgeBaseID: page.KnowledgeBaseID,
+			Content:         claimSpanNeighborhood(page.Content, ex.SpanStart, ex.SpanEnd, 500),
+			IsEnabled:       true,
+		}, page.Title, page.Slug
+	default:
+		return nil, "", ""
+	}
+}
+
+// claimSpanNeighborhood cuts the ±radius rune neighbourhood around a span;
+// a zero span (location failed) falls back to the content head.
+func claimSpanNeighborhood(content string, start, end, radius int) string {
+	runes := []rune(content)
+	if len(runes) == 0 {
+		return ""
+	}
+	if end <= start { // unlocated span
+		start, end = 0, 0
+	}
+	from := start - radius
+	if from < 0 {
+		from = 0
+	}
+	to := end + radius
+	if to > len(runes) {
+		to = len(runes)
+	}
+	if to <= from {
+		to = min(len(runes), from+2*radius)
+	}
+	return string(runes[from:to])
+}
+
+// appendUnique is defined in wiki_ingest.go (types.StringArray); []string
+// arguments assign transparently because StringArray's underlying type is
+// []string.
 
 // coarseFilterBySearch retrieves semantically-similar existing chunks for each
 // new chunk using the KB's hybrid search, excluding the new file's own chunks.
@@ -328,6 +548,10 @@ func (s *KnowledgeConflictService) fineAdjudicate(
 			ExistingChunk: p.ExistingChunk,
 			ConflictType:  verdict,
 			Reason:        reason,
+			ClaimKeyHit:   p.ClaimKeyHit,
+			NewClaimIDs:   p.NewClaimIDs,
+			ExistClaimIDs: p.ExistClaimIDs,
+			ExistWikiSlug: p.ExistWikiSlug,
 		})
 	}
 	return out
@@ -545,6 +769,19 @@ func (s *KnowledgeConflictService) Resolve(
 		clearPenaltyChunkIDs = []string{conflict.ChunkIDA, conflict.ChunkIDB}
 	default:
 		return nil, fmt.Errorf("unsupported resolution: %s", req.Resolution)
+	}
+
+	// [C1] Wiki counterpart guard: when the B side is a wiki page (pseudo
+	// chunk, KnowledgeIDB empty), ChunkIDB is a wiki page ID — never a
+	// disable target. Narrative integration is C7's job.
+	if conflict.KnowledgeIDB == "" {
+		filtered := disabledChunkIDs[:0]
+		for _, id := range disabledChunkIDs {
+			if id != conflict.ChunkIDB {
+				filtered = append(filtered, id)
+			}
+		}
+		disabledChunkIDs = filtered
 	}
 
 	// Apply chunk disablement via the chunk repository (soft delete from retrieval).

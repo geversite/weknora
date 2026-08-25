@@ -93,6 +93,7 @@ type knowledgeService struct {
 	spanTracker       SpanTracker
 	audit             interfaces.AuditLogService
 	conflictRepo      interfaces.KnowledgeConflictRepository // M3 conflict cleanup
+	claimRepo         interfaces.ClaimRepository             // C1 claim cleanup
 	folderSummaryRepo interfaces.FolderSummaryRepository     // M4: folder summary lookup
 	folderSummarySvc  interfaces.FolderSummaryService        // M4: folder summary refresh
 	folderRepo        interfaces.KnowledgeFolderRepository   // M4: folder lookup
@@ -134,6 +135,7 @@ func NewKnowledgeService(
 	spanTracker SpanTracker,
 	audit interfaces.AuditLogService,
 	conflictRepo interfaces.KnowledgeConflictRepository,
+	claimRepo interfaces.ClaimRepository,
 	folderSummaryRepo interfaces.FolderSummaryRepository,
 	folderSummarySvc interfaces.FolderSummaryService,
 	folderRepo interfaces.KnowledgeFolderRepository,
@@ -167,6 +169,7 @@ func NewKnowledgeService(
 		spanTracker:       spanTracker,
 		audit:             audit,
 		conflictRepo:      conflictRepo,
+		claimRepo:         claimRepo,
 		folderSummaryRepo: folderSummaryRepo,
 		folderSummarySvc:  folderSummarySvc,
 		folderRepo:        folderRepo,

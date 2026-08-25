@@ -84,7 +84,7 @@ var queueDefinitions = []QueueDefinition{
 		TypeKnowledgeListDelete, TypeKnowledgeListReparse, TypeKnowledgeMove,
 	}},
 	{Name: QueueWiki, Pool: WorkerPoolWiki, Weight: 1, TaskTypes: []string{TypeWikiIngest, TypeWikiFinalize}},
-	{Name: QueueConflict, Pool: WorkerPoolEnrichment, Weight: 1, SharedWeight: 1, TaskTypes: []string{TypeConflictDetect}},
+	{Name: QueueConflict, Pool: WorkerPoolEnrichment, Weight: 1, SharedWeight: 1, TaskTypes: []string{TypeConflictDetect, TypeClaimExtract}},
 	{Name: QueueFolderSummary, Pool: WorkerPoolEnrichment, Weight: 1, SharedWeight: 1, TaskTypes: []string{TypeFolderSummaryGeneration}},
 }
 
@@ -253,6 +253,7 @@ const (
 	TypeWikiFinalize             = "wiki:finalize"              // Wiki KB 级收尾任务（防抖：索引重建/死链清理/交叉链接）
 	TypeTemporaryDocumentProcess = "temporary_document:process" // 会话临时文档解析任务
 	TypeConflictDetect           = "conflict:detect"            // M3: 上传后文件级冲突检测
+	TypeClaimExtract             = "claim:extract"              // C1: 声明抽取（文档/wiki 双源）
 	TypeFolderSummaryGeneration  = "folder_summary:generation"  // M4: 文件夹摘要生成
 )
 
@@ -504,6 +505,20 @@ type ConflictDetectPayload struct {
 	TenantID        uint64 `json:"tenant_id"`
 	KnowledgeID     string `json:"knowledge_id"`
 	KnowledgeBaseID string `json:"knowledge_base_id"`
+}
+
+// ClaimExtractPayload represents the claim extraction task payload (C1).
+// SourceType selects the branch: ClaimSourceChunk requires KnowledgeID,
+// ClaimSourceWikiPage requires WikiPageID. Reason is a free-form audit tag
+// (ingest / wiki_user_edit / sweep / manual).
+type ClaimExtractPayload struct {
+	TracingContext
+	TenantID        uint64 `json:"tenant_id"`
+	KnowledgeBaseID string `json:"knowledge_base_id"`
+	SourceType      string `json:"source_type"`
+	KnowledgeID     string `json:"knowledge_id,omitempty"`
+	WikiPageID      string `json:"wiki_page_id,omitempty"`
+	Reason          string `json:"reason"`
 }
 
 // FolderSummaryGenerationPayload represents the folder summary generation task

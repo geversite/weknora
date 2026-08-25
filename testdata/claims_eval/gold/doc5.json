@@ -1,0 +1,19 @@
+{
+  "doc": "doc5_reactor_manual.md",
+  "claims": [
+    {"id": "d5-01", "subject": "星晶反应堆 SQ-7", "predicate": "用途", "value": "幽能引擎地面测试用反应堆", "value_kind": "text", "qualifiers": {}, "quote": "星晶反应堆 SQ-7 是幽能引擎 (Psionic Engine) 的地面测试用反应堆"},
+    {"id": "d5-02", "subject": "星晶反应堆 SQ-7", "predicate": "额定输出功率", "value": "12.5 太瓦", "value_kind": "number", "qualifiers": {}, "quote": "额定输出功率为 12.5 太瓦"},
+    {"id": "d5-03", "subject": "星晶反应堆 SQ-7 堆芯", "predicate": "催化剂", "value": "工业级星晶", "value_kind": "text", "qualifiers": {}, "quote": "堆芯催化剂为工业级星晶 (StarQuartz)"},
+    {"id": "d5-04", "subject": "工业级星晶", "predicate": "纯度要求", "value": "不低于 99.2%", "value_kind": "number", "qualifiers": {}, "quote": "纯度不得低于 99.2%"},
+    {"id": "d5-05", "subject": "工业级星晶", "predicate": "供应实体", "value": "天穹财团与新弦工业", "value_kind": "enum", "qualifiers": {"time": "目前"}, "quote": "目前工业级星晶由天穹财团与新弦工业 (NeoString Industries) 两家实体供应"},
+    {"id": "d5-06", "subject": "星晶反应堆 SQ-7", "predicate": "工作温度区间", "value": "-40℃ 至 850℃", "value_kind": "number", "qualifiers": {}, "quote": "反应堆工作温度区间为 -40℃ 至 850℃"},
+    {"id": "d5-07", "subject": "星晶", "predicate": "自发振荡频段", "value": "17.3 千赫兹", "value_kind": "number", "qualifiers": {"scope": "堆芯内"}, "quote": "星晶在堆芯内的自发振荡频段为 17.3 千赫兹"},
+    {"id": "d5-08", "subject": "星晶反应堆 SQ-7", "predicate": "连续运行时长上限", "value": "72 小时", "value_kind": "number", "qualifiers": {}, "quote": "反应堆连续运行时长上限为 72 小时"},
+    {"id": "d5-09", "subject": "冷却周期", "predicate": "最短时长", "value": "12 小时", "value_kind": "number", "qualifiers": {}, "quote": "每次冷却周期不得少于 12 小时"},
+    {"id": "d5-10", "subject": "反应堆操作人员", "predicate": "资质要求", "value": "三级幽能安全证书", "value_kind": "text", "qualifiers": {}, "quote": "操作人员须持有三级幽能安全证书方可上岗"},
+    {"id": "d5-11", "subject": "全负荷测试", "predicate": "安全半径", "value": "300 米", "value_kind": "number", "qualifiers": {}, "quote": "全负荷测试时，安全半径为 300 米"},
+    {"id": "d5-12", "subject": "反应堆操作区", "predicate": "防护要求", "value": "部署谐波屏蔽罩", "value_kind": "text", "qualifiers": {"condition": "抑制星晶的神经干扰效应"}, "quote": "操作区必须部署谐波屏蔽罩"},
+    {"id": "d5-13", "subject": "星晶反应堆 SQ-7", "predicate": "维护周期", "value": "每运行 500 小时", "value_kind": "number", "qualifiers": {}, "quote": "反应堆每运行 500 小时须进行一次例行维护"},
+    {"id": "d5-14", "subject": "幽能引擎", "predicate": "原型机测试时间", "value": "推迟至 2153 年", "value_kind": "date", "qualifiers": {}, "quote": "幽能引擎原型机测试阶段已推迟至 2153 年"}
+  ]
+}

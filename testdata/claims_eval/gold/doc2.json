@@ -1,0 +1,10 @@
+{
+  "doc": "doc2_psionic_engine.md",
+  "claims": [
+    {"id": "d2-01", "subject": "幽能引擎", "predicate": "核心原理", "value": "虚空共振理论", "value_kind": "text", "qualifiers": {}, "quote": "建立在备受争议的**虚空共振理论 (Void Resonance Theory)** 之上"},
+    {"id": "d2-02", "subject": "虚空共振理论", "predicate": "效应", "value": "在空间中制造引力滑流", "value_kind": "text", "qualifiers": {"condition": "特定频率的干涉"}, "quote": "通过特定频率的干涉，可以在空间中制造“引力滑流”"},
+    {"id": "d2-03", "subject": "幽能引擎反应堆核心", "predicate": "催化剂", "value": "星晶", "value_kind": "text", "qualifiers": {}, "quote": "必须使用一种极端稀有的矿物作为反应堆核心的催化剂。这种矿物被称为**星晶 (StarQuartz)**"},
+    {"id": "d2-04", "subject": "星晶", "predicate": "物理特性", "value": "室温下超导并在特定频段下自发振荡", "value_kind": "text", "qualifiers": {}, "quote": "星晶具有在室温下超导并在特定频段下自发振荡的特性"},
+    {"id": "d2-05", "subject": "工业级星晶", "predicate": "供应实体", "value": "仅天穹财团", "value_kind": "enum", "qualifiers": {"time": "目前"}, "quote": "地球上唯一能稳定合成并从陨石中提纯出工业级星晶的实体，是拥有庞大资本和尖端技术的**天穹财团 (SkyVault Consortium)**"}
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "doc": "doc6_admin_faq.md",
+  "claims": [
+    {"id": "d6-01", "subject": "报销单", "predicate": "提交时限", "value": "费用发生后 45 天内", "value_kind": "number", "qualifiers": {}, "quote": "请在费用发生后 45 天内提交报销单"},
+    {"id": "d6-02", "subject": "国际漫游通讯补贴", "predicate": "每天标准", "value": "100 元", "value_kind": "number", "qualifiers": {}, "quote": "国际漫游通讯补贴为每天 100 元"},
+    {"id": "d6-03", "subject": "市内交通费", "predicate": "每日上限", "value": "150 元", "value_kind": "number", "qualifiers": {"scope": "出差期间"}, "quote": "出差期间市内交通费每日上限为 150 元"},
+    {"id": "d6-04", "subject": "国内出差餐费补贴", "predicate": "每天标准", "value": "150 元", "value_kind": "number", "qualifiers": {}, "quote": "国内出差餐费补贴为每天 150 元"},
+    {"id": "d6-05", "subject": "带薪年假", "predicate": "天数", "value": "15 天", "value_kind": "number", "qualifiers": {"condition": "入职满一年"}, "quote": "入职满一年的员工，每年享有 15 天带薪年假"},
+    {"id": "d6-06", "subject": "病假", "predicate": "提报时限", "value": "24 小时内", "value_kind": "number", "qualifiers": {"scope": "向直属主管"}, "quote": "病假须在 24 小时内向直属主管提报"},
+    {"id": "d6-07", "subject": "病假医院证明", "predicate": "要求条件", "value": "超过 3 天", "value_kind": "number", "qualifiers": {}, "quote": "超过 3 天需提供医院证明"},
+    {"id": "d6-08", "subject": "工卡补办", "predicate": "工本费", "value": "50 元", "value_kind": "number", "qualifiers": {}, "quote": "工卡补办收取工本费 50 元"},
+    {"id": "d6-09", "subject": "工卡补办", "predicate": "制作时长", "value": "3 个工作日内", "value_kind": "number", "qualifiers": {}, "quote": "行政服务中心在 3 个工作日内制作完成"},
+    {"id": "d6-10", "subject": "园区班车早班", "predicate": "发车时间", "value": "7:30", "value_kind": "number", "qualifiers": {}, "quote": "早班 7:30 发车"},
+    {"id": "d6-11", "subject": "园区班车晚班", "predicate": "发车时间", "value": "18:30", "value_kind": "number", "qualifiers": {}, "quote": "晚班 18:30 发车"},
+    {"id": "d6-12", "subject": "员工健身房", "predicate": "开放时间", "value": "工作日 6:00 至 22:00", "value_kind": "number", "qualifiers": {"scope": "工作日"}, "quote": "员工健身房在工作日 6:00 至 22:00 开放"},
+    {"id": "d6-13", "subject": "深渊之门实验室", "predicate": "进入权限", "value": "二级以上权限", "value_kind": "text", "qualifiers": {}, "quote": "“深渊之门”实验室须持二级以上权限方可进入"}
+  ]
+}

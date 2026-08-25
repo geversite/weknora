@@ -1,0 +1,11 @@
+{
+  "description": "预埋跨文档矛盾对（gold 声明 id 引用）。conflict=true 的对是应被声明键通道召回的矛盾；conflict=false 的对是同键同值一致性对照（不得误报）。",
+  "pairs": [
+    {"pair_id": "P1", "conflict": true,  "fact": "幽能引擎原型机测试时间", "a": {"doc": "doc1", "gold_id": "d1-05"}, "b": {"doc": "doc5", "gold_id": "d5-14"}},
+    {"pair_id": "P2", "conflict": true,  "fact": "工业级星晶供应实体",     "a": {"doc": "doc2", "gold_id": "d2-05"}, "b": {"doc": "doc5", "gold_id": "d5-05"}},
+    {"pair_id": "P3", "conflict": true,  "fact": "报销提交时限",           "a": {"doc": "doc4", "gold_id": "d4-16"}, "b": {"doc": "doc6", "gold_id": "d6-01"}},
+    {"pair_id": "P4", "conflict": true,  "fact": "国际漫游通讯补贴",       "a": {"doc": "doc4", "gold_id": "d4-14"}, "b": {"doc": "doc6", "gold_id": "d6-02"}},
+    {"pair_id": "P5", "conflict": true,  "fact": "市内交通费每日上限",     "a": {"doc": "doc4", "gold_id": "d4-10"}, "b": {"doc": "doc6", "gold_id": "d6-03"}},
+    {"pair_id": "N1", "conflict": false, "fact": "国内出差餐费补贴(一致对照)", "a": {"doc": "doc4", "gold_id": "d4-12"}, "b": {"doc": "doc6", "gold_id": "d6-04"}}
+  ]
+}

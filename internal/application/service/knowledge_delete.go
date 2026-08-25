@@ -178,6 +178,12 @@ func (s *knowledgeService) DeleteKnowledge(ctx context.Context, id string) error
 			logger.Warnf(ctx, "Failed to delete conflicts for knowledge %s: %v", id, err)
 		}
 	}
+	// Best-effort: remove the knowledge's claims from the pairing index (C1).
+	if s.claimRepo != nil {
+		if err := s.claimRepo.DeleteByKnowledge(ctx, tenantID, id); err != nil {
+			logger.Warnf(ctx, "Failed to delete claims for knowledge %s: %v", id, err)
+		}
+	}
 	// Delete the knowledge row FIRST, then drop its physical file. Physical
 	// cleanup is deliberately deferred until the row is gone: if any of the
 	// index/chunk/graph cleanups above failed we already returned early with the

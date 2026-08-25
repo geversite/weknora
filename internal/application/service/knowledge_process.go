@@ -703,6 +703,15 @@ func (s *knowledgeService) processChunks(ctx context.Context,
 		}
 	}
 
+	// Enqueue post-upload claim extraction (C1) BEFORE conflict detection so
+	// the claim index is (best-effort) fresh when the detector's claim-key
+	// pairing channel runs. Same queue → FIFO gives a weak ordering
+	// guarantee; the detector tolerates missing claims via its fallback
+	// channel either way.
+	if kb.IsClaimExtractEnabled() {
+		s.enqueueClaimExtractTask(ctx, knowledge)
+	}
+
 	// Enqueue post-upload conflict detection (M3) when the KB has it enabled.
 	// This runs as its own task (not counted in the finalizing slots) so a
 	// detection failure never blocks the document from completing.
@@ -716,6 +725,79 @@ func (s *knowledgeService) processChunks(ctx context.Context,
 		logger.GetLogger(ctx).WithField("error", err).Errorf("processChunks update tenant storage used failed")
 	}
 	logger.GetLogger(ctx).Infof("processChunks successfully")
+}
+
+// enqueueClaimExtractTask queues a claim extraction task (C1) for a
+// freshly-uploaded knowledge. Best-effort: a failure is logged and does not
+// fail the upload. TaskID dedup collapses concurrent re-triggers.
+func (s *knowledgeService) enqueueClaimExtractTask(ctx context.Context, knowledge *types.Knowledge) {
+	if s.task == nil || knowledge == nil {
+		return
+	}
+	payload := types.ClaimExtractPayload{
+		TenantID:        knowledge.TenantID,
+		KnowledgeBaseID: knowledge.KnowledgeBaseID,
+		SourceType:      types.ClaimSourceChunk,
+		KnowledgeID:     knowledge.ID,
+		Reason:          "ingest",
+	}
+	bytes, err := json.Marshal(payload)
+	if err != nil {
+		logger.GetLogger(ctx).WithField("error", err).Errorf("enqueueClaimExtractTask marshal failed for %s", knowledge.ID)
+		return
+	}
+	task := asynq.NewTask(types.TypeClaimExtract, bytes,
+		asynq.TaskID(fmt.Sprintf("claim:knowledge:%s", knowledge.ID)),
+		asynq.Queue(types.QueueConflict),
+		asynq.MaxRetry(2),
+		asynq.Timeout(10*time.Minute),
+	)
+	if _, err := s.task.Enqueue(task); err != nil {
+		if errors.Is(err, asynq.ErrTaskIDConflict) || errors.Is(err, asynq.ErrDuplicateTask) {
+			// asynq keeps the fixed-TaskID dedup key (t:...) forever once a task
+			// lands in the dead-letter archive, so a finally-failed claim extract
+			// permanently blocks re-enqueue for the same knowledge and leaves the
+			// claims table empty forever. Detect that case: if no live task still
+			// references this knowledge (pending/active/scheduled/retry), the dedup
+			// key is a stale archive remnant — drop it and enqueue again.
+			if s.taskInspector != nil {
+				if queued, qErr := s.taskInspector.HasQueuedTasksForKnowledge(ctx, knowledge.ID); qErr == nil && !queued {
+					s.dropStaleClaimDedupKey(ctx, knowledge.ID)
+					if _, err2 := s.task.Enqueue(task); err2 == nil {
+						logger.GetLogger(ctx).Infof("Enqueued claim extract task for knowledge %s (after clearing stale dedup)", knowledge.ID)
+						return
+					} else if !errors.Is(err2, asynq.ErrTaskIDConflict) {
+						logger.GetLogger(ctx).WithField("error", err2).Errorf("enqueueClaimExtractTask retry enqueue failed for %s", knowledge.ID)
+						return
+					}
+				}
+			}
+			return
+		}
+		logger.GetLogger(ctx).WithField("error", err).Errorf("enqueueClaimExtractTask enqueue failed for %s", knowledge.ID)
+		return
+	}
+	logger.GetLogger(ctx).Infof("Enqueued claim extract task for knowledge %s", knowledge.ID)
+}
+
+// dropStaleClaimDedupKey removes asynq's dead-letter remnants (the t: dedup key
+// and the archived-set entry) for a claim extract task whose business row was
+// re-processed. Without this, a finally-failed claim task keeps its fixed
+// TaskID dedup key alive forever, which blocks every future re-enqueue for the
+// same knowledge and leaves the claims table permanently empty. Nil-safe for
+// Lite mode / missing redis.
+func (s *knowledgeService) dropStaleClaimDedupKey(ctx context.Context, knowledgeID string) {
+	taskID := fmt.Sprintf("claim:knowledge:%s", knowledgeID)
+	if s.redisClient != nil {
+		dedupKey := fmt.Sprintf("asynq:{%s}:t:%s", types.QueueConflict, taskID)
+		if err := s.redisClient.Del(ctx, dedupKey).Err(); err != nil {
+			logger.GetLogger(ctx).WithField("error", err).Warnf("dropStaleClaimDedupKey del %s failed", dedupKey)
+		}
+		archivedKey := fmt.Sprintf("asynq:{%s}:archived", types.QueueConflict)
+		if err := s.redisClient.ZRem(ctx, archivedKey, taskID).Err(); err != nil {
+			logger.GetLogger(ctx).WithField("error", err).Warnf("dropStaleClaimDedupKey zrem %s failed", taskID)
+		}
+	}
 }
 
 // enqueueConflictDetectTask queues a file-level conflict detection task for a
