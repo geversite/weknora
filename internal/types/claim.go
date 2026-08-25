@@ -66,4 +66,4 @@ const (
 // ClaimExtractorVersion is the current extractor generation. Bump it whenever
 // the extraction prompt or the normalization rules change in a way that makes
 // previously stored claims incomparable with fresh ones.
-const ClaimExtractorVersion = 1
+const ClaimExtractorVersion = 2

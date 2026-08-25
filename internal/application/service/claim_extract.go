@@ -406,15 +406,35 @@ type extractedClaimsEnvelope struct {
 	Claims []extractedClaim `json:"claims"`
 }
 
-const claimExtractSystemPrompt = `你是知识库声明抽取器。从给定文本中抽取"原子事实声明"，每条为一个四元组：主体(subject)、属性(predicate)、取值(value)、限定词(qualifiers)。` +
-	`规则：` +
-	`1. 只抽客观事实断言（数值、日期、状态、归属、定义）；不抽主观评价、操作步骤、示例、假设；` +
-	`2. 每条声明必须自含：主体是明确的名词短语，不得是代词或省略；无法确定主体则放弃该条；` +
-	`3. value 保留原文表述；value_kind 标注 number/enum/date/text；` +
-	`4. qualifiers 尽量填 time(时效)/scope(适用范围)/unit(单位)/condition(前提条件)，没有则省略；` +
-	`5. quote 必须是原文逐字连续片段（用于定位），不得改写；` +
-	`6. 单段文本最多 30 条，超出时保留信息量最大的；` +
-	`7. 仅输出 JSON，格式：{"claims":[{"chunk_index":int,"subject":str,"predicate":str,"value":str,"qualifiers":obj,"value_kind":str,"quote":str}]}`
+// claimExtractSystemPrompt v2 deliberately constrains the subject/predicate
+// boundary. Production evaluation showed that an unconstrained prompt lets a
+// model encode scope in the subject ("出差期间市内交通费") or reverse a relation
+// ("天穹财团@能力") — both destroy cross-document claim-key recall even when
+// the source fact itself was extracted correctly. The labels below are compact
+// canonical slots for pairing; quote remains the verbatim source evidence.
+const claimExtractSystemPrompt = `你是知识库声明抽取器。从给定文本中抽取原子事实声明。每条声明为主体(subject)、属性(predicate)、取值(value)、限定词(qualifiers)四元组，并将用于跨文档的同一事实配对。
+
+硬性规则：
+1. 只抽客观、可核验的事实断言（数值、日期、状态、归属、定义、规则）；不抽主观评价、示例、推测、纯别名、机构全称、泛化能力或标题重复信息。
+2. subject 必须是被描述的核心对象，使用稳定且可跨文档复用的名词短语。不要把时间、地点、适用范围、条件、情态词塞入 subject；它们应放进 qualifiers。
+3. predicate 必须是稳定、简短、可跨文档复用的属性标签（例如 提交时限、每日上限、每天标准、供应实体、测试时间）。不要把须/应/可、在费用发生后、修订后、开始/截止等句法或版本修饰语塞入 predicate；这些信息放进 qualifiers。
+4. 当一句话表达资源/制度与机构的供应、生产、归属关系时，以资源/制度为 subject，以供应实体/生产实体/归属为 predicate；不要改写成机构的能力声明。
+5. value 保留实际结论或数值；value_kind 标注 number/enum/date/text。quote 必须是原文逐字连续片段，不得改写。
+6. qualifiers 尽量使用 time、scope、unit、condition、version、status；没有则省略。subject/predicate 可以是对原文的稳定概括，但 quote 必须逐字来自原文。
+7. 同一事实只输出一条最稳定的主谓切分；不要把一个事实拆成别名、能力、背景等多条旁支声明。
+8. 单段最多 30 条；仅输出 JSON，不要输出解释或 Markdown。
+
+主谓规范示例：
+- 原文：国际出差期间的漫游通讯补贴为每天 80 元。
+  输出：subject=国际漫游通讯补贴, predicate=每天标准, value=80 元, qualifiers={"scope":"国际出差期间"}。
+- 原文：出差期间市内交通费每日上限为 120 元。
+  输出：subject=市内交通费, predicate=每日上限, value=120 元, qualifiers={"scope":"出差期间"}。
+- 原文：目前工业级星晶由天穹财团与新弦工业两家实体供应。
+  输出：subject=工业级星晶, predicate=供应实体, value=天穹财团与新弦工业两家实体, qualifiers={"time":"目前"}。
+- 原文：幽能引擎将在 2150 年前进入原型机测试阶段。
+  输出：subject=幽能引擎原型机, predicate=测试时间, value=2150 年前。
+
+输出格式：{"claims":[{"chunk_index":int,"subject":str,"predicate":str,"value":str,"qualifiers":obj,"value_kind":str,"quote":str}]}`
 
 // extractBatch packs several chunks into one LLM call and returns per-chunk
 // claim slices (index-aligned with the input batch).

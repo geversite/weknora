@@ -160,24 +160,30 @@ func (s *KnowledgeConflictService) Handle(ctx context.Context, task *asynq.Task)
 	}
 
 	// 3. Coarse candidate generation, dual channel (C1):
-	//    main channel — claim-key pairing over the claims index;
-	//    fallback     — semantic HybridSearch, only for chunks the claim
-	//    channel cannot cover (no claims extracted / extraction disabled).
-	pairs, coveredChunkIDs := s.coarseFilterByClaims(
+	//    main channel — exact claim-key pairing over the claims index;
+	//    fallback     — semantic HybridSearch for every chunk that still has
+	//                    an unmatched claim (or no usable claim). This is
+	//                    essential for subject synonyms / boundary drift such
+	//                    as "报销申请" vs "报销单".
+	pairs, claimCoveredChunkIDs := s.coarseFilterByClaims(
 		detectCtx, payload.TenantID, payload.KnowledgeBaseID, payload.KnowledgeID, newTitle, enabledNew)
-	uncovered := make([]*types.Chunk, 0, len(enabledNew))
+	fallbackChunks := make([]*types.Chunk, 0, len(enabledNew))
 	for _, c := range enabledNew {
-		if !coveredChunkIDs[c.ID] {
-			uncovered = append(uncovered, c)
+		if !claimCoveredChunkIDs[c.ID] {
+			fallbackChunks = append(fallbackChunks, c)
 		}
 	}
-	if len(uncovered) > 0 {
+	if len(fallbackChunks) > 0 {
 		pairs = append(pairs, s.coarseFilterBySearch(
-			detectCtx, kb, payload.TenantID, payload.KnowledgeBaseID, payload.KnowledgeID, newTitle, uncovered)...)
+			detectCtx, kb, payload.TenantID, payload.KnowledgeBaseID, payload.KnowledgeID, newTitle, fallbackChunks)...)
 	}
+	// A chunk can legitimately enter both channels when it contains one exact
+	// key hit and another unmatched fact. Collapse same chunk pairs before LLM
+	// adjudication so this improves recall without multiplying cost.
+	pairs = dedupeConflictCandidatePairs(pairs)
 	logger.GetLogger(ctx).Infof(
-		"[ConflictDetect] Coarse candidates for knowledge %s: %d pairs (claim-channel chunks=%d, fallback chunks=%d)",
-		payload.KnowledgeID, len(pairs), len(coveredChunkIDs), len(uncovered))
+		"[ConflictDetect] Coarse candidates for knowledge %s: %d pairs (claim-covered chunks=%d, fallback chunks=%d)",
+		payload.KnowledgeID, len(pairs), len(claimCoveredChunkIDs), len(fallbackChunks))
 	if len(pairs) == 0 {
 		logger.GetLogger(ctx).Infof("[ConflictDetect] No coarse candidates for knowledge %s", payload.KnowledgeID)
 		return nil
@@ -253,10 +259,11 @@ type conflictPair struct {
 
 // coarseFilterByClaims is the C1 main candidate channel: pair new-file claims
 // with same-claim-key claims elsewhere in the KB (documents AND wiki pages).
-// Returns the pairs plus the set of new-chunk IDs the channel covered (chunks
-// that produced at least one claim) — the caller runs the HybridSearch
-// fallback only for uncovered chunks. Nil-safe: without a claim repo the
-// channel reports zero coverage and the detector degrades to V1 behavior.
+// It returns exact-key pairs plus chunks fully covered by that channel. A chunk
+// is covered only when EVERY usable claim in it found a live exact-key
+// counterpart. Chunks with no claims, an unmatched key, or a disabled/missing
+// counterpart deliberately remain uncovered and enter HybridSearch fallback.
+// This preserves recall for subject synonyms and predicate boundary drift.
 func (s *KnowledgeConflictService) coarseFilterByClaims(
 	ctx context.Context,
 	tenantID uint64,
@@ -280,9 +287,10 @@ func (s *KnowledgeConflictService) coarseFilterByClaims(
 	for _, c := range newChunks {
 		chunkByID[c.ID] = c
 	}
-	// Group the new file's claims by key, keeping only claims whose source
-	// chunk is enabled and part of this detection run.
+	// Group claims by normalized key and by source chunk. Claims whose source
+	// is not part of this detection pass are intentionally ignored.
 	newByKey := make(map[string][]*types.Claim)
+	claimsByChunk := make(map[string][]*types.Claim)
 	for _, c := range newClaims {
 		if c == nil || c.ClaimKey == "" {
 			continue
@@ -290,8 +298,8 @@ func (s *KnowledgeConflictService) coarseFilterByClaims(
 		if _, ok := chunkByID[c.SourceID]; !ok {
 			continue
 		}
-		covered[c.SourceID] = true
 		newByKey[c.ClaimKey] = append(newByKey[c.ClaimKey], c)
+		claimsByChunk[c.SourceID] = append(claimsByChunk[c.SourceID], c)
 	}
 	if len(newByKey) == 0 {
 		return nil, covered
@@ -315,6 +323,7 @@ func (s *KnowledgeConflictService) coarseFilterByClaims(
 	// lists instead of spawning duplicate LLM adjudications.
 	type pairKey struct{ newChunkID, existSourceID string }
 	merged := make(map[pairKey]*conflictPair)
+	matchedKeys := make(map[string]bool)
 	titleCache := make(map[string]string) // knowledgeID -> title
 	var order []pairKey
 
@@ -335,6 +344,7 @@ func (s *KnowledgeConflictService) coarseFilterByClaims(
 			if newChunk == nil || counterpart.ID == newChunk.ID {
 				continue
 			}
+			matchedKeys[ex.ClaimKey] = true
 			pk := pairKey{newChunkID: newChunk.ID, existSourceID: counterpart.ID}
 			if p, ok := merged[pk]; ok {
 				p.NewClaimIDs = appendUnique(p.NewClaimIDs, nc.ID)
@@ -359,7 +369,33 @@ func (s *KnowledgeConflictService) coarseFilterByClaims(
 	for _, pk := range order {
 		pairs = append(pairs, *merged[pk])
 	}
-	return pairs, covered
+	return pairs, claimChannelCoveredChunks(claimsByChunk, matchedKeys)
+}
+
+// claimChannelCoveredChunks returns only chunks whose every usable claim has a
+// valid exact-key counterpart. Returning partial chunks as uncovered is
+// intentional: HybridSearch sees the whole chunk and can recover a second
+// fact expressed with synonyms even when the chunk also contains one exact hit.
+func claimChannelCoveredChunks(
+	claimsByChunk map[string][]*types.Claim, matchedKeys map[string]bool,
+) map[string]bool {
+	covered := make(map[string]bool)
+	for chunkID, claims := range claimsByChunk {
+		if chunkID == "" || len(claims) == 0 {
+			continue
+		}
+		allMatched := true
+		for _, claim := range claims {
+			if claim == nil || claim.ClaimKey == "" || !matchedKeys[claim.ClaimKey] {
+				allMatched = false
+				break
+			}
+		}
+		if allMatched {
+			covered[chunkID] = true
+		}
+	}
+	return covered
 }
 
 // resolveClaimCounterpart loads the counterpart source of an existing claim:
@@ -479,6 +515,35 @@ func toExistingChunk(r *types.SearchResult) *types.Chunk {
 		Content:     r.Content,
 		IsEnabled:   true,
 	}
+}
+
+// dedupeConflictCandidatePairs removes in-memory duplicates created when a
+// partially covered chunk enters both claim-key and semantic fallback paths.
+// It prefers claim provenance when either candidate has it, while preserving
+// the fallback candidate's source/title only when no exact-key pair exists.
+func dedupeConflictCandidatePairs(pairs []conflictPair) []conflictPair {
+	type pairKey struct{ newChunkID, existChunkID string }
+	out := make([]conflictPair, 0, len(pairs))
+	seen := make(map[pairKey]int, len(pairs))
+	for _, pair := range pairs {
+		if pair.NewChunk == nil || pair.ExistingChunk == nil ||
+			pair.NewChunk.ID == "" || pair.ExistingChunk.ID == "" {
+			continue
+		}
+		key := pairKey{newChunkID: pair.NewChunk.ID, existChunkID: pair.ExistingChunk.ID}
+		if idx, ok := seen[key]; ok {
+			existing := &out[idx]
+			if existing.ClaimKeyHit == "" && pair.ClaimKeyHit != "" {
+				existing.ClaimKeyHit = pair.ClaimKeyHit
+				existing.NewClaimIDs = append(existing.NewClaimIDs, pair.NewClaimIDs...)
+				existing.ExistClaimIDs = append(existing.ExistClaimIDs, pair.ExistClaimIDs...)
+			}
+			continue
+		}
+		seen[key] = len(out)
+		out = append(out, pair)
+	}
+	return out
 }
 
 // dedupePending filters out pairs that already have a pending conflict recorded,
