@@ -40,9 +40,14 @@ const (
 	// consecutive saves collapse into one run (asynq TaskID dedup + delay).
 	claimExtractWikiDebounce = 2 * time.Minute
 	// claimExtractTemperature / MaxTokens bounds.
-	claimExtractTemperature  = 0.1
-	claimExtractMinMaxTokens = 800
-	claimExtractMaxMaxTokens = 4000
+	claimExtractTemperature = 0.1
+	// claimExtractTokensPerChunk is the generation budget granted to each chunk
+	// in an extraction call. A batch's maxTokens is chunkCount × this value so a
+	// small document isn't starved into a truncated, non-JSON reply (e.g. a 3-chunk
+	// batch clamped to the old 800-token floor used to get cut off mid-JSON).
+	claimExtractTokensPerChunk = 1500
+	claimExtractMinMaxTokens   = 800
+	claimExtractMaxMaxTokens   = 4000
 )
 
 // claimExtractService implements interfaces.ClaimExtractService.
@@ -418,13 +423,11 @@ func (s *claimExtractService) extractBatch(
 ) ([][]extractedClaim, error) {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "以下是同一文档的 %d 个片段，chunk_index 从 0 开始：\n", len(batch))
-	totalRunes := 0
 	for i, c := range batch {
 		content := conflictTruncateRunes(c.Content, claimExtractChunkContentMaxRunes)
-		totalRunes += len([]rune(content))
 		fmt.Fprintf(&sb, "--- 片段 %d ---\n%s\n", i, content)
 	}
-	parsed, err := s.callExtractor(ctx, chatModel, sb.String(), totalRunes)
+	parsed, err := s.callExtractor(ctx, chatModel, sb.String(), len(batch))
 	if err != nil {
 		return nil, err
 	}
@@ -448,13 +451,19 @@ func (s *claimExtractService) extractSingle(
 		fmt.Fprintf(&sb, "（文档标题：%s）\n", title)
 	}
 	fmt.Fprintf(&sb, "--- 片段 0 ---\n%s\n", text)
-	return s.callExtractor(ctx, chatModel, sb.String(), len([]rune(text)))
+	return s.callExtractor(ctx, chatModel, sb.String(), 1)
 }
 
 func (s *claimExtractService) callExtractor(
-	ctx context.Context, chatModel chat.Chat, userPrompt string, inputRunes int,
+	ctx context.Context, chatModel chat.Chat, userPrompt string, chunkCount int,
 ) ([]extractedClaim, error) {
-	maxTokens := inputRunes / 3
+	if chunkCount < 1 {
+		chunkCount = 1
+	}
+	// Grant each chunk a generous generation budget so a small document isn't
+	// starved into a truncated, non-JSON reply (the old inputRunes/3 + 800 floor
+	// used to cut qwen-plus off mid-JSON at completion_tokens=800).
+	maxTokens := chunkCount * claimExtractTokensPerChunk
 	if maxTokens < claimExtractMinMaxTokens {
 		maxTokens = claimExtractMinMaxTokens
 	}
