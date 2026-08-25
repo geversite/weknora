@@ -24,6 +24,7 @@ import argparse
 import copy
 import csv
 import datetime as dt
+import hashlib
 import io
 import json
 import os
@@ -604,6 +605,18 @@ def make_run_id(scenario_name: str, variant: str) -> str:
     return f"{stamp}-{scenario_name}-{variant}-{safe_git_sha()[:8]}"
 
 
+def experiment_channel(run_id: str) -> str:
+    """Build a stable correlation tag that fits knowledges.channel VARCHAR(50).
+
+    The full run ID belongs in the JSON manifest. The database channel is only
+    a short, queryable correlation hint, so storing a digest prevents long
+    scenario names from making the manual-ingest request fail before any task
+    is enqueued.
+    """
+    digest = hashlib.sha256(run_id.encode("utf-8")).hexdigest()[:16]
+    return f"experiment:{digest}"
+
+
 def run_experiment(args: argparse.Namespace) -> int:
     scenario_path = Path(args.scenario).resolve()
     scenario = load_scenario(scenario_path)
@@ -625,6 +638,7 @@ def run_experiment(args: argparse.Namespace) -> int:
         "scenario_path": str(scenario_path.relative_to(ROOT)) if scenario_path.is_relative_to(ROOT) else str(scenario_path),
         "variant": args.variant,
         "base_url": client.base_url,
+        "ingest_channel": experiment_channel(run_id),
         "knowledge_ids": {},
         "database_export_mode": PostgresExporter().describe_mode(),
     }
@@ -695,7 +709,7 @@ def run_experiment(args: argparse.Namespace) -> int:
                     "title": title,
                     "content": content,
                     "status": "publish",
-                    "channel": f"experiment:{run_id}",
+                    "channel": manifest["ingest_channel"],
                 },
             )
             if not isinstance(knowledge, dict) or not knowledge.get("id"):
