@@ -175,8 +175,14 @@ func (s *claimExtractService) Handle(ctx context.Context, task *asynq.Task) erro
 
 	chatModel, err := s.chatModelForKB(extractCtx, kb)
 	if err != nil || chatModel == nil {
-		// No usable model: report nothing rather than persisting junk.
+		// For a document source, still release M3 detection so the legacy
+		// semantic path is available rather than silently dropping conflict
+		// detection merely because C1's model setup was unavailable. Wiki has
+		// no file-level conflict task at this stage.
 		logger.GetLogger(ctx).Infof("[ClaimExtract] KB %s has no usable chat model, skip: %v", kb.ID, err)
+		if payload.SourceType == types.ClaimSourceChunk && payload.KnowledgeID != "" {
+			s.enqueueConflictDetectAfterClaims(ctx, payload, "claims_skipped_no_model")
+		}
 		return nil
 	}
 
@@ -185,7 +191,18 @@ func (s *claimExtractService) Handle(ctx context.Context, task *asynq.Task) erro
 		if payload.KnowledgeID == "" {
 			return errors.New("claim extract payload missing knowledge id")
 		}
-		return s.extractForKnowledge(extractCtx, kb, chatModel, payload.TenantID, payload.KnowledgeID)
+		err := s.extractForKnowledge(extractCtx, kb, chatModel, payload.TenantID, payload.KnowledgeID)
+		if err != nil {
+			// On the last asynq attempt, release a fallback detector before this
+			// extraction task becomes a dead letter. Earlier attempts retry C1
+			// first, preserving the claim-before-detect ordering invariant.
+			if isFinalAsynqAttempt(ctx) {
+				s.enqueueConflictDetectAfterClaims(ctx, payload, "claims_final_failure_fallback")
+			}
+			return err
+		}
+		s.enqueueConflictDetectAfterClaims(ctx, payload, "claims_ready")
+		return nil
 	case types.ClaimSourceWikiPage:
 		if payload.WikiPageID == "" {
 			return errors.New("claim extract payload missing wiki page id")
@@ -201,6 +218,42 @@ func (s *claimExtractService) chatModelForKB(ctx context.Context, kb *types.Know
 		return nil, nil
 	}
 	return s.modelService.GetChatModel(ctx, kb.SummaryModelID)
+}
+
+// enqueueConflictDetectAfterClaims makes the claim task the completion barrier
+// for file-level detection. It intentionally uses the existing M3 task options
+// so conflict handling remains isolated from ingestion and retried normally.
+// The call is best-effort: no enqueue failure can undo a successfully persisted
+// claim batch, and normal logging leaves an audit trail for experiments.
+func (s *claimExtractService) enqueueConflictDetectAfterClaims(
+	ctx context.Context, payload types.ClaimExtractPayload, reason string,
+) {
+	if s.taskEnqueuer == nil || payload.KnowledgeID == "" || payload.KnowledgeBaseID == "" {
+		return
+	}
+	conflictPayload := types.ConflictDetectPayload{
+		TenantID:        payload.TenantID,
+		KnowledgeID:     payload.KnowledgeID,
+		KnowledgeBaseID: payload.KnowledgeBaseID,
+	}
+	bytes, err := json.Marshal(conflictPayload)
+	if err != nil {
+		logger.GetLogger(ctx).WithField("error", err).Errorf(
+			"[ClaimExtract] marshal follow-up conflict task failed for knowledge %s", payload.KnowledgeID,
+		)
+		return
+	}
+	task := asynq.NewTask(types.TypeConflictDetect, bytes, conflictDetectTaskOptions()...)
+	if _, err := s.taskEnqueuer.Enqueue(task); err != nil {
+		logger.GetLogger(ctx).WithField("error", err).Errorf(
+			"[ClaimExtract] enqueue follow-up conflict task failed for knowledge %s", payload.KnowledgeID,
+		)
+		return
+	}
+	logger.GetLogger(ctx).Infof(
+		"[ClaimExtract] Enqueued conflict detection after claims for knowledge %s (reason=%s)",
+		payload.KnowledgeID, reason,
+	)
 }
 
 // ---------------------------------------------------------------------------

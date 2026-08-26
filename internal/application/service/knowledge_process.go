@@ -703,19 +703,16 @@ func (s *knowledgeService) processChunks(ctx context.Context,
 		}
 	}
 
-	// Enqueue post-upload claim extraction (C1) BEFORE conflict detection so
-	// the claim index is (best-effort) fresh when the detector's claim-key
-	// pairing channel runs. Same queue → FIFO gives a weak ordering
-	// guarantee; the detector tolerates missing claims via its fallback
-	// channel either way.
+	// C1 sequencing invariant: a document's conflict task must not race its
+	// claim extraction task. Queue FIFO is insufficient because QueueConflict
+	// has multiple workers; the old "enqueue both" path could run detect first,
+	// making an already-extracted exact claim pair invisible to the detector.
+	// ClaimExtractService now enqueues conflict:detect only after it has
+	// persisted claims (or after its final retry fails, so V1 fallback remains
+	// available). With C1 disabled we retain the original immediate M3 path.
 	if kb.IsClaimExtractEnabled() {
 		s.enqueueClaimExtractTask(ctx, knowledge)
-	}
-
-	// Enqueue post-upload conflict detection (M3) when the KB has it enabled.
-	// This runs as its own task (not counted in the finalizing slots) so a
-	// detection failure never blocks the document from completing.
-	if kb.IsConflictDetectEnabled() {
+	} else if kb.IsConflictDetectEnabled() {
 		s.enqueueConflictDetectTask(ctx, knowledge)
 	}
 
