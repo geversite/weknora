@@ -449,6 +449,27 @@ def wait_for_expected_pairs(
     return last_conflicts, last_pairs
 
 
+def scenario_covers_full_gold(scenario: dict[str, Any]) -> bool:
+    """Whether evaluate.py can produce a valid corpus-level P/R for scenario.
+
+    evaluate.py intentionally loads every gold document in testdata/claims_eval.
+    Running it on a focused two/three-document diagnostic would count omitted
+    gold documents as false negatives, producing a misleading global recall.
+    """
+    gold_dir = ROOT / "testdata/claims_eval/gold"
+    expected_docs = {
+        str(read_json(path).get("doc", ""))
+        for path in gold_dir.glob("*.json")
+    }
+    expected_docs.discard("")
+    scenario_docs = {
+        str(document.get("gold_doc", ""))
+        for document in scenario.get("documents", [])
+    }
+    scenario_docs.discard("")
+    return bool(expected_docs) and expected_docs.issubset(scenario_docs)
+
+
 def write_evaluator_run(
     output_path: Path,
     run_id: str,
@@ -751,17 +772,24 @@ def run_experiment(args: argparse.Namespace) -> int:
         json_dump(output_dir / "conflict_document_pairs.json", observed_pairs)
 
         evaluator_result: dict[str, Any] | None = None
+        evaluator_scope = "skipped"
         evaluator_run_path = output_dir / "claims_eval_run.json"
-        if args.variant == "c1" and write_evaluator_run(
+        if args.variant == "c1" and scenario_covers_full_gold(scenario) and write_evaluator_run(
             evaluator_run_path, run_id, scenario, manifest["knowledge_ids"], claims, manifest,
         ):
+            evaluator_scope = "full_gold"
             evaluator_result = run_evaluator(evaluator_run_path, output_dir / "evaluator_output.txt")
         else:
-            reason = (
-                "variant=v1: claims extraction is intentionally disabled; extraction evaluator skipped.\n"
-                if args.variant == "v1"
-                else "Scenario has no complete gold_doc mapping; evaluator intentionally skipped.\n"
-            )
+            if args.variant == "v1":
+                reason = "variant=v1: claims extraction is intentionally disabled; extraction evaluator skipped.\n"
+            elif not scenario_covers_full_gold(scenario):
+                reason = (
+                    "Scenario covers only a subset of gold documents; global evaluate.py P/R is skipped "
+                    "so omitted documents are not counted as false negatives.\n"
+                )
+                evaluator_scope = "partial_gold_skipped"
+            else:
+                reason = "Scenario has no complete gold_doc mapping; evaluator intentionally skipped.\n"
             (output_dir / "evaluator_output.txt").write_text(reason, encoding="utf-8")
 
         missing_pairs = [
@@ -775,6 +803,7 @@ def run_experiment(args: argparse.Namespace) -> int:
             "dead_letter_count": len(dead_letters),
             "expected_conflict_document_pairs": expected_pairs,
             "missing_expected_conflict_document_pairs": missing_pairs,
+            "evaluator_scope": evaluator_scope,
             "evaluator": evaluator_result,
         }
         json_dump(output_dir / "metrics.json", metrics)

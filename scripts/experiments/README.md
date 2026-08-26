@@ -224,6 +224,9 @@ experiments/runs/<timestamp>-<scenario>-<variant>-<commit>/
 `gold_doc` 只在需要调用现有 `testdata/claims_eval/evaluate.py` 时填写。隔离回归场景可以
 省略它，运行器仍会导出 claims/conflicts 并检查预期的文档对。
 
+`evaluate.py` 的 P/R 是全六文档口径，因此运行器只会在场景覆盖全部 gold 文档时执行它。
+P2/P3/P1-P2 这类部分语料诊断场景会明确跳过全局 P/R，避免未注入的 gold 文档被错误计为漏检。
+
 ## 当前边界
 
 第一版运行器负责“真实执行 + 可复现导出 + C1 抽取评分”。C1.5 的下一小步会在应用侧增加
