@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "name": "p2_claim_chain",
+  "description": "Isolated strict claim-key and task-ordering regression. The second document must be detected only after its claims are persisted.",
+  "min_claims_per_document": 1,
+  "documents": [
+    {
+      "id": "p2_supplier_memo",
+      "path": "testdata/claims_eval/docs/p2_supplier_memo.md",
+      "title": "p2_supplier_memo"
+    },
+    {
+      "id": "p2_supplier_revision",
+      "path": "testdata/claims_eval/docs/p2_supplier_revision.md",
+      "title": "p2_supplier_revision"
+    }
+  ],
+  "expected_conflict_document_pairs": [
+    {
+      "id": "P2-claim-chain",
+      "left": "p2_supplier_memo",
+      "right": "p2_supplier_revision",
+      "note": "工业级星晶供应实体：唯一的天穹财团 vs 天穹财团与新弦工业两家"
+    }
+  ]
+}

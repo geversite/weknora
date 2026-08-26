@@ -116,6 +116,16 @@ doc1 → doc2 → doc3 → doc4 → doc5 → doc6
 - raw conflicts、spans、dead letters；
 - 可复现的 manifest（commit、模型 ID、KB、索引策略、文档 ID）。
 
+### P2 claim→detect 时序隔离场景
+
+```bash
+make experiment-p2
+```
+
+该场景只含“工业级星晶供应实体”的同键异值对，用于验证：第二份文档的
+`conflict:detect` 只会在其 `claim:extract` 成功落库后触发，避免多 worker 下
+claim 与 detect 并发造成的漏检。
+
 ### P3 fallback 隔离场景
 
 ```bash
