@@ -1,4 +1,4 @@
-.PHONY: help build run test clean docker-build-app docker-build-docreader docker-build-frontend docker-build-all docker-run migrate-up migrate-down docker-restart docker-stop start-all stop-all start-ollama stop-ollama build-images build-images-app build-images-docreader build-images-frontend clean-images check-env list-containers pull-images show-platform dev-start dev-stop dev-restart dev-logs dev-status dev-app dev-frontend docs install-swagger build-lite run-lite package-lite experiment-check experiment-c1 experiment-p2 experiment-p3 experiment-v1
+.PHONY: help build run test clean docker-build-app docker-build-docreader docker-build-frontend docker-build-all docker-run migrate-up migrate-down docker-restart docker-stop start-all stop-all start-ollama stop-ollama build-images build-images-app build-images-docreader build-images-frontend clean-images check-env list-containers pull-images show-platform dev-start dev-stop dev-restart dev-logs dev-status dev-app dev-frontend docs install-swagger build-lite run-lite package-lite experiment-check experiment-c1 experiment-p2 experiment-p3 experiment-p12 experiment-v1
 
 # Show help
 help:
@@ -63,6 +63,7 @@ help:
 	@echo "  experiment-c1     运行六文档 C1 生产模型实验"
 	@echo "  experiment-p2     运行 P2 claim→detect 时序隔离实验"
 	@echo "  experiment-p3     运行 P3 fallback 隔离回归实验"
+	@echo "  experiment-p12    运行 doc1/doc2/doc5 全上下文 P1/P2 诊断实验"
 	@echo "  experiment-v1     运行关闭 claims 的 V1 消融对照"
 	@echo ""
 	@echo "Lite 模式（零外部依赖）:"
@@ -356,6 +357,10 @@ experiment-p2:
 experiment-p3:
 	python3 scripts/experiments/run_claims_eval.py \
 		--scenario scripts/experiments/scenarios/p3_fallback.json --variant c1
+
+experiment-p12:
+	python3 scripts/experiments/run_claims_eval.py \
+		--scenario scripts/experiments/scenarios/p1_p2_full_context.json --variant c1
 
 experiment-v1:
 	python3 scripts/experiments/run_claims_eval.py \

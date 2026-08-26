@@ -34,6 +34,17 @@ func TestClaimChannelCoveredChunksRequiresEveryClaimToMatch(t *testing.T) {
 	}
 }
 
+func TestConflictCandidateChannelCounts(t *testing.T) {
+	claimPairs, fallbackPairs := conflictCandidateChannelCounts([]conflictPair{
+		{ClaimKeyHit: "工业级星晶供应实体"},
+		{},
+		{ClaimKeyHit: "国际漫游通讯补贴每天标准"},
+	})
+	if claimPairs != 2 || fallbackPairs != 1 {
+		t.Fatalf("channel counts = (%d claim, %d fallback), want (2, 1)", claimPairs, fallbackPairs)
+	}
+}
+
 func TestDedupeConflictCandidatePairsPrefersClaimProvenance(t *testing.T) {
 	newChunk := &types.Chunk{ID: "new", KnowledgeID: "new-doc"}
 	existingChunk := &types.Chunk{ID: "old", KnowledgeID: "old-doc"}

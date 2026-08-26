@@ -126,6 +126,21 @@ make experiment-p2
 `conflict:detect` 只会在其 `claim:extract` 成功落库后触发，避免多 worker 下
 claim 与 detect 并发造成的漏检。
 
+### P1/P2 全上下文诊断场景
+
+```bash
+make experiment-p12
+```
+
+该场景只注入原始 `doc1`、`doc2`、`doc5` 三份完整文档，用于区分：
+
+- strict claim-key 候选是否实际生成；
+- fallback 是否返回 P1；
+- LLM fine adjudication 是否将 P1/P2 判为冲突。
+
+配合后端的 `[ConflictDetect] Coarse candidates` 与 `[ConflictDetect] Fine verdict` 日志，
+它比完整六文档 run 更适合诊断候选通道和多事实上下文影响。
+
 ### P3 fallback 隔离场景
 
 ```bash

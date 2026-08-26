@@ -181,9 +181,10 @@ func (s *KnowledgeConflictService) Handle(ctx context.Context, task *asynq.Task)
 	// key hit and another unmatched fact. Collapse same chunk pairs before LLM
 	// adjudication so this improves recall without multiplying cost.
 	pairs = dedupeConflictCandidatePairs(pairs)
+	claimPairCount, fallbackPairCount := conflictCandidateChannelCounts(pairs)
 	logger.GetLogger(ctx).Infof(
-		"[ConflictDetect] Coarse candidates for knowledge %s: %d pairs (claim-covered chunks=%d, fallback chunks=%d)",
-		payload.KnowledgeID, len(pairs), len(claimCoveredChunkIDs), len(fallbackChunks))
+		"[ConflictDetect] Coarse candidates for knowledge %s: %d pairs (claim-pairs=%d, fallback-pairs=%d, claim-covered chunks=%d, fallback chunks=%d)",
+		payload.KnowledgeID, len(pairs), claimPairCount, fallbackPairCount, len(claimCoveredChunkIDs), len(fallbackChunks))
 	if len(pairs) == 0 {
 		logger.GetLogger(ctx).Infof("[ConflictDetect] No coarse candidates for knowledge %s", payload.KnowledgeID)
 		return nil
@@ -517,6 +518,27 @@ func toExistingChunk(r *types.SearchResult) *types.Chunk {
 	}
 }
 
+// conflictCandidateChannelCounts is intentionally small and log-oriented: C1.5
+// experiments need to distinguish exact claim-key candidates from semantic
+// fallback candidates without inferring their source from final conflict rows.
+func conflictCandidateChannelCounts(pairs []conflictPair) (claimPairs, fallbackPairs int) {
+	for _, pair := range pairs {
+		if pair.ClaimKeyHit == "" {
+			fallbackPairs++
+		} else {
+			claimPairs++
+		}
+	}
+	return claimPairs, fallbackPairs
+}
+
+func conflictPairChannel(pair conflictPair) string {
+	if pair.ClaimKeyHit == "" {
+		return "fallback"
+	}
+	return "claim_key"
+}
+
 // dedupeConflictCandidatePairs removes in-memory duplicates created when a
 // partially covered chunk enters both claim-key and semantic fallback paths.
 // It prefers claim provenance when either candidate has it, while preserving
@@ -606,8 +628,16 @@ func (s *KnowledgeConflictService) fineAdjudicate(
 		}
 		if verdict == "" {
 			// LLM explicitly judged this as "not a conflict" — do not report.
+			logger.GetLogger(ctx).Infof(
+				"[ConflictDetect] Fine verdict new_knowledge=%s existing_knowledge=%s channel=%s claim_key=%q verdict=not_conflict",
+				p.NewChunk.KnowledgeID, p.ExistingChunk.KnowledgeID, conflictPairChannel(p), p.ClaimKeyHit,
+			)
 			continue
 		}
+		logger.GetLogger(ctx).Infof(
+			"[ConflictDetect] Fine verdict new_knowledge=%s existing_knowledge=%s channel=%s claim_key=%q verdict=%s",
+			p.NewChunk.KnowledgeID, p.ExistingChunk.KnowledgeID, conflictPairChannel(p), p.ClaimKeyHit, verdict,
+		)
 		out = append(out, conflictPair{
 			NewChunk:      p.NewChunk,
 			ExistingChunk: p.ExistingChunk,

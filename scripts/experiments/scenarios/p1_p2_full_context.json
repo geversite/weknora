@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "name": "p1_p2_full_context",
+  "description": "Three-document full-context diagnostic for P1/P2. It preserves the original source documents while avoiding unrelated doc3/doc4/doc6 candidates.",
+  "min_claims_per_document": 1,
+  "documents": [
+    {
+      "id": "doc1",
+      "path": "testdata/claims_eval/docs/doc1_stardust_memo.md",
+      "gold_doc": "doc1_stardust_memo.md",
+      "title": "doc1_stardust_memo"
+    },
+    {
+      "id": "doc2",
+      "path": "testdata/claims_eval/docs/doc2_psionic_engine.md",
+      "gold_doc": "doc2_psionic_engine.md",
+      "title": "doc2_psionic_engine"
+    },
+    {
+      "id": "doc5",
+      "path": "testdata/claims_eval/docs/doc5_reactor_manual.md",
+      "gold_doc": "doc5_reactor_manual.md",
+      "title": "doc5_reactor_manual"
+    }
+  ],
+  "expected_conflict_document_pairs": [
+    {
+      "id": "P1",
+      "left": "doc1",
+      "right": "doc5",
+      "note": "幽能引擎原型机测试时间：2150 前 vs 推迟至 2153"
+    },
+    {
+      "id": "P2",
+      "left": "doc2",
+      "right": "doc5",
+      "note": "工业级星晶供应实体：唯一 vs 两家"
+    }
+  ]
+}
