@@ -238,6 +238,54 @@ func (s *KnowledgeConflictService) Handle(ctx context.Context, task *asynq.Task)
 	return nil
 }
 
+// claimEvidence is the compact, claim-level evidence passed to the fine LLM
+// only for exact claim-key candidates. It keeps adjudication anchored to the
+// factual slot that caused pairing instead of asking the model to rediscover
+// the relevant assertion from two potentially large chunks.
+type claimEvidence struct {
+	ID        string
+	Subject   string
+	Predicate string
+	Value     string
+	ValueNorm string
+	ValueKind string
+	Qualifiers string
+}
+
+func claimEvidenceFromClaim(claim *types.Claim) claimEvidence {
+	if claim == nil {
+		return claimEvidence{}
+	}
+	qualifiers := strings.TrimSpace(claim.Qualifiers.ToString())
+	if qualifiers == "" {
+		qualifiers = "{}"
+	}
+	return claimEvidence{
+		ID:         claim.ID,
+		Subject:    claim.Subject,
+		Predicate:  claim.Predicate,
+		Value:      claim.Value,
+		ValueNorm:  claim.ValueNorm,
+		ValueKind:  claim.ValueKind,
+		Qualifiers: qualifiers,
+	}
+}
+
+func appendClaimEvidenceUnique(items []claimEvidence, item claimEvidence) []claimEvidence {
+	if item.ID == "" && item.Subject == "" && item.Predicate == "" && item.Value == "" {
+		return items
+	}
+	for _, existing := range items {
+		if item.ID != "" && existing.ID == item.ID {
+			return items
+		}
+		if item.ID == "" && existing.Subject == item.Subject && existing.Predicate == item.Predicate && existing.Value == item.Value {
+			return items
+		}
+	}
+	return append(items, item)
+}
+
 // conflictPair links a new chunk to an existing chunk candidate with an optional
 // LLM adjudication verdict.
 type conflictPair struct {
@@ -250,9 +298,11 @@ type conflictPair struct {
 	// C1 claim-channel provenance (empty for fallback-channel pairs). Carried
 	// through adjudication for logging now and for C2/C4 (cascade routing /
 	// DisputedFact clustering) later.
-	ClaimKeyHit   string
-	NewClaimIDs   []string
-	ExistClaimIDs []string
+	ClaimKeyHit       string
+	NewClaimIDs       []string
+	ExistClaimIDs     []string
+	NewClaimEvidence  []claimEvidence
+	ExistClaimEvidence []claimEvidence
 	// ExistWikiSlug is set when the counterpart is a wiki page (C1: pseudo
 	// chunk, no disable side-effects; formalized by the C4 migration).
 	ExistWikiSlug string
@@ -350,17 +400,21 @@ func (s *KnowledgeConflictService) coarseFilterByClaims(
 			if p, ok := merged[pk]; ok {
 				p.NewClaimIDs = appendUnique(p.NewClaimIDs, nc.ID)
 				p.ExistClaimIDs = appendUnique(p.ExistClaimIDs, ex.ID)
+				p.NewClaimEvidence = appendClaimEvidenceUnique(p.NewClaimEvidence, claimEvidenceFromClaim(nc))
+				p.ExistClaimEvidence = appendClaimEvidenceUnique(p.ExistClaimEvidence, claimEvidenceFromClaim(ex))
 				continue
 			}
 			merged[pk] = &conflictPair{
-				NewChunk:      newChunk,
-				ExistingChunk: counterpart,
-				NewTitle:      newTitle,
-				ExistingTitle: existTitle,
-				ClaimKeyHit:   ex.ClaimKey,
-				NewClaimIDs:   []string{nc.ID},
-				ExistClaimIDs: []string{ex.ID},
-				ExistWikiSlug: wikiSlug,
+				NewChunk:           newChunk,
+				ExistingChunk:      counterpart,
+				NewTitle:           newTitle,
+				ExistingTitle:      existTitle,
+				ClaimKeyHit:        ex.ClaimKey,
+				NewClaimIDs:        []string{nc.ID},
+				ExistClaimIDs:      []string{ex.ID},
+				NewClaimEvidence:   []claimEvidence{claimEvidenceFromClaim(nc)},
+				ExistClaimEvidence: []claimEvidence{claimEvidenceFromClaim(ex)},
+				ExistWikiSlug:      wikiSlug,
 			}
 			order = append(order, pk)
 		}
@@ -559,6 +613,12 @@ func dedupeConflictCandidatePairs(pairs []conflictPair) []conflictPair {
 				existing.ClaimKeyHit = pair.ClaimKeyHit
 				existing.NewClaimIDs = append(existing.NewClaimIDs, pair.NewClaimIDs...)
 				existing.ExistClaimIDs = append(existing.ExistClaimIDs, pair.ExistClaimIDs...)
+				for _, evidence := range pair.NewClaimEvidence {
+					existing.NewClaimEvidence = appendClaimEvidenceUnique(existing.NewClaimEvidence, evidence)
+				}
+				for _, evidence := range pair.ExistClaimEvidence {
+					existing.ExistClaimEvidence = appendClaimEvidenceUnique(existing.ExistClaimEvidence, evidence)
+				}
 			}
 			continue
 		}
@@ -639,14 +699,16 @@ func (s *KnowledgeConflictService) fineAdjudicate(
 			p.NewChunk.KnowledgeID, p.ExistingChunk.KnowledgeID, conflictPairChannel(p), p.ClaimKeyHit, verdict,
 		)
 		out = append(out, conflictPair{
-			NewChunk:      p.NewChunk,
-			ExistingChunk: p.ExistingChunk,
-			ConflictType:  verdict,
-			Reason:        reason,
-			ClaimKeyHit:   p.ClaimKeyHit,
-			NewClaimIDs:   p.NewClaimIDs,
-			ExistClaimIDs: p.ExistClaimIDs,
-			ExistWikiSlug: p.ExistWikiSlug,
+			NewChunk:           p.NewChunk,
+			ExistingChunk:      p.ExistingChunk,
+			ConflictType:       verdict,
+			Reason:             reason,
+			ClaimKeyHit:        p.ClaimKeyHit,
+			NewClaimIDs:        p.NewClaimIDs,
+			ExistClaimIDs:      p.ExistClaimIDs,
+			NewClaimEvidence:   p.NewClaimEvidence,
+			ExistClaimEvidence: p.ExistClaimEvidence,
+			ExistWikiSlug:      p.ExistWikiSlug,
 		})
 	}
 	return out
@@ -660,7 +722,7 @@ func (s *KnowledgeConflictService) adjudicatePair(
 	chatModel chat.Chat,
 	p conflictPair,
 ) (string, string, error) {
-	prompt := buildConflictAdjudicationPrompt(p.NewChunk.Content, p.ExistingChunk.Content, p.NewTitle, p.ExistingTitle)
+	prompt := buildConflictAdjudicationPrompt(p)
 	messages := []chat.Message{
 		{Role: "system", Content: conflictAdjudicationSystemPrompt},
 		{Role: "user", Content: prompt},
@@ -689,17 +751,23 @@ func (s *KnowledgeConflictService) adjudicatePair(
 const conflictAdjudicationSystemPrompt = `你是知识库一致性审查助手。你会收到两份内容片段，它们来自同一知识库中独立上传的不同文件，并会附带各自所属文件的标题。` +
 	`请严格判断：只有它们描述"同一主体 + 同一事实维度"且给出互斥的数值、结论或状态时，才算冲突。` +
 	`必须避免误报（false positive），遵守以下规则：` +
-	`1. 若两段属于不同主体/不同对象（例如不同银行、不同产品线、不同客户、不同部门、不同时期的不同规定），属于正常差异，conflict 必须为 false。` +
+	`1. 若两段属于不同主体/不同对象（例如不同银行、不同产品线、不同客户、不同部门），属于正常差异，conflict 必须为 false。` +
 	`2. 若两段仅是措辞不同但含义一致，或内容互补、话题不同，conflict 必须为 false。` +
-	`3. 只有非常确定存在矛盾时才报告；模棱两可、信息不足时一律 conflict=false。` +
+	`3. 当输入包含"候选声明证据"时，它是本次候选配对的直接事实锚点：若两侧为同一声明槽位、限定词不明显互斥且 value/value_norm 不同，不能仅因片段中还有其他上下文、主谓措辞不同或存在时间/版本词就判 false。应在 fact_contradiction 与 version_update 之间选择。` +
+	`4. 若候选声明中的较晚日期、修订、推迟、替代等明确表明新旧版本关系，判 version_update；若没有明确替代关系但同槽位取值互斥，判 fact_contradiction。只有候选证据本身显示适用范围明确不相交时才判 false。` +
+	`5. 只有非常确定不存在同一事实关系时才返回 conflict=false；模糊时优先根据候选声明证据作出有类型的判断。` +
 	`仅返回一个 JSON 对象，字段为：{"conflict": boolean, "type": "fact_contradiction"|"partial_contradiction"|"version_update", "reason": "中文说明"}` +
 	`其中 type 仅在 conflict=true 时才有意义：fact_contradiction=对同一事实给出互斥描述；partial_contradiction=大体一致但个别点冲突；version_update=一份是另一份的更新/替代版。` +
 	`reason 必须用中文，明确指出矛盾点：片段A说什么、片段B说什么、为何冲突（一句话）。`
 
-// buildConflictAdjudicationPrompt renders the two chunks plus their file titles
-// for the LLM.
-func buildConflictAdjudicationPrompt(contentA, contentB, titleA, titleB string) string {
-	return fmt.Sprintf(`片段 A（新上传文件，标题：「%s」）：
+// buildConflictAdjudicationPrompt renders claim-level evidence when available,
+// followed by the source chunks needed to validate that evidence. Fallback
+// candidates intentionally have no evidence section and retain the original
+// conservative chunk-only behaviour.
+func buildConflictAdjudicationPrompt(pair conflictPair) string {
+	evidence := renderClaimEvidence(pair)
+	return fmt.Sprintf(`%s
+片段 A（新上传文件，标题：「%s」）：
 """
 %s
 """
@@ -709,8 +777,30 @@ func buildConflictAdjudicationPrompt(contentA, contentB, titleA, titleB string) 
 %s
 """
 
-请严格判断它们是否矛盾。若属于不同主体/不同对象的政策差异（例如不同银行），必须判定为不冲突。请按指定 JSON 格式作答，reason 使用中文。`,
-		titleA, conflictTruncateRunes(contentA, 3000), titleB, conflictTruncateRunes(contentB, 3000))
+请严格判断它们是否矛盾。若包含候选声明证据，请优先围绕该证据的同一事实槽位判断；若没有候选声明证据，则按片段整体语义保守判断。请按指定 JSON 格式作答，reason 使用中文。`,
+		evidence,
+		pair.NewTitle, conflictTruncateRunes(pair.NewChunk.Content, 3000),
+		pair.ExistingTitle, conflictTruncateRunes(pair.ExistingChunk.Content, 3000))
+}
+
+func renderClaimEvidence(pair conflictPair) string {
+	if pair.ClaimKeyHit == "" || len(pair.NewClaimEvidence) == 0 || len(pair.ExistClaimEvidence) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "候选声明证据（本次配对的直接事实锚点，声明键：%q）：\n", pair.ClaimKeyHit)
+	b.WriteString("新上传文件的声明：\n")
+	for _, evidence := range pair.NewClaimEvidence {
+		fmt.Fprintf(&b, "- subject=%q; predicate=%q; value=%q; value_norm=%q; qualifiers=%s\n",
+			evidence.Subject, evidence.Predicate, evidence.Value, evidence.ValueNorm, evidence.Qualifiers)
+	}
+	b.WriteString("已有文件的声明：\n")
+	for _, evidence := range pair.ExistClaimEvidence {
+		fmt.Fprintf(&b, "- subject=%q; predicate=%q; value=%q; value_norm=%q; qualifiers=%s\n",
+			evidence.Subject, evidence.Predicate, evidence.Value, evidence.ValueNorm, evidence.Qualifiers)
+	}
+	b.WriteString("请先判断上述同一声明槽位的取值是否互斥或构成版本更新，再用下方原文片段核验。\n\n")
+	return b.String()
 }
 
 // parseConflictVerdict extracts the verdict from the LLM JSON reply.

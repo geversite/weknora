@@ -3,9 +3,10 @@ package types
 import "time"
 
 // Claim is one atomic factual claim extracted from a document chunk or a wiki
-// page (C1, Conflict V2). Subject / Predicate / Value keep the verbatim source
-// phrasing for display and LLM adjudication; ClaimKey / ValueNorm carry the
-// normalized forms used for conflict candidate pairing (see
+// page (C1, Conflict V2). Subject / Predicate are stable extractor labels for
+// display and cross-document pairing; Value preserves the asserted conclusion.
+// SpanStart / SpanEnd anchor each row back to a verbatim source quote. ClaimKey
+// / ValueNorm carry normalized forms used for conflict candidate pairing (see
 // claim_normalize.go).
 type Claim struct {
 	ID              string `json:"id" gorm:"type:varchar(36);primaryKey"`

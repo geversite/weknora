@@ -69,6 +69,43 @@ func TestDedupeConflictCandidatePairsPrefersClaimProvenance(t *testing.T) {
 	}
 }
 
+func TestBuildConflictAdjudicationPromptIncludesClaimEvidence(t *testing.T) {
+	pair := conflictPair{
+		NewChunk:      &types.Chunk{Content: "新文档原文"},
+		ExistingChunk: &types.Chunk{Content: "旧文档原文"},
+		NewTitle:      "new",
+		ExistingTitle: "old",
+		ClaimKeyHit:   "工业级星晶供应实体",
+		NewClaimEvidence: []claimEvidence{{
+			ID: "new-claim", Subject: "工业级星晶", Predicate: "供应实体",
+			Value: "天穹财团与新弦工业两家实体", ValueNorm: "天穹财团与新弦工业两家实体", Qualifiers: `{"time":"目前"}`,
+		}},
+		ExistClaimEvidence: []claimEvidence{{
+			ID: "old-claim", Subject: "工业级星晶", Predicate: "供应实体",
+			Value: "天穹财团", ValueNorm: "天穹财团", Qualifiers: `{"time":"目前"}`,
+		}},
+	}
+
+	prompt := buildConflictAdjudicationPrompt(pair)
+	for _, want := range []string{
+		"候选声明证据", "工业级星晶供应实体", "天穹财团与新弦工业两家实体", "新文档原文", "旧文档原文",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("claim-conditioned prompt missing %q", want)
+		}
+	}
+}
+
+func TestBuildConflictAdjudicationPromptKeepsFallbackEvidenceFree(t *testing.T) {
+	prompt := buildConflictAdjudicationPrompt(conflictPair{
+		NewChunk:      &types.Chunk{Content: "新文档原文"},
+		ExistingChunk: &types.Chunk{Content: "旧文档原文"},
+	})
+	if strings.Contains(prompt, "候选声明证据（本次配对") {
+		t.Fatal("fallback prompt must not invent claim evidence")
+	}
+}
+
 func TestClaimExtractPromptV2RetainsCanonicalSlotContract(t *testing.T) {
 	for _, want := range []string{
 		"不要把时间、地点、适用范围、条件、情态词塞入 subject",
