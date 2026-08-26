@@ -227,8 +227,32 @@ experiments/runs/<timestamp>-<scenario>-<variant>-<commit>/
 `evaluate.py` 的 P/R 是全六文档口径，因此运行器只会在场景覆盖全部 gold 文档时执行它。
 P2/P3/P1-P2 这类部分语料诊断场景会明确跳过全局 P/R，避免未注入的 gold 文档被错误计为漏检。
 
+## C1.6：导出人工审计包
+
+完整六文档 `c1_full` run 完成后，可把 gold、prediction、严格/宽松匹配、FN、FP 与
+P1-P5/N1 证据导出为人工审核包：
+
+```bash
+make experiment-audit RUN=experiments/runs/<run-id>
+```
+
+默认输出到：
+
+```text
+<run-id>/claim_audit/
+├── audit_rows.csv
+├── contradiction_audit.csv
+├── audit_summary.json
+└── README.md
+```
+
+`audit_rows.csv` 有空的 `review_label` / `review_note` 列。审阅者可标记
+`schema_equivalent`、`gold_scope_mismatch`、`genuine_fn`、`low_value_fp`、
+`genuine_fp`、`duplicate`、`quote_failure` 或 `annotation_error`。先审查
+`priority=critical` 的行，它们直接关联 P1-P5/N1。
+
 ## 当前边界
 
-第一版运行器负责“真实执行 + 可复现导出 + C1 抽取评分”。C1.5 的下一小步会在应用侧增加
-结构化 `pair_channel=claim_key|fallback`、候选数、LLM 调用数与 token 指标；届时运行器将
-把这些指标并入同一个 `metrics.json`，而不通过 UI 或脆弱的文本日志抓取获得它们。
+运行器负责“真实执行 + 可复现导出 + C1 抽取评分”。候选通道和 fine verdict 已输出到
+后端结构化日志：`claim-pairs` / `fallback-pairs`、`channel=claim_key|fallback`、
+`verdict=...`。后续 C2 会把规则层、批量裁决、LLM token 与 latency 纳入同一实验口径。
