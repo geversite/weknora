@@ -337,6 +337,30 @@ python3 testdata/claims_eval/evaluate.py \
   --gold-dir <gold_v2_candidate目录>
 ```
 
+### broad-maintenance / narrow-conflict 双口径复核
+
+gold-v2 candidate 的 quote 正确不代表每条都应算作 conflict-critical。生成只含新增条目的
+双口径/去重复核表：
+
+```bash
+make experiment-gold-v2-scope-review \
+  CANDIDATE=experiments/runs/<run-id>/claim_audit/review_summary_v2/reviewed_metrics/gold_v2_candidate_reviewed \
+  REVIEW=experiments/runs/<run-id>/claim_audit/review_summary_v2/reviewed_metrics/gold_v2_scope_review.csv
+```
+
+对每一行填写：
+
+```text
+broad_maintenance = yes | no
+conflict_critical = yes | no
+dedup_decision = keep | merge | exclude
+merge_into_gold_id = <仅 merge 时填写>
+```
+
+`scope_warnings` / `suggested_conflict_critical` 仅为提示，不会替代人工研究定义。典型地，
+别名、项目代号、发布机构属于 broad-maintenance 或 metadata，但不应自动计入 narrow-conflict；
+同一文档内同 subject+predicate 的多个新增项应检查是否只是重复表述。
+
 ## 当前边界
 
 运行器负责“真实执行 + 可复现导出 + C1 抽取评分”。候选通道和 fine verdict 已输出到
