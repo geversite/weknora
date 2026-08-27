@@ -247,8 +247,8 @@ make experiment-audit RUN=experiments/runs/<run-id>
 ```
 
 `audit_rows.csv` 有空的 `review_label` / `review_note` 列。审阅者可标记
-`schema_equivalent`、`gold_scope_mismatch`、`genuine_fn`、`low_value_fp`、
-`genuine_fp`、`duplicate`、`quote_failure` 或 `annotation_error`。先审查
+`schema_equivalent`、`gold_scope_mismatch`、`gold_missing_claim`、`genuine_fn`、
+`low_value_fp`、`genuine_fp`、`duplicate`、`quote_failure` 或 `annotation_error`。先审查
 `priority=critical` 的行，它们直接关联 P1-P5/N1。
 
 标注完成后，先复制为 `audit_rows_reviewed.csv`，再汇总：

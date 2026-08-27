@@ -22,7 +22,6 @@ from __future__ import annotations
 import argparse
 import csv
 import json
-import shutil
 import sys
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
@@ -40,11 +39,15 @@ KNOWN_LABELS = (
     "duplicate",
     "quote_failure",
     "annotation_error",
+    # A source-supported, in-scope prediction with no gold counterpart. Kept
+    # distinct from annotation_error so reviewed metrics can separate a missing
+    # gold row from a wrong/underspecified existing gold row.
+    "gold_missing_claim",
 )
 
-GOLD_REVISION_LABELS = {"annotation_error", "gold_scope_mismatch"}
+GOLD_REVISION_LABELS = {"annotation_error", "gold_scope_mismatch", "gold_missing_claim"}
 MODEL_IMPROVEMENT_LABELS = {"genuine_fn", "genuine_fp", "low_value_fp", "duplicate", "quote_failure"}
-LINK_REVIEW_LABELS = {"schema_equivalent", "annotation_error"}
+LINK_REVIEW_LABELS = {"schema_equivalent", "annotation_error", "gold_missing_claim"}
 
 
 class ReviewError(RuntimeError):
@@ -117,7 +120,7 @@ def make_candidate(row: dict[str, str], action: str) -> dict[str, str]:
 def gold_action(label: str, row: dict[str, str]) -> str:
     if label == "gold_scope_mismatch":
         return "reclassify_or_exclude_gold_scope"
-    if not row.get("gold_id") and row.get("pred_subject"):
+    if label == "gold_missing_claim" or (not row.get("gold_id") and row.get("pred_subject")):
         return "consider_add_missing_gold_claim"
     return "review_and_correct_or_refine_gold_claim"
 
@@ -132,16 +135,112 @@ def model_action(label: str) -> str:
     }[label]
 
 
+def label_consistency_issues(rows: list[dict[str, str]]) -> list[dict[str, str]]:
+    """Return a small, non-destructive worklist for labels applied to wrong sides.
+
+    The original audit sheet has one label column for both gold-only and
+    prediction-only records. Some otherwise intuitive labels (for example a
+    low-value *prediction* on a gold-only row) are directionally impossible.
+    We never overwrite a reviewer's choice; this file only makes the handful
+    of ambiguous rows explicit before formal metrics are computed.
+    """
+    issues: list[dict[str, str]] = []
+    for row in rows:
+        kind = normalized(row.get("row_kind"))
+        status = normalized(row.get("match_status"))
+        label = normalized(row.get("review_label"))
+        if not label:
+            continue
+        reason = ""
+        suggestion = ""
+        severity = ""
+        if kind == "gold_only" and label in {"low_value_fp", "genuine_fp", "duplicate"}:
+            severity = "must_relabel"
+            reason = "gold_only 行没有 prediction，不能使用 prediction-side FP/duplicate 标签。"
+            suggestion = "genuine_fn（gold 仍在目标范围）或 gold_scope_mismatch（gold 不在当前目标范围）"
+        elif kind == "gold_only" and label == "confirm_tp":
+            severity = "needs_link_or_relabel"
+            reason = "gold_only 行没有自动匹配 prediction，不能直接作为 confirm_tp。"
+            suggestion = "schema_equivalent 并在 prediction-side 填链接，或 annotation_error / gold_scope_mismatch"
+        elif kind == "prediction_only" and label == "genuine_fn":
+            severity = "must_relabel"
+            reason = "prediction_only 行没有 gold，不能使用 gold-side FN 标签。"
+            suggestion = "gold_missing_claim、schema_equivalent、low_value_fp、duplicate 或 genuine_fp"
+        elif kind == "prediction_only" and label == "confirm_tp":
+            severity = "needs_link_or_relabel"
+            reason = "prediction_only 行没有自动匹配 gold，不能直接作为 confirm_tp。"
+            suggestion = "gold_missing_claim（正确且应补 gold）或 schema_equivalent（对应已有 gold）"
+        elif status == "same_slot_value_mismatch" and label == "confirm_tp":
+            severity = "clarify"
+            reason = "系统认为同槽位但 value_norm 不同；需要说明为什么仍计为正确。"
+            suggestion = "在 review_note 写明版本/单位/标注值原因；必要时改 annotation_error、schema_equivalent 或 gold_missing_claim"
+        elif kind == "prediction_only" and label == "annotation_error":
+            severity = "clarify"
+            reason = "annotation_error 可能代表 gold 漏标，也可能代表已有 gold 错误，统计口径不同。"
+            suggestion = "若 pred 正确且没有对应 gold，改 gold_missing_claim；若已有 gold 本身错误，保留 annotation_error 并写 gold_id"
+        if reason:
+            issue = make_candidate(row, suggestion)
+            issue.update({"severity": severity, "issue": reason})
+            issues.append(issue)
+    return issues
+
+
+def build_prediction_semantic_review(rows: list[dict[str, str]]) -> list[dict[str, str]]:
+    """Create the one-directional linking sheet needed for defensible P/R.
+
+    Only prediction-only rows can add a missing semantic match or a new gold
+    claim. Gold-only counterparts remain evidence in audit_rows.csv, avoiding
+    a reviewer having to link the same equivalence twice.
+    """
+    out: list[dict[str, str]] = []
+    for row in rows:
+        if normalized(row.get("row_kind")) != "prediction_only":
+            continue
+        label = normalized(row.get("review_label"))
+        if label not in {"schema_equivalent", "annotation_error", "gold_missing_claim", "confirm_tp"}:
+            continue
+        recommended_resolution = {
+            "schema_equivalent": "equivalent_existing_gold",
+            "gold_missing_claim": "add_gold_v2",
+            "annotation_error": "classify_gold_missing_or_correct_existing_gold",
+            "confirm_tp": "gold_missing_claim_or_schema_equivalent",
+        }[label]
+        out.append({
+            "audit_row_id": row["audit_row_id"],
+            "document": row.get("document", ""),
+            "review_label": label,
+            "recommended_resolution": recommended_resolution,
+            "review_resolution": "",  # equivalent_existing_gold | add_gold_v2 | exclude_from_target | model_error
+            "pred_index": row.get("pred_index", ""),
+            "pred_subject": row.get("pred_subject", ""),
+            "pred_predicate": row.get("pred_predicate", ""),
+            "pred_value": row.get("pred_value", ""),
+            "pred_qualifiers": row.get("pred_qualifiers", ""),
+            "pred_quote": row.get("pred_quote", ""),
+            "review_link_gold_id": "",
+            "include_in_conflict_critical": "",
+            "review_note": row.get("review_note", ""),
+        })
+    return out
+
+
 def build_semantic_link_rows(rows: list[dict[str, str]]) -> list[dict[str, str]]:
     out: list[dict[str, str]] = []
     for row in rows:
         label = normalized(row.get("review_label"))
         if label not in LINK_REVIEW_LABELS:
             continue
-        # A match row already has a direct gold link. Prediction-only and
-        # gold-only schema-equivalent rows need a reviewer-provided link before
-        # they can safely contribute to a human-adjusted P/R score.
-        link_status = "already_linked" if row.get("gold_id") and row.get("pred_index") else "needs_gold_link"
+        # A match row already has a direct gold link. For unmatched rows the
+        # direction matters: prediction-only rows need a gold link/addition,
+        # while gold-only rows need a prediction counterpart identified in the
+        # one-directional prediction review sheet.
+        kind = normalized(row.get("row_kind"))
+        if row.get("gold_id") and row.get("pred_index"):
+            link_status = "already_linked"
+        elif kind == "prediction_only":
+            link_status = "needs_gold_link_or_gold_addition"
+        else:
+            link_status = "needs_prediction_link"
         out.append({
             "audit_row_id": row["audit_row_id"],
             "document": row.get("document", ""),
@@ -157,7 +256,7 @@ def build_semantic_link_rows(rows: list[dict[str, str]]) -> list[dict[str, str]]
             "pred_predicate": row.get("pred_predicate", ""),
             "pred_value": row.get("pred_value", ""),
             "review_link_gold_id": row.get("gold_id", "") if link_status == "already_linked" else "",
-            "count_as_semantic_tp": "" if link_status == "needs_gold_link" else "yes",
+            "count_as_semantic_tp": "yes" if link_status == "already_linked" else "",
             "include_in_conflict_critical": "",
             "review_note": row.get("review_note", ""),
         })
@@ -175,6 +274,8 @@ def render_report(
     gold_candidates: list[dict[str, str]],
     model_cases: list[dict[str, str]],
     link_rows: list[dict[str, str]],
+    consistency_issues: list[dict[str, str]],
+    prediction_link_rows: list[dict[str, str]],
 ) -> str:
     def label_table() -> list[str]:
         lines = ["| review_label | rows |", "|---|---:|"]
@@ -216,17 +317,21 @@ def render_report(
         "",
         "## Derived worklists",
         "",
+        f"- `label_consistency_issues.csv`: `{len(consistency_issues)}` small set of directionally ambiguous labels to recheck before metric calculation.",
         f"- `gold_revision_candidates.csv`: `{len(gold_candidates)}` gold-scope/correction candidates.",
+        f"- `schema_equivalence_candidates.csv`: schema/ontology alignment evidence.",
         f"- `model_improvement_cases.csv`: `{len(model_cases)}` recall/precision/dedup/span candidates.",
-        f"- `semantic_link_review.csv`: `{len(link_rows)}` schema/annotation rows; only rows marked `needs_gold_link` require a small second linking pass before calculating human-adjusted P/R.",
+        f"- `prediction_semantic_review.csv`: `{len(prediction_link_rows)}` prediction-only semantic/gold-addition decisions; this is the only sheet that needs a gold-link/addition decision for human-adjusted P/R.",
+        f"- `semantic_link_review.csv`: `{len(link_rows)}` complete cross-check view (both directions).",
         "",
         "## Recommended order",
         "",
         "1. Freeze the reviewed CSV and keep the original gold files unchanged.",
-        "2. Review `gold_revision_candidates.csv`; record each accepted correction in a versioned gold-v2 change set.",
-        "3. Fill only `needs_gold_link` rows in `semantic_link_review.csv` if a formal human-adjusted P/R is required.",
-        "4. Turn `genuine_fn` / `genuine_fp` rows into prompt or deterministic post-processing regressions.",
-        "5. Keep `low_value_fp` and `duplicate` separate from hallucinations in the paper analysis.",
+        "2. Resolve `label_consistency_issues.csv` first; this should be a small correction, not a full re-audit.",
+        "3. Review `gold_revision_candidates.csv`; record each accepted correction in a versioned gold-v2 change set.",
+        "4. Fill `prediction_semantic_review.csv` only if a formal human-adjusted P/R is required.",
+        "5. Turn `genuine_fn` / `genuine_fp` rows into prompt or deterministic post-processing regressions.",
+        "6. Keep `low_value_fp` and `duplicate` separate from hallucinations in the paper analysis.",
         "",
     ]
     return "\n".join(lines)
@@ -274,6 +379,8 @@ def main() -> int:
             elif label in MODEL_IMPROVEMENT_LABELS:
                 model_cases.append(make_candidate(row, model_action(label)))
 
+        consistency_issues = label_consistency_issues(rows)
+        prediction_link_rows = build_prediction_semantic_review(rows)
         link_rows = build_semantic_link_rows(rows)
         summary = {
             "source_csv": str(source),
@@ -289,8 +396,15 @@ def main() -> int:
                 "gold_revision_candidates": len(gold_candidates),
                 "schema_equivalence_candidates": len(schema_candidates),
                 "model_improvement_cases": len(model_cases),
+                "label_consistency_issues": len(consistency_issues),
+                "prediction_semantic_review_rows": len(prediction_link_rows),
                 "semantic_link_rows": len(link_rows),
-                "semantic_link_rows_needing_gold_link": sum(row["link_status"] == "needs_gold_link" for row in link_rows),
+                "semantic_link_rows_needing_gold_link_or_addition": sum(
+                    row["link_status"] == "needs_gold_link_or_gold_addition" for row in link_rows
+                ),
+                "semantic_link_rows_needing_prediction_link": sum(
+                    row["link_status"] == "needs_prediction_link" for row in link_rows
+                ),
             },
             "metric_guard": {
                 "human_adjusted_pr_computed": False,
@@ -298,16 +412,18 @@ def main() -> int:
             },
         }
 
+        write_csv(output_dir / "label_consistency_issues.csv", consistency_issues)
         write_csv(output_dir / "gold_revision_candidates.csv", gold_candidates)
         write_csv(output_dir / "schema_equivalence_candidates.csv", schema_candidates)
         write_csv(output_dir / "model_improvement_cases.csv", model_cases)
+        write_csv(output_dir / "prediction_semantic_review.csv", prediction_link_rows)
         write_csv(output_dir / "semantic_link_review.csv", link_rows)
         write_json(output_dir / "review_summary.json", summary)
         (output_dir / "review_report.md").write_text(
             render_report(
                 source, len(rows), reviewed, unreviewed, labels,
                 summary["by_row_kind"], summary["by_match_status"],
-                gold_candidates, model_cases, link_rows,
+                gold_candidates, model_cases, link_rows, consistency_issues, prediction_link_rows,
             ),
             encoding="utf-8",
         )
@@ -315,9 +431,10 @@ def main() -> int:
         print(f"Review summary written: {output_dir}")
         print(f"  reviewed rows: {reviewed}/{len(rows)}")
         print("  labels:", ", ".join(f"{label or 'unreviewed'}={count}" for label, count in sorted(labels.items())))
+        print(f"  label consistency issues: {len(consistency_issues)}")
         print(f"  gold revision candidates: {len(gold_candidates)}")
         print(f"  model improvement cases: {len(model_cases)}")
-        print(f"  semantic links needing review: {summary['worklist_counts']['semantic_link_rows_needing_gold_link']}")
+        print(f"  prediction semantic links/additions: {len(prediction_link_rows)}")
         return 0
     except ReviewError as exc:
         print(f"[claim-audit-summary] FAILED: {exc}", file=sys.stderr)
