@@ -266,11 +266,19 @@ gold_revision_candidates.csv
 schema_equivalence_candidates.csv
 model_improvement_cases.csv
 semantic_link_review.csv
+label_consistency_issues.csv
+audit_rows_relabel.csv
+prediction_semantic_review.csv
 ```
 
 该汇总器不会把行级人工标签直接相加成 P/R；`schema_equivalent` 或 gold 漏标可能需要
 prediction→gold 的显式链接，才可得到可发表的人类校正 P/R。它会将需要第二轮链接的少量行
 列入 `semantic_link_review.csv`。
+
+若审阅者把 prediction-side 标签写到了 `gold_only` 行（或反过来），汇总器会生成
+`label_consistency_issues.csv`，并生成不修改原文件的 `audit_rows_relabel.csv`。在该副本中
+筛选 `label_consistency_severity` 非空的行后，仅修正这些行的 `review_label` / `review_note`，
+再用 `--reviewed-csv` 对该副本重跑汇总即可。
 
 ## 当前边界
 

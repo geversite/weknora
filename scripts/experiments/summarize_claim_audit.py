@@ -185,6 +185,27 @@ def label_consistency_issues(rows: list[dict[str, str]]) -> list[dict[str, str]]
     return issues
 
 
+def build_relabel_template(
+    rows: list[dict[str, str]], issues: list[dict[str, str]],
+) -> list[dict[str, str]]:
+    """Create a safe editable copy of all audit rows with issue guidance.
+
+    The original user-reviewed CSV is never changed. Reviewers filter
+    ``label_consistency_severity`` to non-empty, fix only those rows, and pass
+    this copy back through --reviewed-csv for a second summary pass.
+    """
+    issue_by_id = {issue["audit_row_id"]: issue for issue in issues}
+    out: list[dict[str, str]] = []
+    for row in rows:
+        copied = dict(row)
+        issue = issue_by_id.get(row["audit_row_id"], {})
+        copied["label_consistency_severity"] = issue.get("severity", "")
+        copied["label_consistency_issue"] = issue.get("issue", "")
+        copied["suggested_label_action"] = issue.get("proposed_action", "")
+        out.append(copied)
+    return out
+
+
 def build_prediction_semantic_review(rows: list[dict[str, str]]) -> list[dict[str, str]]:
     """Create the one-directional linking sheet needed for defensible P/R.
 
@@ -318,6 +339,7 @@ def render_report(
         "## Derived worklists",
         "",
         f"- `label_consistency_issues.csv`: `{len(consistency_issues)}` small set of directionally ambiguous labels to recheck before metric calculation.",
+        "- `audit_rows_relabel.csv`: editable copy of every row with stable audit_row_id and issue guidance; filter label_consistency_severity to fix only the flagged rows.",
         f"- `gold_revision_candidates.csv`: `{len(gold_candidates)}` gold-scope/correction candidates.",
         f"- `schema_equivalence_candidates.csv`: schema/ontology alignment evidence.",
         f"- `model_improvement_cases.csv`: `{len(model_cases)}` recall/precision/dedup/span candidates.",
@@ -327,11 +349,12 @@ def render_report(
         "## Recommended order",
         "",
         "1. Freeze the reviewed CSV and keep the original gold files unchanged.",
-        "2. Resolve `label_consistency_issues.csv` first; this should be a small correction, not a full re-audit.",
-        "3. Review `gold_revision_candidates.csv`; record each accepted correction in a versioned gold-v2 change set.",
-        "4. Fill `prediction_semantic_review.csv` only if a formal human-adjusted P/R is required.",
-        "5. Turn `genuine_fn` / `genuine_fp` rows into prompt or deterministic post-processing regressions.",
-        "6. Keep `low_value_fp` and `duplicate` separate from hallucinations in the paper analysis.",
+        "2. Open `audit_rows_relabel.csv`, filter `label_consistency_severity` to non-empty, and resolve only those rows; this is a small correction, not a full re-audit.",
+        "3. Re-run this summarizer with `--reviewed-csv audit_rows_relabel.csv` into a new output directory.",
+        "4. Review `gold_revision_candidates.csv`; record each accepted correction in a versioned gold-v2 change set.",
+        "5. Fill `prediction_semantic_review.csv` only if a formal human-adjusted P/R is required.",
+        "6. Turn `genuine_fn` / `genuine_fp` rows into prompt or deterministic post-processing regressions.",
+        "7. Keep `low_value_fp` and `duplicate` separate from hallucinations in the paper analysis.",
         "",
     ]
     return "\n".join(lines)
@@ -380,6 +403,7 @@ def main() -> int:
                 model_cases.append(make_candidate(row, model_action(label)))
 
         consistency_issues = label_consistency_issues(rows)
+        relabel_template = build_relabel_template(rows, consistency_issues)
         prediction_link_rows = build_prediction_semantic_review(rows)
         link_rows = build_semantic_link_rows(rows)
         summary = {
@@ -413,6 +437,7 @@ def main() -> int:
         }
 
         write_csv(output_dir / "label_consistency_issues.csv", consistency_issues)
+        write_csv(output_dir / "audit_rows_relabel.csv", relabel_template)
         write_csv(output_dir / "gold_revision_candidates.csv", gold_candidates)
         write_csv(output_dir / "schema_equivalence_candidates.csv", schema_candidates)
         write_csv(output_dir / "model_improvement_cases.csv", model_cases)
