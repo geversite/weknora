@@ -280,6 +280,31 @@ prediction→gold 的显式链接，才可得到可发表的人类校正 P/R。�
 筛选 `label_consistency_severity` 非空的行后，仅修正这些行的 `review_label` / `review_note`，
 再用 `--reviewed-csv` 对该副本重跑汇总即可。
 
+### 人工校正指标计算
+
+完成 `prediction_semantic_review.csv` 后，使用：
+
+```bash
+make experiment-audit-metrics \
+  AUDIT_CSV=experiments/runs/<run-id>/claim_audit/review_summary/audit_rows_relabel.csv \
+  SEMANTIC_REVIEW=experiments/runs/<run-id>/claim_audit/review_summary_v2/prediction_semantic_review.csv
+```
+
+输出默认位于 `prediction_semantic_review.csv` 同级的 `reviewed_metrics/`：
+
+```text
+reviewed_metrics.json
+reviewed_metrics.md
+accepted_semantic_mappings.csv
+gold_v2_additions.csv
+metric_validation_issues.csv
+```
+
+指标计算器不会把 `schema_equivalent` 的双侧行重复计数：只有 reviewer 显式填写的
+`equivalent_existing_gold` 链接会覆盖相应 gold。`add_gold_v2` 会作为拟议 gold-v2 条目输出，
+不会自动修改仓库中的 gold 文件。仅当 `metric_validation_issues.csv` 为空且
+`metric_ready=true` 时，才可将 human-adjusted P/R 作为正式研究指标。
+
 ## 当前边界
 
 运行器负责“真实执行 + 可复现导出 + C1 抽取评分”。候选通道和 fine verdict 已输出到
