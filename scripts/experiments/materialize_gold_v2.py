@@ -89,7 +89,7 @@ def claim_id_for(row: dict[str, str], used: set[str]) -> str:
 
 
 def validate_addition(row: dict[str, str], docs_dir: Path) -> tuple[str, dict[str, Any], dict[str, Any]]:
-    required = ("document", "subject", "predicate", "value", "value_kind", "quote", "source_audit_row_id")
+    required = ("document", "subject", "predicate", "value", "value_kind", "source_audit_row_id")
     missing = [name for name in required if not normalized(row.get(name))]
     if missing:
         raise GoldMaterializeError(
@@ -111,7 +111,14 @@ def validate_addition(row: dict[str, str], docs_dir: Path) -> tuple[str, dict[st
         raise GoldMaterializeError(f"qualifiers 必须是对象 (audit={row['source_audit_row_id']})")
 
     source_text = source_doc_for(document, docs_dir).read_text(encoding="utf-8")
-    quote = normalized(row["quote"])
+    reviewed_quote = normalized(row.get("review_quote"))
+    original_quote = normalized(row.get("quote"))
+    quote = reviewed_quote or original_quote
+    if not quote:
+        raise GoldMaterializeError(
+            f"gold-v2 addition 缺少可用 quote (audit={row['source_audit_row_id']})；"
+            "请先运行 prepare_gold_v2_review.py 并填写 review_quote"
+        )
     quote_exact = quote in source_text
     quote_folded = whitespace_fold(quote) in whitespace_fold(source_text)
     if not quote_exact and not quote_folded:
@@ -132,6 +139,8 @@ def validate_addition(row: dict[str, str], docs_dir: Path) -> tuple[str, dict[st
         "proposed_gold_id": normalized(row.get("proposed_gold_id")),
         "include_in_conflict_critical": normalized(row.get("include_in_conflict_critical")).lower(),
         "review_note": normalized(row.get("review_note")),
+        "quote_review_note": normalized(row.get("quote_review_note")),
+        "quote_source": "review_quote" if reviewed_quote else "original_pred_quote",
         "quote_match": "exact" if quote_exact else "whitespace_folded",
     }
     return document, claim, provenance

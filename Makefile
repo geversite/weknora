@@ -1,4 +1,4 @@
-.PHONY: help build run test clean docker-build-app docker-build-docreader docker-build-frontend docker-build-all docker-run migrate-up migrate-down docker-restart docker-stop start-all stop-all start-ollama stop-ollama build-images build-images-app build-images-docreader build-images-frontend clean-images check-env list-containers pull-images show-platform dev-start dev-stop dev-restart dev-logs dev-status dev-app dev-frontend docs install-swagger build-lite run-lite package-lite experiment-check experiment-c1 experiment-p2 experiment-p3 experiment-p12 experiment-v1 experiment-audit experiment-audit-summary experiment-audit-metrics experiment-gold-v2
+.PHONY: help build run test clean docker-build-app docker-build-docreader docker-build-frontend docker-build-all docker-run migrate-up migrate-down docker-restart docker-stop start-all stop-all start-ollama stop-ollama build-images build-images-app build-images-docreader build-images-frontend clean-images check-env list-containers pull-images show-platform dev-start dev-stop dev-restart dev-logs dev-status dev-app dev-frontend docs install-swagger build-lite run-lite package-lite experiment-check experiment-c1 experiment-p2 experiment-p3 experiment-p12 experiment-v1 experiment-audit experiment-audit-summary experiment-audit-metrics experiment-gold-v2 experiment-gold-v2-review
 
 # Show help
 help:
@@ -69,6 +69,7 @@ help:
 	@echo "  experiment-audit-summary 汇总人工标注审计表（AUDIT=<claim_audit目录>）"
 	@echo "  experiment-audit-metrics 计算人工校正指标（AUDIT_CSV=... SEMANTIC_REVIEW=...）"
 	@echo "  experiment-gold-v2       生成待复核 gold-v2 候选集（ADDITIONS=... OUTPUT=...）"
+	@echo "  experiment-gold-v2-review 生成 gold-v2 quote 补全表（ADDITIONS=... REVIEW=...）"
 	@echo ""
 	@echo "Lite 模式（零外部依赖）:"
 	@echo "  build-lite        构建 Lite 版本（先构建前端到 web/，再构建 Go；SKIP_FRONTEND=1 跳过前端）"
@@ -387,10 +388,17 @@ experiment-audit-metrics:
 	python3 scripts/experiments/compute_reviewed_claim_metrics.py \
 		--audit-csv "$(AUDIT_CSV)" --semantic-review "$(SEMANTIC_REVIEW)"
 
-# Usage: make experiment-gold-v2 ADDITIONS=<reviewed_metrics/gold_v2_additions.csv> OUTPUT=<candidate-gold-dir>
+# Usage: make experiment-gold-v2-review ADDITIONS=<reviewed_metrics/gold_v2_additions.csv> REVIEW=<gold_v2_additions_review.csv>
+experiment-gold-v2-review:
+	@test -n "$(ADDITIONS)" || (echo "Usage: make experiment-gold-v2-review ADDITIONS=<reviewed_metrics/gold_v2_additions.csv> REVIEW=<gold_v2_additions_review.csv>"; exit 2)
+	@test -n "$(REVIEW)" || (echo "Usage: make experiment-gold-v2-review ADDITIONS=<reviewed_metrics/gold_v2_additions.csv> REVIEW=<gold_v2_additions_review.csv>"; exit 2)
+	python3 scripts/experiments/prepare_gold_v2_review.py \
+		--additions "$(ADDITIONS)" --output "$(REVIEW)"
+
+# Usage: make experiment-gold-v2 ADDITIONS=<gold_v2_additions_review.csv> OUTPUT=<candidate-gold-dir>
 experiment-gold-v2:
-	@test -n "$(ADDITIONS)" || (echo "Usage: make experiment-gold-v2 ADDITIONS=<reviewed_metrics/gold_v2_additions.csv> OUTPUT=<candidate-gold-dir>"; exit 2)
-	@test -n "$(OUTPUT)" || (echo "Usage: make experiment-gold-v2 ADDITIONS=<reviewed_metrics/gold_v2_additions.csv> OUTPUT=<candidate-gold-dir>"; exit 2)
+	@test -n "$(ADDITIONS)" || (echo "Usage: make experiment-gold-v2 ADDITIONS=<gold_v2_additions_review.csv> OUTPUT=<candidate-gold-dir>"; exit 2)
+	@test -n "$(OUTPUT)" || (echo "Usage: make experiment-gold-v2 ADDITIONS=<gold_v2_additions_review.csv> OUTPUT=<candidate-gold-dir>"; exit 2)
 	python3 scripts/experiments/materialize_gold_v2.py \
 		--additions "$(ADDITIONS)" --output "$(OUTPUT)"
 

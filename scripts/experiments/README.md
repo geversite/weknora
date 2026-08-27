@@ -307,11 +307,23 @@ metric_validation_issues.csv
 
 ### 生成待复核 gold-v2 候选集
 
-在人工校正指标就绪后，将 reviewer 标为 `add_gold_v2` 的 claims 物化为独立候选集：
+在人工校正指标就绪后，先为 reviewer 标为 `add_gold_v2` 的 claims 准备 quote 补全表：
+
+```bash
+make experiment-gold-v2-review \
+  ADDITIONS=experiments/runs/<run-id>/claim_audit/review_summary_v2/reviewed_metrics/gold_v2_additions.csv \
+  REVIEW=experiments/runs/<run-id>/claim_audit/review_summary_v2/reviewed_metrics/gold_v2_additions_review.csv
+```
+
+若 `quote_review_status` 是 `needs_review_missing` 或 `needs_review_not_found`，从
+`suggested_quote_candidates` 中选择/复制一个**原文逐字连续**的支持片段到 `review_quote`。
+不要填整篇文档；quote 应尽量是一句或一个短段。已有 `ready_exact` 的行无需修改。
+
+quote 全部复核后，才物化独立候选集：
 
 ```bash
 make experiment-gold-v2 \
-  ADDITIONS=experiments/runs/<run-id>/claim_audit/review_summary_v2/reviewed_metrics/gold_v2_additions.csv \
+  ADDITIONS=experiments/runs/<run-id>/claim_audit/review_summary_v2/reviewed_metrics/gold_v2_additions_review.csv \
   OUTPUT=experiments/runs/<run-id>/claim_audit/review_summary_v2/reviewed_metrics/gold_v2_candidate
 ```
 
