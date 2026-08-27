@@ -139,6 +139,25 @@ def load_semantic_rows(path: Path) -> list[dict[str, str]]:
     return rows
 
 
+def audit_label_validation_issues(rows: list[dict[str, str]]) -> list[dict[str, str]]:
+    """Re-check only metric-blocking label direction/clarification mistakes."""
+    issues: list[dict[str, str]] = []
+    for row in rows:
+        kind = normalized(row.get("row_kind"))
+        status = normalized(row.get("match_status"))
+        label = normalized(row.get("review_label"))
+        issue = ""
+        if kind == "gold_only" and label in {"low_value_fp", "genuine_fp", "duplicate", "confirm_tp"}:
+            issue = "gold_only 行不能使用 prediction-side 标签或 confirm_tp；请重分类为 genuine_fn/schema_equivalent/gold_scope_mismatch/annotation_error。"
+        elif kind == "prediction_only" and label in {"genuine_fn", "confirm_tp"}:
+            issue = "prediction_only 行不能直接使用 genuine_fn/confirm_tp；请在 semantic review 中标为 schema_equivalent 或 gold_missing_claim，并填写 resolution。"
+        elif status == "same_slot_value_mismatch" and label == "confirm_tp" and not (row.get("review_note") or "").strip():
+            issue = "same_slot_value_mismatch 标为 confirm_tp 时必须在 review_note 说明值差异为何不改变事实。"
+        if issue:
+            issues.append({**row_excerpt(row), "issue_type": "audit_label_validation", "issue": issue})
+    return issues
+
+
 def build_metrics(
     audit_rows: list[dict[str, str]], semantic_rows: list[dict[str, str]],
 ) -> tuple[dict[str, Any], list[dict[str, str]], list[dict[str, str]], list[dict[str, str]]]:
@@ -156,7 +175,7 @@ def build_metrics(
         if row.get("gold_id") and normalized(row.get("priority")) == "critical"
     }
 
-    issues: list[dict[str, str]] = []
+    issues: list[dict[str, str]] = audit_label_validation_issues(audit_rows)
     mappings: list[dict[str, str]] = []
     gold_v2_additions: list[dict[str, str]] = []
     accepted_prediction_to_gold: dict[str, str] = {}
