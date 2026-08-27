@@ -101,7 +101,7 @@ def row_excerpt(row: dict[str, str]) -> dict[str, str]:
     fields = (
         "audit_row_id", "document", "row_kind", "match_status", "match_tier", "priority",
         "review_label", "review_note", "gold_id", "gold_subject", "gold_predicate", "gold_value",
-        "pred_index", "pred_subject", "pred_predicate", "pred_value", "pred_quote",
+        "pred_index", "pred_subject", "pred_predicate", "pred_value", "pred_value_kind", "pred_qualifiers", "pred_quote",
     )
     return {field: row.get(field, "") for field in fields}
 
@@ -279,6 +279,7 @@ def build_metrics(
                 "subject": audit.get("pred_subject", ""),
                 "predicate": audit.get("pred_predicate", ""),
                 "value": audit.get("pred_value", ""),
+                "value_kind": audit.get("pred_value_kind", "text") or "text",
                 "qualifiers": audit.get("pred_qualifiers", ""),
                 "quote": audit.get("pred_quote", ""),
                 "include_in_conflict_critical": critical,

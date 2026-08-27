@@ -209,13 +209,20 @@ def match_doc(preds, golds, relaxed_th=0.5):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--run", default=str(BASE / "runs" / "run1.json"))
+    ap.add_argument("--gold-dir", default=str(BASE / "gold"),
+                    help="gold JSON directory; defaults to the immutable gold-v1 set")
+    ap.add_argument("--contradictions", default=str(BASE / "contradictions.json"),
+                    help="contradiction-pair JSON path; defaults to the v1 pair set")
     ap.add_argument("--relaxed-th", type=float, default=0.5)
     args = ap.parse_args()
 
     docs = load_docs()
     run = json.loads(Path(args.run).read_text(encoding="utf-8"))
+    gold_dir = Path(args.gold_dir)
+    if not gold_dir.is_dir():
+        raise SystemExit(f"gold directory not found: {gold_dir}")
     golds_by_doc, gold_by_id = {}, {}
-    for p in sorted((BASE / "gold").glob("*.json")):
+    for p in sorted(gold_dir.glob("*.json")):
         gd = json.loads(p.read_text(encoding="utf-8"))
         claims = [enrich(dict(c)) for c in gd["claims"]]
         golds_by_doc[gd["doc"]] = claims
@@ -278,7 +285,10 @@ def main():
     print("=" * 76)
     print("预埋矛盾对 — 声明键通道召回")
     print("=" * 76)
-    contr = json.loads((BASE / "contradictions.json").read_text(encoding="utf-8"))
+    contr_path = Path(args.contradictions)
+    if not contr_path.is_file():
+        raise SystemExit(f"contradictions file not found: {contr_path}")
+    contr = json.loads(contr_path.read_text(encoding="utf-8"))
     caught_strict = caught_relaxed = n_conflict = 0
     for pair in contr["pairs"]:
         ga = gold_by_id[pair["a"]["gold_id"]][1]

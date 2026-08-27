@@ -305,6 +305,26 @@ metric_validation_issues.csv
 不会自动修改仓库中的 gold 文件。仅当 `metric_validation_issues.csv` 为空且
 `metric_ready=true` 时，才可将 human-adjusted P/R 作为正式研究指标。
 
+### 生成待复核 gold-v2 候选集
+
+在人工校正指标就绪后，将 reviewer 标为 `add_gold_v2` 的 claims 物化为独立候选集：
+
+```bash
+make experiment-gold-v2 \
+  ADDITIONS=experiments/runs/<run-id>/claim_audit/review_summary_v2/reviewed_metrics/gold_v2_additions.csv \
+  OUTPUT=experiments/runs/<run-id>/claim_audit/review_summary_v2/reviewed_metrics/gold_v2_candidate
+```
+
+它会复制 immutable gold-v1 JSON 并附加新增 claims，逐条验证 quote 是否仍在原文中，输出
+`provenance.json` 与 README。它**不会修改** `testdata/claims_eval/gold/`。候选集经第二位审阅者
+复核后，才可推广为受版本控制的 `gold-v2`；评估器支持：
+
+```bash
+python3 testdata/claims_eval/evaluate.py \
+  --run <claims_eval_run.json> \
+  --gold-dir <gold_v2_candidate目录>
+```
+
 ## 当前边界
 
 运行器负责“真实执行 + 可复现导出 + C1 抽取评分”。候选通道和 fine verdict 已输出到
