@@ -251,6 +251,27 @@ make experiment-audit RUN=experiments/runs/<run-id>
 `genuine_fp`、`duplicate`、`quote_failure` 或 `annotation_error`。先审查
 `priority=critical` 的行，它们直接关联 P1-P5/N1。
 
+标注完成后，先复制为 `audit_rows_reviewed.csv`，再汇总：
+
+```bash
+make experiment-audit-summary AUDIT=experiments/runs/<run-id>/claim_audit
+```
+
+汇总输出到 `claim_audit/review_summary/`：
+
+```text
+review_summary.json
+review_report.md
+gold_revision_candidates.csv
+schema_equivalence_candidates.csv
+model_improvement_cases.csv
+semantic_link_review.csv
+```
+
+该汇总器不会把行级人工标签直接相加成 P/R；`schema_equivalent` 或 gold 漏标可能需要
+prediction→gold 的显式链接，才可得到可发表的人类校正 P/R。它会将需要第二轮链接的少量行
+列入 `semantic_link_review.csv`。
+
 ## 当前边界
 
 运行器负责“真实执行 + 可复现导出 + C1 抽取评分”。候选通道和 fine verdict 已输出到

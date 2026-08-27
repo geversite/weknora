@@ -1,4 +1,4 @@
-.PHONY: help build run test clean docker-build-app docker-build-docreader docker-build-frontend docker-build-all docker-run migrate-up migrate-down docker-restart docker-stop start-all stop-all start-ollama stop-ollama build-images build-images-app build-images-docreader build-images-frontend clean-images check-env list-containers pull-images show-platform dev-start dev-stop dev-restart dev-logs dev-status dev-app dev-frontend docs install-swagger build-lite run-lite package-lite experiment-check experiment-c1 experiment-p2 experiment-p3 experiment-p12 experiment-v1 experiment-audit
+.PHONY: help build run test clean docker-build-app docker-build-docreader docker-build-frontend docker-build-all docker-run migrate-up migrate-down docker-restart docker-stop start-all stop-all start-ollama stop-ollama build-images build-images-app build-images-docreader build-images-frontend clean-images check-env list-containers pull-images show-platform dev-start dev-stop dev-restart dev-logs dev-status dev-app dev-frontend docs install-swagger build-lite run-lite package-lite experiment-check experiment-c1 experiment-p2 experiment-p3 experiment-p12 experiment-v1 experiment-audit experiment-audit-summary
 
 # Show help
 help:
@@ -66,6 +66,7 @@ help:
 	@echo "  experiment-p12    运行 doc1/doc2/doc5 全上下文 P1/P2 诊断实验"
 	@echo "  experiment-v1     运行关闭 claims 的 V1 消融对照"
 	@echo "  experiment-audit  导出某次完整 run 的 C1 人工审计包（RUN=<run目录>）"
+	@echo "  experiment-audit-summary 汇总人工标注审计表（AUDIT=<claim_audit目录>）"
 	@echo ""
 	@echo "Lite 模式（零外部依赖）:"
 	@echo "  build-lite        构建 Lite 版本（先构建前端到 web/，再构建 Go；SKIP_FRONTEND=1 跳过前端）"
@@ -371,5 +372,10 @@ experiment-v1:
 experiment-audit:
 	@test -n "$(RUN)" || (echo "Usage: make experiment-audit RUN=experiments/runs/<run-id>"; exit 2)
 	python3 scripts/experiments/export_claim_audit.py --run-dir "$(RUN)"
+
+# Usage: make experiment-audit-summary AUDIT=experiments/runs/<run-id>/claim_audit
+experiment-audit-summary:
+	@test -n "$(AUDIT)" || (echo "Usage: make experiment-audit-summary AUDIT=experiments/runs/<run-id>/claim_audit"; exit 2)
+	python3 scripts/experiments/summarize_claim_audit.py --audit-dir "$(AUDIT)"
 
 
