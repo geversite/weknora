@@ -37,6 +37,30 @@ type IndexingStrategy struct {
 	// indexing requirements by itself, so it is excluded from
 	// HasAnyIndexing / IsZero / NeedsChunks / NeedsEmbedding.
 	ClaimExtractEnabled bool `yaml:"claim_extract_enabled" json:"claim_extract_enabled"`
+	// ConflictCascadeMode selects the research conflict verifier after C1
+	// candidate generation. Empty/legacy preserves C1's per-pair LLM path;
+	// rules enables C2-A's deterministic rule prefilter; rules_batch enables
+	// C2-B's batched LLM path. Kept per-KB so experiment scripts can run
+	// V1/C1/C2 ablations without process-wide environment changes.
+	ConflictCascadeMode string `yaml:"conflict_cascade_mode" json:"conflict_cascade_mode"`
+}
+
+// Conflict cascade modes. Unknown/empty values deliberately fall back to
+// legacy so an old persisted strategy cannot accidentally change detection.
+const (
+	ConflictCascadeModeLegacy     = "legacy"
+	ConflictCascadeModeRules      = "rules"
+	ConflictCascadeModeRulesBatch = "rules_batch"
+)
+
+// EffectiveConflictCascadeMode returns a safe, recognized cascade mode.
+func (s IndexingStrategy) EffectiveConflictCascadeMode() string {
+	switch s.ConflictCascadeMode {
+	case ConflictCascadeModeRules, ConflictCascadeModeRulesBatch:
+		return s.ConflictCascadeMode
+	default:
+		return ConflictCascadeModeLegacy
+	}
 }
 
 // DefaultIndexingStrategy returns the default strategy matching the legacy behavior:

@@ -752,6 +752,15 @@ func (kb *KnowledgeBase) IsClaimExtractEnabled() bool {
 	return kb != nil && kb.IndexingStrategy.ClaimExtractEnabled
 }
 
+// EffectiveConflictCascadeMode returns the KB-scoped C2 verifier mode. A nil
+// KB (or old strategy with no field) retains the C1 legacy per-pair LLM path.
+func (kb *KnowledgeBase) EffectiveConflictCascadeMode() string {
+	if kb == nil {
+		return ConflictCascadeModeLegacy
+	}
+	return kb.IndexingStrategy.EffectiveConflictCascadeMode()
+}
+
 // IsUserFeedbackEnabled reports whether the M5 automatic user-feedback-to-wiki
 // pipeline is active for this knowledge base. Always true when wiki indexing is
 // enabled: the feature is no longer user-toggleable and runs whenever the wiki

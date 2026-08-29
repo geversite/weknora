@@ -244,6 +244,7 @@ func (s *KnowledgeConflictService) Handle(ctx context.Context, task *asynq.Task)
 // the relevant assertion from two potentially large chunks.
 type claimEvidence struct {
 	ID        string
+	ClaimKey  string
 	Subject   string
 	Predicate string
 	Value     string
@@ -262,6 +263,7 @@ func claimEvidenceFromClaim(claim *types.Claim) claimEvidence {
 	}
 	return claimEvidence{
 		ID:         claim.ID,
+		ClaimKey:   claim.ClaimKey,
 		Subject:    claim.Subject,
 		Predicate:  claim.Predicate,
 		Value:      claim.Value,
@@ -649,15 +651,47 @@ func (s *KnowledgeConflictService) dedupePending(ctx context.Context, pairs []co
 	return out
 }
 
-// fineAdjudicate sends up to conflictFineMaxPairs to the KB chat model to decide
-// whether the pair is a real contradiction and what type. Best-effort: on any
-// error, pairs are kept with a default fact_contradiction type and no reason.
+// fineAdjudicate dispatches C1 legacy or C2 cascade verification according to
+// the KB-scoped experiment mode. Rules are deliberately evaluated before model
+// lookup: a high-confidence numeric contradiction remains reportable even when
+// the chat provider is temporarily unavailable.
 func (s *KnowledgeConflictService) fineAdjudicate(
 	ctx context.Context,
 	kb *types.KnowledgeBase,
 	pairs []conflictPair,
 ) []conflictPair {
 	if len(pairs) == 0 {
+		return nil
+	}
+	if kb == nil || kb.EffectiveConflictCascadeMode() == types.ConflictCascadeModeLegacy {
+		return s.fineAdjudicateSingle(ctx, kb, pairs)
+	}
+
+	direct, unresolved, stats := applyConflictRules(pairs)
+	logger.GetLogger(ctx).Infof(
+		"[ConflictCascade] mode=%s candidates=%d rule_no_conflict=%d rule_direct_conflict=%d rule_needs_llm=%d",
+		kb.EffectiveConflictCascadeMode(), len(pairs), stats.NoConflict, stats.DirectConflict, stats.NeedsLLM,
+	)
+	if len(unresolved) == 0 {
+		return direct
+	}
+
+	// C2-A routes remaining pairs through C1's per-pair adjudicator. C2-B will
+	// replace this branch with batch adjudication while preserving the exact same
+	// rule decisions and output contract.
+	adjudicated := s.fineAdjudicateSingle(ctx, kb, unresolved)
+	return append(direct, adjudicated...)
+}
+
+// fineAdjudicateSingle is C1's evidence-conditioned per-pair LLM verifier.
+// It remains the legacy implementation and C2-A fallback for semantic gray
+// areas (dates/version updates, textual relations, fallback candidates, etc.).
+func (s *KnowledgeConflictService) fineAdjudicateSingle(
+	ctx context.Context,
+	kb *types.KnowledgeBase,
+	pairs []conflictPair,
+) []conflictPair {
+	if kb == nil || len(pairs) == 0 {
 		return nil
 	}
 	if len(pairs) > conflictFineMaxPairs {
