@@ -1,4 +1,4 @@
-.PHONY: help build run test clean docker-build-app docker-build-docreader docker-build-frontend docker-build-all docker-run migrate-up migrate-down docker-restart docker-stop start-all stop-all start-ollama stop-ollama build-images build-images-app build-images-docreader build-images-frontend clean-images check-env list-containers pull-images show-platform dev-start dev-stop dev-restart dev-logs dev-status dev-app dev-frontend docs install-swagger build-lite run-lite package-lite experiment-check experiment-c1 experiment-p2 experiment-p3 experiment-p12 experiment-v1 experiment-audit experiment-audit-summary experiment-audit-metrics experiment-gold-v2 experiment-gold-v2-review experiment-gold-v2-scope-review experiment-gold-v2-apply-recommendations
+.PHONY: help build run test clean docker-build-app docker-build-docreader docker-build-frontend docker-build-all docker-run migrate-up migrate-down docker-restart docker-stop start-all stop-all start-ollama stop-ollama build-images build-images-app build-images-docreader build-images-frontend clean-images check-env list-containers pull-images show-platform dev-start dev-stop dev-restart dev-logs dev-status dev-app dev-frontend docs install-swagger build-lite run-lite package-lite experiment-check experiment-c1 experiment-p2 experiment-p3 experiment-p12 experiment-v1 experiment-audit experiment-audit-summary experiment-audit-metrics experiment-gold-v2 experiment-gold-v2-review experiment-gold-v2-scope-review experiment-gold-v2-apply-recommendations experiment-gold-v2-finalize experiment-dual-scope-metrics
 
 # Show help
 help:
@@ -72,6 +72,8 @@ help:
 	@echo "  experiment-gold-v2-review 生成 gold-v2 quote 补全表（ADDITIONS=... REVIEW=...）"
 	@echo "  experiment-gold-v2-scope-review 生成 broad/narrow scope 审核表（CANDIDATE=... REVIEW=...）"
 	@echo "  experiment-gold-v2-apply-recommendations 应用版本化 dual-scope 推荐（REVIEW=... OUTPUT=...）"
+	@echo "  experiment-gold-v2-finalize 生成最终 broad candidate 与 narrow manifest"
+	@echo "  experiment-dual-scope-metrics 计算 scope/dedup 后的 broad/narrow 指标"
 	@echo ""
 	@echo "Lite 模式（零外部依赖）:"
 	@echo "  build-lite        构建 Lite 版本（先构建前端到 web/，再构建 Go；SKIP_FRONTEND=1 跳过前端）"
@@ -417,5 +419,26 @@ experiment-gold-v2-apply-recommendations:
 	@test -n "$(OUTPUT)" || (echo "Usage: make experiment-gold-v2-apply-recommendations REVIEW=<scope-review.csv> OUTPUT=<recommended-review.csv>"; exit 2)
 	python3 scripts/experiments/apply_gold_v2_scope_recommendations.py \
 		--review "$(REVIEW)" --output "$(OUTPUT)"
+
+# Usage: make experiment-gold-v2-finalize CANDIDATE=<full-candidate> SCOPE=<recommended-scope.csv> BROAD_OUTPUT=<dir> NARROW_MANIFEST=<json>
+experiment-gold-v2-finalize:
+	@test -n "$(CANDIDATE)" || (echo "Usage: make experiment-gold-v2-finalize CANDIDATE=<full-candidate> SCOPE=<recommended-scope.csv> BROAD_OUTPUT=<dir> NARROW_MANIFEST=<json>"; exit 2)
+	@test -n "$(SCOPE)" || (echo "Usage: make experiment-gold-v2-finalize CANDIDATE=<full-candidate> SCOPE=<recommended-scope.csv> BROAD_OUTPUT=<dir> NARROW_MANIFEST=<json>"; exit 2)
+	@test -n "$(BROAD_OUTPUT)" || (echo "Usage: make experiment-gold-v2-finalize CANDIDATE=<full-candidate> SCOPE=<recommended-scope.csv> BROAD_OUTPUT=<dir> NARROW_MANIFEST=<json>"; exit 2)
+	@test -n "$(NARROW_MANIFEST)" || (echo "Usage: make experiment-gold-v2-finalize CANDIDATE=<full-candidate> SCOPE=<recommended-scope.csv> BROAD_OUTPUT=<dir> NARROW_MANIFEST=<json>"; exit 2)
+	python3 scripts/experiments/finalize_gold_v2_scopes.py \
+		--candidate-dir "$(CANDIDATE)" --scope-review "$(SCOPE)" \
+		--broad-output "$(BROAD_OUTPUT)" --narrow-manifest "$(NARROW_MANIFEST)"
+
+# Usage: make experiment-dual-scope-metrics METRICS=<reviewed_metrics.json> MAPPINGS=<accepted_semantic_mappings.csv> SCOPE=<recommended-scope.csv> NARROW_MANIFEST=<json> OUTPUT=<json>
+experiment-dual-scope-metrics:
+	@test -n "$(METRICS)" || (echo "Usage: make experiment-dual-scope-metrics METRICS=<reviewed_metrics.json> MAPPINGS=<accepted_semantic_mappings.csv> SCOPE=<recommended-scope.csv> NARROW_MANIFEST=<json> OUTPUT=<json>"; exit 2)
+	@test -n "$(MAPPINGS)" || (echo "Usage: make experiment-dual-scope-metrics METRICS=<reviewed_metrics.json> MAPPINGS=<accepted_semantic_mappings.csv> SCOPE=<recommended-scope.csv> NARROW_MANIFEST=<json> OUTPUT=<json>"; exit 2)
+	@test -n "$(SCOPE)" || (echo "Usage: make experiment-dual-scope-metrics METRICS=<reviewed_metrics.json> MAPPINGS=<accepted_semantic_mappings.csv> SCOPE=<recommended-scope.csv> NARROW_MANIFEST=<json> OUTPUT=<json>"; exit 2)
+	@test -n "$(NARROW_MANIFEST)" || (echo "Usage: make experiment-dual-scope-metrics METRICS=<reviewed_metrics.json> MAPPINGS=<accepted_semantic_mappings.csv> SCOPE=<recommended-scope.csv> NARROW_MANIFEST=<json> OUTPUT=<json>"; exit 2)
+	@test -n "$(OUTPUT)" || (echo "Usage: make experiment-dual-scope-metrics METRICS=<reviewed_metrics.json> MAPPINGS=<accepted_semantic_mappings.csv> SCOPE=<recommended-scope.csv> NARROW_MANIFEST=<json> OUTPUT=<json>"; exit 2)
+	python3 scripts/experiments/compute_dual_scope_metrics.py \
+		--reviewed-metrics "$(METRICS)" --mappings "$(MAPPINGS)" \
+		--scope-review "$(SCOPE)" --narrow-manifest "$(NARROW_MANIFEST)" --output "$(OUTPUT)"
 
 

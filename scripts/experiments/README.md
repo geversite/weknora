@@ -372,6 +372,31 @@ make experiment-gold-v2-apply-recommendations \
 该推荐保留 7 条 broad-maintenance 独立新增事实、3 条 narrow-conflict 独立新增事实；
 将“引发幻觉”合并到更具体的“导致极度幻觉”，并排除纯别名 `StarQuartz`。原 review CSV 永远不变。
 
+根据完成的 scope review 生成最终派生物（仍不修改 full candidate 或 gold-v1）：
+
+```bash
+make experiment-gold-v2-finalize \
+  CANDIDATE=<full-gold-v2-candidate目录> \
+  SCOPE=<gold_v2_scope_review_recommended.csv> \
+  BROAD_OUTPUT=<gold-v2-broad-candidate目录> \
+  NARROW_MANIFEST=<gold-v2-conflict-manifest.json>
+```
+
+随后计算 scope/dedup 后的最终指标：
+
+```bash
+make experiment-dual-scope-metrics \
+  METRICS=<reviewed_metrics.json> \
+  MAPPINGS=<accepted_semantic_mappings.csv> \
+  SCOPE=<gold_v2_scope_review_recommended.csv> \
+  NARROW_MANIFEST=<gold-v2-conflict-manifest.json> \
+  OUTPUT=<dual_scope_metrics.json>
+```
+
+`gold-v2-broad` 是可由 evaluator 使用的 JSON 目录；`gold-v2-conflict` 是仅含 P1-P5/N1
+base IDs 和 narrow v2 additions 的指标 manifest。narrow precision 暂不计算，因为尚未为每一条
+raw prediction 标记 critical/non-critical；narrow recall 则是严格可复现的。
+
 ## 当前边界
 
 运行器负责“真实执行 + 可复现导出 + C1 抽取评分”。候选通道和 fine verdict 已输出到
