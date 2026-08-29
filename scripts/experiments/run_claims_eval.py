@@ -250,15 +250,26 @@ def load_scenario(path: Path) -> dict[str, Any]:
     return scenario
 
 
+EXPERIMENT_VARIANTS = ("v1", "c1", "c2-rules", "c2-batch")
+CLAIM_ENABLED_VARIANTS = {"c1", "c2-rules", "c2-batch"}
+
+
+def expected_cascade_mode(variant: str) -> str:
+    return {
+        "v1": "legacy",
+        "c1": "legacy",
+        "c2-rules": "rules",
+        "c2-batch": "rules_batch",
+    }[variant]
+
+
 def apply_variant(strategy: dict[str, Any], scenario: dict[str, Any], variant: str) -> dict[str, Any]:
     result = copy.deepcopy(strategy)
     result.update(copy.deepcopy(scenario.get("indexing_strategy_overrides", {})))
-    if variant == "v1":
-        result["claim_extract_enabled"] = False
-    elif variant == "c1":
-        result["claim_extract_enabled"] = True
-    else:
+    if variant not in EXPERIMENT_VARIANTS:
         raise ExperimentError(f"未知 variant: {variant}")
+    result["claim_extract_enabled"] = variant in CLAIM_ENABLED_VARIANTS
+    result["conflict_cascade_mode"] = expected_cascade_mode(variant)
 
     # API UpdateKnowledgeBase rejects an entirely-empty indexing strategy. A
     # normal experiment template should already have vector/keyword enabled;
@@ -385,6 +396,75 @@ def query_conflicts(db: PostgresExporter, kb_id: str) -> list[dict[str, str]]:
         f"WHERE c.knowledge_base_id = {sql_literal(kb_id)} "
         "ORDER BY c.created_at, c.id"
     )
+
+
+def conflict_detection_runs_table_exists(db: PostgresExporter) -> bool:
+    rows = db.query("SELECT to_regclass('public.conflict_detection_runs') AS table_name")
+    return bool(rows and rows[0].get("table_name"))
+
+
+def query_conflict_detection_runs(db: PostgresExporter, kb_id: str) -> list[dict[str, str]]:
+    if not conflict_detection_runs_table_exists(db):
+        raise ExperimentError(
+            "缺少 conflict_detection_runs 表；请确认后端已拉取 C2 代码并重启，以执行 migration 000086。"
+        )
+    return db.query(
+        "SELECT id, tenant_id, knowledge_base_id, knowledge_id, cascade_mode, detector_version, status, "
+        "candidate_claim_pairs, candidate_fallback_pairs, candidate_after_dedupe, candidates_submitted, "
+        "rule_no_conflict, rule_direct_conflict, rule_needs_llm, llm_pair_count, llm_batch_call_count, "
+        "llm_single_call_count, llm_single_fallback_count, llm_prompt_tokens, llm_completion_tokens, "
+        "final_conflict_count, duration_ms, error_message, created_at, finished_at "
+        "FROM conflict_detection_runs "
+        f"WHERE knowledge_base_id = {sql_literal(kb_id)} "
+        "ORDER BY created_at, id"
+    )
+
+
+def wait_for_detection_runs(
+    db: PostgresExporter,
+    kb_id: str,
+    knowledge_ids: Iterable[str],
+    timeout_seconds: int,
+    poll_seconds: float,
+) -> list[dict[str, str]]:
+    expected = {knowledge_id for knowledge_id in knowledge_ids if knowledge_id}
+    deadline = time.monotonic() + timeout_seconds
+    latest: list[dict[str, str]] = []
+    while time.monotonic() < deadline:
+        latest = query_conflict_detection_runs(db, kb_id)
+        seen = {row.get("knowledge_id", "") for row in latest}
+        if expected.issubset(seen):
+            return latest
+        time.sleep(poll_seconds)
+    missing = sorted(expected - {row.get("knowledge_id", "") for row in latest})
+    raise ExperimentError(
+        "等待 conflict_detection_runs 超时；缺少 knowledge_id: " + ", ".join(missing)
+    )
+
+
+def as_int(value: str | int | None) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def aggregate_conflict_detection_runs(rows: list[dict[str, str]]) -> dict[str, Any]:
+    sum_fields = (
+        "candidate_claim_pairs", "candidate_fallback_pairs", "candidate_after_dedupe", "candidates_submitted",
+        "rule_no_conflict", "rule_direct_conflict", "rule_needs_llm", "llm_pair_count",
+        "llm_batch_call_count", "llm_single_call_count", "llm_single_fallback_count",
+        "llm_prompt_tokens", "llm_completion_tokens", "final_conflict_count", "duration_ms",
+    )
+    totals = {field: sum(as_int(row.get(field)) for row in rows) for field in sum_fields}
+    modes: dict[str, int] = {}
+    statuses: dict[str, int] = {}
+    for row in rows:
+        mode = row.get("cascade_mode", "") or "legacy"
+        status = row.get("status", "") or "unknown"
+        modes[mode] = modes.get(mode, 0) + 1
+        statuses[status] = statuses.get(status, 0) + 1
+    return {"run_count": len(rows), "cascade_modes": modes, "statuses": statuses, "totals": totals}
 
 
 def query_dead_letters(db: PostgresExporter, knowledge_ids: Iterable[str]) -> list[dict[str, str]]:
@@ -537,9 +617,10 @@ def write_report(
     expected_pairs: list[dict[str, Any]],
     observed_pairs: list[dict[str, Any]],
     evaluator: dict[str, Any] | None,
+    cascade_metrics: dict[str, Any] | None,
 ) -> None:
     lines = [
-        f"# C1 experiment: {manifest['run_id']}",
+        f"# Conflict experiment: {manifest['run_id']}",
         "",
         f"- 状态：`{manifest.get('status', 'unknown')}`",
         f"- 场景：`{manifest['scenario_name']}`",
@@ -579,6 +660,25 @@ def write_report(
     else:
         lines.append("未观察到 conflict 行。")
 
+    if cascade_metrics is not None:
+        totals = cascade_metrics.get("totals", {})
+        lines += [
+            "", "## C2 级联与成本测量", "",
+            f"- detector runs：`{cascade_metrics.get('run_count', 0)}`",
+            f"- modes：`{cascade_metrics.get('cascade_modes', {})}`",
+            f"- statuses：`{cascade_metrics.get('statuses', {})}`",
+            "",
+            "| 指标 | 合计 |",
+            "|---|---:|",
+        ]
+        for key in (
+            "candidate_claim_pairs", "candidate_fallback_pairs", "candidate_after_dedupe", "candidates_submitted",
+            "rule_no_conflict", "rule_direct_conflict", "rule_needs_llm", "llm_pair_count",
+            "llm_batch_call_count", "llm_single_call_count", "llm_single_fallback_count",
+            "llm_prompt_tokens", "llm_completion_tokens", "final_conflict_count", "duration_ms",
+        ):
+            lines.append(f"| {key} | {totals.get(key, 0)} |")
+
     if evaluator is not None:
         lines += ["", "## 抽取质量评估", ""]
         lines.append(f"- evaluate.py exit code：`{evaluator['exit_code']}`")
@@ -614,7 +714,12 @@ def check_environment(client: APIClient, check_db: bool) -> int:
         try:
             db = PostgresExporter()
             db.check()
+            if not conflict_detection_runs_table_exists(db):
+                raise ExperimentError(
+                    "缺少 conflict_detection_runs；请重启包含 C2 migration 000086 的后端。"
+                )
             print("[check] PostgreSQL export: OK", db.describe_mode())
+            print("[check] C2 conflict_detection_runs: OK")
         except ExperimentError as exc:
             print("[check] PostgreSQL export: FAIL", exc, file=sys.stderr)
             return 1
@@ -703,10 +808,16 @@ def run_experiment(args: argparse.Namespace) -> int:
             raise ExperimentError("创建实验 KB 的响应缺少 id")
         kb_id = str(kb["id"])
         strategy = kb.get("indexing_strategy") or payload["indexing_strategy"]
-        expected_claim_enabled = args.variant == "c1"
+        expected_claim_enabled = args.variant in CLAIM_ENABLED_VARIANTS
         if bool(strategy.get("claim_extract_enabled")) != expected_claim_enabled:
             raise ExperimentError(
-                "实验 KB 的 claim_extract_enabled 与 variant 不一致；请确认运行的后端已包含 C1 代码。"
+                "实验 KB 的 claim_extract_enabled 与 variant 不一致；请确认运行的后端已包含 C1/C2 代码。"
+            )
+        actual_cascade_mode = str(strategy.get("conflict_cascade_mode") or "legacy")
+        if actual_cascade_mode != expected_cascade_mode(args.variant):
+            raise ExperimentError(
+                f"实验 KB 的 conflict_cascade_mode={actual_cascade_mode!r}，"
+                f"期望 {expected_cascade_mode(args.variant)!r}；请确认后端已包含 C2 代码。"
             )
         manifest.update({
             "knowledge_base_id": kb_id,
@@ -748,7 +859,7 @@ def run_experiment(args: argparse.Namespace) -> int:
                 client, knowledge_id, args.timeout_seconds, args.poll_seconds,
                 output_dir / "spans" / f"{doc_id}.json",
             )
-            if args.variant == "c1":
+            if args.variant in CLAIM_ENABLED_VARIANTS:
                 minimum = int(document.get("min_claims", scenario.get("min_claims_per_document", 1)))
                 claim_counts[doc_id] = wait_for_claims(
                     db, knowledge_id, minimum, args.claim_timeout_seconds, args.poll_seconds,
@@ -764,17 +875,24 @@ def run_experiment(args: argparse.Namespace) -> int:
             db, kb_id, expected_pairs, knowledge_to_doc,
             args.conflict_timeout_seconds, args.poll_seconds,
         )
+        detection_runs = wait_for_detection_runs(
+            db, kb_id, manifest["knowledge_ids"].values(),
+            args.conflict_timeout_seconds, args.poll_seconds,
+        )
+        cascade_metrics = aggregate_conflict_detection_runs(detection_runs)
         claims = query_claims(db, kb_id)
         dead_letters = query_dead_letters(db, manifest["knowledge_ids"].values())
         json_dump(output_dir / "claims.json", claims)
         json_dump(output_dir / "conflicts.json", conflicts)
+        json_dump(output_dir / "conflict_detection_runs.json", detection_runs)
+        json_dump(output_dir / "cascade_metrics.json", cascade_metrics)
         json_dump(output_dir / "dead_letters.json", dead_letters)
         json_dump(output_dir / "conflict_document_pairs.json", observed_pairs)
 
         evaluator_result: dict[str, Any] | None = None
         evaluator_scope = "skipped"
         evaluator_run_path = output_dir / "claims_eval_run.json"
-        if args.variant == "c1" and scenario_covers_full_gold(scenario) and write_evaluator_run(
+        if args.variant in CLAIM_ENABLED_VARIANTS and scenario_covers_full_gold(scenario) and write_evaluator_run(
             evaluator_run_path, run_id, scenario, manifest["knowledge_ids"], claims, manifest,
         ):
             evaluator_scope = "full_gold"
@@ -801,6 +919,7 @@ def run_experiment(args: argparse.Namespace) -> int:
             "claim_counts_by_document": claim_counts,
             "conflict_count_total": len(conflicts),
             "dead_letter_count": len(dead_letters),
+            "cascade": cascade_metrics,
             "expected_conflict_document_pairs": expected_pairs,
             "missing_expected_conflict_document_pairs": missing_pairs,
             "evaluator_scope": evaluator_scope,
@@ -812,13 +931,22 @@ def run_experiment(args: argparse.Namespace) -> int:
         manifest["finished_at"] = utc_now()
         json_dump(output_dir / "manifest.json", manifest)
         write_report(
-            output_dir / "report.md", manifest, claim_counts, expected_pairs, observed_pairs, evaluator_result,
+            output_dir / "report.md", manifest, claim_counts, expected_pairs, observed_pairs,
+            evaluator_result, cascade_metrics,
         )
 
         print(f"实验完成: {output_dir}")
         print(f"  KB: {kb_id}")
         print(f"  claims: {len(claims)}")
         print(f"  conflicts: {len(conflicts)}")
+        cascade_totals = cascade_metrics["totals"]
+        print(
+            "  cascade: "
+            f"rules(no/conflict/llm)={cascade_totals['rule_no_conflict']}/"
+            f"{cascade_totals['rule_direct_conflict']}/{cascade_totals['rule_needs_llm']}; "
+            f"LLM(batch/single)={cascade_totals['llm_batch_call_count']}/"
+            f"{cascade_totals['llm_single_call_count']}"
+        )
         if missing_pairs:
             print("  缺失预期 conflict 文档对:", ", ".join(str(item.get("id", "?")) for item in missing_pairs))
         if evaluator_result:
@@ -849,7 +977,7 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--scenario", default=str(DEFAULT_SCENARIO), help="JSON scenario path")
-    parser.add_argument("--variant", choices=("v1", "c1"), default="c1", help="Experiment variant")
+    parser.add_argument("--variant", choices=EXPERIMENT_VARIANTS, default="c1", help="Experiment variant")
     parser.add_argument(
         "--template-kb-id", default=os.environ.get("WEKNORA_EXPERIMENT_TEMPLATE_KB", ""),
         help="Existing KB whose model/storage/chunk configuration is cloned into a fresh temporary KB",

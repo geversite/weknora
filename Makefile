@@ -1,4 +1,4 @@
-.PHONY: help build run test clean docker-build-app docker-build-docreader docker-build-frontend docker-build-all docker-run migrate-up migrate-down docker-restart docker-stop start-all stop-all start-ollama stop-ollama build-images build-images-app build-images-docreader build-images-frontend clean-images check-env list-containers pull-images show-platform dev-start dev-stop dev-restart dev-logs dev-status dev-app dev-frontend docs install-swagger build-lite run-lite package-lite experiment-check experiment-c1 experiment-p2 experiment-p3 experiment-p12 experiment-v1 experiment-audit experiment-audit-summary experiment-audit-metrics experiment-gold-v2 experiment-gold-v2-review experiment-gold-v2-scope-review experiment-gold-v2-apply-recommendations experiment-gold-v2-finalize experiment-dual-scope-metrics
+.PHONY: help build run test clean docker-build-app docker-build-docreader docker-build-frontend docker-build-all docker-run migrate-up migrate-down docker-restart docker-stop start-all stop-all start-ollama stop-ollama build-images build-images-app build-images-docreader build-images-frontend clean-images check-env list-containers pull-images show-platform dev-start dev-stop dev-restart dev-logs dev-status dev-app dev-frontend docs install-swagger build-lite run-lite package-lite experiment-check experiment-c1 experiment-c2-rules experiment-c2-batch experiment-p2 experiment-p3 experiment-p12 experiment-v1 experiment-audit experiment-audit-summary experiment-audit-metrics experiment-gold-v2 experiment-gold-v2-review experiment-gold-v2-scope-review experiment-gold-v2-apply-recommendations experiment-gold-v2-finalize experiment-dual-scope-metrics
 
 # Show help
 help:
@@ -61,6 +61,8 @@ help:
 	@echo "研究实验（脚本化，无需 UI）:"
 	@echo "  experiment-check  检查 C1.5 实验 API/数据库导出环境"
 	@echo "  experiment-c1     运行六文档 C1 生产模型实验"
+	@echo "  experiment-c2-rules 运行 C2-A 规则层消融实验"
+	@echo "  experiment-c2-batch 运行 C2-B 规则层 + 批量 LLM 实验"
 	@echo "  experiment-p2     运行 P2 claim→detect 时序隔离实验"
 	@echo "  experiment-p3     运行 P3 fallback 隔离回归实验"
 	@echo "  experiment-p12    运行 doc1/doc2/doc5 全上下文 P1/P2 诊断实验"
@@ -358,6 +360,14 @@ experiment-check:
 experiment-c1:
 	python3 scripts/experiments/run_claims_eval.py \
 		--scenario scripts/experiments/scenarios/c1_full.json --variant c1
+
+experiment-c2-rules:
+	python3 scripts/experiments/run_claims_eval.py \
+		--scenario scripts/experiments/scenarios/c1_full.json --variant c2-rules
+
+experiment-c2-batch:
+	python3 scripts/experiments/run_claims_eval.py \
+		--scenario scripts/experiments/scenarios/c1_full.json --variant c2-batch
 
 experiment-p2:
 	python3 scripts/experiments/run_claims_eval.py \

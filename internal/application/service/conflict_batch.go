@@ -46,6 +46,7 @@ func (s *KnowledgeConflictService) fineAdjudicateBatch(
 	ctx context.Context,
 	kb *types.KnowledgeBase,
 	pairs []conflictPair,
+	stats *conflictCascadeExecutionStats,
 ) []conflictPair {
 	if kb == nil || len(pairs) == 0 {
 		return nil
@@ -62,6 +63,9 @@ func (s *KnowledgeConflictService) fineAdjudicateBatch(
 		logger.GetLogger(ctx).Warnf("[ConflictCascade] GetChatModel %s failed for batch: %v", kb.SummaryModelID, err)
 		return nil
 	}
+	if stats != nil {
+		stats.LLMPairCount += len(pairs)
+	}
 
 	out := make([]conflictPair, 0, len(pairs))
 	for start := 0; start < len(pairs); start += conflictBatchSize {
@@ -70,13 +74,13 @@ func (s *KnowledgeConflictService) fineAdjudicateBatch(
 			end = len(pairs)
 		}
 		batch := pairs[start:end]
-		verdicts, err := adjudicateConflictBatch(ctx, chatModel, batch)
+		verdicts, err := adjudicateConflictBatch(ctx, chatModel, batch, stats)
 		if err != nil {
 			logger.GetLogger(ctx).Warnf(
 				"[ConflictCascade] Batch adjudication %d-%d failed; fallback to per-pair C1 verifier: %v",
 				start, end, err,
 			)
-			out = append(out, s.fineAdjudicateSingle(ctx, kb, batch)...)
+			out = append(out, s.fineAdjudicateSingle(ctx, kb, batch, stats, true, false)...)
 			continue
 		}
 		for index, pair := range batch {
@@ -103,6 +107,7 @@ func adjudicateConflictBatch(
 	ctx context.Context,
 	chatModel chat.Chat,
 	pairs []conflictPair,
+	stats *conflictCascadeExecutionStats,
 ) (map[string]conflictBatchVerdict, error) {
 	if len(pairs) == 0 {
 		return map[string]conflictBatchVerdict{}, nil
@@ -117,6 +122,9 @@ func adjudicateConflictBatch(
 			Temperature: 0.1,
 			MaxTokens:   conflictBatchMaxTokens,
 		})
+		if stats != nil {
+			stats.addLLMResponse(response, true, false)
+		}
 		if err != nil {
 			lastErr = err
 			continue

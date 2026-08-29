@@ -93,12 +93,16 @@ func TestAdjudicateConflictBatchRetriesMalformedResponse(t *testing.T) {
 		`not json`,
 		`{"results":[{"id":"pair-000","conflict":true,"type":"fact_contradiction","reason":"互斥"}]}`,
 	}}
-	verdicts, err := adjudicateConflictBatch(context.Background(), model, []conflictPair{batchTestPair("供应实体", "两家", "唯一")})
+	var stats conflictCascadeExecutionStats
+	verdicts, err := adjudicateConflictBatch(context.Background(), model, []conflictPair{batchTestPair("供应实体", "两家", "唯一")}, &stats)
 	if err != nil {
 		t.Fatalf("adjudicate batch: %v", err)
 	}
 	if model.calls != 2 {
 		t.Fatalf("batch calls=%d, want retry=2", model.calls)
+	}
+	if stats.LLMBatchCallCount != 2 || stats.LLMSingleCallCount != 0 {
+		t.Fatalf("batch stats=%+v, want two batch calls", stats)
 	}
 	if !verdicts["pair-000"].Conflict {
 		t.Fatalf("verdict = %+v, want conflict", verdicts)

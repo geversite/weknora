@@ -157,6 +157,26 @@ make experiment-p3
 它不能依赖 doc4/doc6 中 P4/P5 的同 chunk 严格命中来“顺带”看到 P3，因此用于验证
 claim-key 不命中时的语义 fallback 是否真的能产生冲突候选。
 
+### C2 级联消融
+
+后端运行 C2 migration 000086 后，使用相同的 `c1_full` 场景运行：
+
+```bash
+make experiment-c2-rules   # C2-A：规则层 + C1 单对 LLM
+make experiment-c2-batch   # C2-B：规则层 + 批量 LLM
+```
+
+每次 run 除原有 claims/conflicts 外，还输出：
+
+```text
+conflict_detection_runs.json
+cascade_metrics.json
+```
+
+其中包含 claim/fallback 候选数、规则放行/直判数、LLM pair 数、batch/single 调用数、
+token 与延迟。运行器会拒绝缺少 `conflict_detection_runs` 的环境；重启后端以执行
+migration 000086 即可。
+
 ### V1 行为对照
 
 ```bash

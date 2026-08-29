@@ -106,7 +106,10 @@ func TestFineAdjudicateRulesBypassesChatForDirectNumericConflict(t *testing.T) {
 		ruleEvidence("补贴每天标准", "100|元", types.ClaimValueKindNumber, "{}"),
 	)
 
-	got := service.fineAdjudicate(context.Background(), kb, []conflictPair{pair})
+	got, stats := service.fineAdjudicate(context.Background(), kb, []conflictPair{pair})
+	if stats.RuleDirectConflict != 1 || stats.LLMPairCount != 0 {
+		t.Fatalf("cascade stats = %+v, want one direct rule and no LLM", stats)
+	}
 	if len(got) != 1 {
 		t.Fatalf("fineAdjudicate direct result len = %d, want 1", len(got))
 	}

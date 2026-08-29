@@ -55,8 +55,9 @@ type KnowledgeConflictService struct {
 	modelService interfaces.ModelService
 	taskEnqueuer interfaces.TaskEnqueuer
 	pendingRepo  interfaces.TaskPendingOpsRepository
-	claimRepo    interfaces.ClaimRepository     // C1: claim-key pairing channel (nil-safe)
-	wikiRepo     interfaces.WikiPageRepository  // C1: wiki counterpart resolution (nil-safe)
+	claimRepo    interfaces.ClaimRepository            // C1: claim-key pairing channel (nil-safe)
+	wikiRepo     interfaces.WikiPageRepository         // C1: wiki counterpart resolution (nil-safe)
+	runRepo      interfaces.ConflictDetectionRunRepository // C2: aggregate experiment metrics (nil-safe)
 }
 
 // NewKnowledgeConflictService constructs the conflict detect + adjudicate service.
@@ -70,6 +71,7 @@ func NewKnowledgeConflictService(
 	pendingRepo interfaces.TaskPendingOpsRepository,
 	claimRepo interfaces.ClaimRepository,
 	wikiRepo interfaces.WikiPageRepository,
+	runRepo interfaces.ConflictDetectionRunRepository,
 ) *KnowledgeConflictService {
 	return &KnowledgeConflictService{
 		conflictRepo: conflictRepo,
@@ -78,9 +80,10 @@ func NewKnowledgeConflictService(
 		chunkRepo:    chunkRepo,
 		modelService: modelService,
 		taskEnqueuer: taskEnqueuer,
-		pendingRepo:  pendingRepo,
-		claimRepo:    claimRepo,
-		wikiRepo:     wikiRepo,
+		pendingRepo: pendingRepo,
+		claimRepo:   claimRepo,
+		wikiRepo:    wikiRepo,
+		runRepo:     runRepo,
 	}
 }
 
@@ -111,7 +114,7 @@ func (s *KnowledgeConflictService) Enqueue(ctx context.Context, knowledgeID, kbI
 }
 
 // Handle implements the asynq handler for TypeConflictDetect.
-func (s *KnowledgeConflictService) Handle(ctx context.Context, task *asynq.Task) error {
+func (s *KnowledgeConflictService) Handle(ctx context.Context, task *asynq.Task) (retErr error) {
 	var payload types.ConflictDetectPayload
 	if err := json.Unmarshal(task.Payload(), &payload); err != nil {
 		return fmt.Errorf("unmarshal conflict detect payload: %w", err)
@@ -119,6 +122,19 @@ func (s *KnowledgeConflictService) Handle(ctx context.Context, task *asynq.Task)
 	if payload.KnowledgeID == "" || payload.KnowledgeBaseID == "" {
 		return errors.New("conflict detect payload missing knowledge/kb id")
 	}
+	startedAt := time.Now()
+	run := &types.ConflictDetectionRun{
+		ID:              uuid.NewString(),
+		TenantID:        payload.TenantID,
+		KnowledgeBaseID: payload.KnowledgeBaseID,
+		KnowledgeID:     payload.KnowledgeID,
+		CascadeMode:     types.ConflictCascadeModeLegacy,
+		DetectorVersion: types.ConflictDetectorVersion,
+		Status:          types.ConflictDetectionRunStatusCompleted,
+		CreatedAt:       startedAt,
+	}
+	defer s.finishConflictDetectionRun(ctx, run, startedAt, &retErr)
+
 	logger.GetLogger(ctx).Infof("[ConflictDetect] Start detection for knowledge %s in kb %s",
 		payload.KnowledgeID, payload.KnowledgeBaseID)
 
@@ -128,9 +144,11 @@ func (s *KnowledgeConflictService) Handle(ctx context.Context, task *asynq.Task)
 		return fmt.Errorf("load knowledge base %s: %w", payload.KnowledgeBaseID, err)
 	}
 	if kb == nil || !kb.IsConflictDetectEnabled() {
+		run.Status = types.ConflictDetectionRunStatusSkipped
 		logger.GetLogger(ctx).Infof("[ConflictDetect] Conflict detection disabled for kb %s, skip", payload.KnowledgeBaseID)
 		return nil
 	}
+	run.CascadeMode = kb.EffectiveConflictCascadeMode()
 
 	// 2. Load the newly-uploaded knowledge's enabled chunks.
 	newChunks, err := s.chunkRepo.ListChunksByKnowledgeID(ctx, payload.TenantID, payload.KnowledgeID)
@@ -142,6 +160,7 @@ func (s *KnowledgeConflictService) Handle(ctx context.Context, task *asynq.Task)
 		enabledNew = enabledNew[:conflictMaxNewChunks]
 	}
 	if len(enabledNew) < conflictDetectMinChunks {
+		run.Status = types.ConflictDetectionRunStatusSkipped
 		logger.GetLogger(ctx).Infof("[ConflictDetect] Knowledge %s has no enabled text chunks, skip", payload.KnowledgeID)
 		return nil
 	}
@@ -182,24 +201,40 @@ func (s *KnowledgeConflictService) Handle(ctx context.Context, task *asynq.Task)
 	// adjudication so this improves recall without multiplying cost.
 	pairs = dedupeConflictCandidatePairs(pairs)
 	claimPairCount, fallbackPairCount := conflictCandidateChannelCounts(pairs)
+	run.CandidateClaimPairs = claimPairCount
+	run.CandidateFallbackPairs = fallbackPairCount
+	run.CandidateAfterDedupe = len(pairs)
 	logger.GetLogger(ctx).Infof(
 		"[ConflictDetect] Coarse candidates for knowledge %s: %d pairs (claim-pairs=%d, fallback-pairs=%d, claim-covered chunks=%d, fallback chunks=%d)",
 		payload.KnowledgeID, len(pairs), claimPairCount, fallbackPairCount, len(claimCoveredChunkIDs), len(fallbackChunks))
 	if len(pairs) == 0 {
+		run.Status = types.ConflictDetectionRunStatusSkipped
 		logger.GetLogger(ctx).Infof("[ConflictDetect] No coarse candidates for knowledge %s", payload.KnowledgeID)
 		return nil
 	}
 
 	// 4. De-duplicate against already-pending conflicts for the same pairs.
 	pairs = s.dedupePending(detectCtx, pairs)
+	run.CandidatesSubmitted = len(pairs)
 	if len(pairs) == 0 {
+		run.Status = types.ConflictDetectionRunStatusSkipped
 		logger.GetLogger(ctx).Infof("[ConflictDetect] No new conflict pairs for knowledge %s", payload.KnowledgeID)
 		return nil
 	}
 
-	// 5. Fine adjudication with LLM (best effort). On failure, coarse pairs are
-	//    kept as pending fact_contradictions so the user can still adjudicate.
-	adjudicated := s.fineAdjudicate(detectCtx, kb, pairs)
+	// 5. C1 legacy or C2 cascade fine verification. The cascade stats are
+	// persisted even if no final conflict is produced, because no-conflict rule
+	// decisions and LLM cost are first-class research observations.
+	adjudicated, cascadeStats := s.fineAdjudicate(detectCtx, kb, pairs)
+	run.RuleNoConflict = cascadeStats.RuleNoConflict
+	run.RuleDirectConflict = cascadeStats.RuleDirectConflict
+	run.RuleNeedsLLM = cascadeStats.RuleNeedsLLM
+	run.LLMPairCount = cascadeStats.LLMPairCount
+	run.LLMBatchCallCount = cascadeStats.LLMBatchCallCount
+	run.LLMSingleCallCount = cascadeStats.LLMSingleCallCount
+	run.LLMSingleFallbackCount = cascadeStats.LLMSingleFallbackCount
+	run.LLMPromptTokens = cascadeStats.LLMPromptTokens
+	run.LLMCompletionTokens = cascadeStats.LLMCompletionTokens
 
 	conflicts := make([]*types.KnowledgeConflict, 0, len(adjudicated))
 	for _, p := range adjudicated {
@@ -228,6 +263,7 @@ func (s *KnowledgeConflictService) Handle(ctx context.Context, task *asynq.Task)
 			UpdatedAt:       time.Now(),
 		})
 	}
+	run.FinalConflictCount = len(conflicts)
 	if len(conflicts) == 0 {
 		return nil
 	}
@@ -236,6 +272,35 @@ func (s *KnowledgeConflictService) Handle(ctx context.Context, task *asynq.Task)
 	}
 	logger.GetLogger(ctx).Infof("[ConflictDetect] Persisted %d pending conflicts for knowledge %s", len(conflicts), payload.KnowledgeID)
 	return nil
+}
+
+// finishConflictDetectionRun writes C1/C2 aggregate observability best-effort.
+// Metric persistence must never alter task success semantics: a metrics-table
+// outage should not discard a valid conflict result or trigger duplicate work.
+func (s *KnowledgeConflictService) finishConflictDetectionRun(
+	ctx context.Context,
+	run *types.ConflictDetectionRun,
+	startedAt time.Time,
+	retErr *error,
+) {
+	if run == nil {
+		return
+	}
+	now := time.Now()
+	run.DurationMs = now.Sub(startedAt).Milliseconds()
+	run.FinishedAt = now
+	if retErr != nil && *retErr != nil {
+		run.Status = types.ConflictDetectionRunStatusFailed
+		run.ErrorMessage = conflictTruncateRunes((*retErr).Error(), 2000)
+	}
+	if s.runRepo == nil {
+		return
+	}
+	if err := s.runRepo.Create(ctx, run); err != nil {
+		logger.GetLogger(ctx).WithField("error", err).Warnf(
+			"[ConflictCascade] persist detection metrics failed for knowledge %s", run.KnowledgeID,
+		)
+	}
 }
 
 // claimEvidence is the compact, claim-level evidence passed to the fine LLM
@@ -659,32 +724,34 @@ func (s *KnowledgeConflictService) fineAdjudicate(
 	ctx context.Context,
 	kb *types.KnowledgeBase,
 	pairs []conflictPair,
-) []conflictPair {
+) ([]conflictPair, conflictCascadeExecutionStats) {
+	var stats conflictCascadeExecutionStats
 	if len(pairs) == 0 {
-		return nil
+		return nil, stats
 	}
 	if kb == nil || kb.EffectiveConflictCascadeMode() == types.ConflictCascadeModeLegacy {
-		return s.fineAdjudicateSingle(ctx, kb, pairs)
+		return s.fineAdjudicateSingle(ctx, kb, pairs, &stats, false, true), stats
 	}
 
-	direct, unresolved, stats := applyConflictRules(pairs)
+	direct, unresolved, ruleStats := applyConflictRules(pairs)
+	stats.addRuleStats(ruleStats)
 	logger.GetLogger(ctx).Infof(
 		"[ConflictCascade] mode=%s candidates=%d rule_no_conflict=%d rule_direct_conflict=%d rule_needs_llm=%d",
-		kb.EffectiveConflictCascadeMode(), len(pairs), stats.NoConflict, stats.DirectConflict, stats.NeedsLLM,
+		kb.EffectiveConflictCascadeMode(), len(pairs), ruleStats.NoConflict, ruleStats.DirectConflict, ruleStats.NeedsLLM,
 	)
 	if len(unresolved) == 0 {
-		return direct
+		return direct, stats
 	}
 
 	var adjudicated []conflictPair
 	if kb.EffectiveConflictCascadeMode() == types.ConflictCascadeModeRulesBatch {
-		adjudicated = s.fineAdjudicateBatch(ctx, kb, unresolved)
+		adjudicated = s.fineAdjudicateBatch(ctx, kb, unresolved, &stats)
 	} else {
 		// C2-A routes remaining pairs through C1's evidence-conditioned
 		// per-pair adjudicator; C2-B uses batch calls above.
-		adjudicated = s.fineAdjudicateSingle(ctx, kb, unresolved)
+		adjudicated = s.fineAdjudicateSingle(ctx, kb, unresolved, &stats, false, true)
 	}
-	return append(direct, adjudicated...)
+	return append(direct, adjudicated...), stats
 }
 
 // fineAdjudicateSingle is C1's evidence-conditioned per-pair LLM verifier.
@@ -694,6 +761,9 @@ func (s *KnowledgeConflictService) fineAdjudicateSingle(
 	ctx context.Context,
 	kb *types.KnowledgeBase,
 	pairs []conflictPair,
+	stats *conflictCascadeExecutionStats,
+	singleFallback bool,
+	countLogicalPairs bool,
 ) []conflictPair {
 	if kb == nil || len(pairs) == 0 {
 		return nil
@@ -708,15 +778,22 @@ func (s *KnowledgeConflictService) fineAdjudicateSingle(
 		logger.GetLogger(ctx).Infof("[ConflictDetect] KB %s has no summary model, skip LLM adjudication (report nothing)", kb.ID)
 		return nil
 	}
+	if s.modelService == nil {
+		logger.GetLogger(ctx).Warnf("[ConflictDetect] ModelService is nil, report nothing")
+		return nil
+	}
 	chatModel, err := s.modelService.GetChatModel(ctx, modelID)
-	if err != nil {
+	if err != nil || chatModel == nil {
 		logger.GetLogger(ctx).Warnf("[ConflictDetect] GetChatModel %s failed: %v, report nothing", modelID, err)
 		return nil
+	}
+	if stats != nil && countLogicalPairs {
+		stats.LLMPairCount += len(pairs)
 	}
 
 	out := make([]conflictPair, 0, len(pairs))
 	for _, p := range pairs {
-		verdict, reason, err := s.adjudicatePair(ctx, chatModel, p)
+		verdict, reason, err := s.adjudicatePair(ctx, chatModel, p, stats, singleFallback)
 		if err != nil {
 			// Strict mode: on adjudication failure we report nothing rather than
 			// persisting an unverified conflict. Log it for auditing.
@@ -748,6 +825,8 @@ func (s *KnowledgeConflictService) adjudicatePair(
 	ctx context.Context,
 	chatModel chat.Chat,
 	p conflictPair,
+	stats *conflictCascadeExecutionStats,
+	singleFallback bool,
 ) (string, string, error) {
 	prompt := buildConflictAdjudicationPrompt(p)
 	messages := []chat.Message{
@@ -757,6 +836,9 @@ func (s *KnowledgeConflictService) adjudicatePair(
 	var lastErr error
 	for attempt := 0; attempt <= conflictFineMaxRetries; attempt++ {
 		resp, err := chatModel.Chat(ctx, messages, &chat.ChatOptions{Temperature: 0.1, MaxTokens: 500})
+		if stats != nil {
+			stats.addLLMResponse(resp, false, singleFallback)
+		}
 		if err != nil {
 			lastErr = err
 			continue

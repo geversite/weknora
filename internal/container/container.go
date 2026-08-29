@@ -152,6 +152,7 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(repository.NewMessageRepository))
 	must(container.Provide(repository.NewReferenceEventRepository))
 	must(container.Provide(repository.NewKnowledgeConflictRepository))
+	must(container.Provide(repository.NewConflictDetectionRunRepository))
 	must(container.Provide(repository.NewClaimRepository))
 	must(container.Provide(repository.NewMessageSuggestionRepository))
 	must(container.Provide(repository.NewAgentUnsolvedQuestionRepository))
