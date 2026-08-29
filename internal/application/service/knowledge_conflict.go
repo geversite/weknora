@@ -676,10 +676,14 @@ func (s *KnowledgeConflictService) fineAdjudicate(
 		return direct
 	}
 
-	// C2-A routes remaining pairs through C1's per-pair adjudicator. C2-B will
-	// replace this branch with batch adjudication while preserving the exact same
-	// rule decisions and output contract.
-	adjudicated := s.fineAdjudicateSingle(ctx, kb, unresolved)
+	var adjudicated []conflictPair
+	if kb.EffectiveConflictCascadeMode() == types.ConflictCascadeModeRulesBatch {
+		adjudicated = s.fineAdjudicateBatch(ctx, kb, unresolved)
+	} else {
+		// C2-A routes remaining pairs through C1's evidence-conditioned
+		// per-pair adjudicator; C2-B uses batch calls above.
+		adjudicated = s.fineAdjudicateSingle(ctx, kb, unresolved)
+	}
 	return append(direct, adjudicated...)
 }
 
@@ -732,18 +736,7 @@ func (s *KnowledgeConflictService) fineAdjudicateSingle(
 			"[ConflictDetect] Fine verdict new_knowledge=%s existing_knowledge=%s channel=%s claim_key=%q verdict=%s",
 			p.NewChunk.KnowledgeID, p.ExistingChunk.KnowledgeID, conflictPairChannel(p), p.ClaimKeyHit, verdict,
 		)
-		out = append(out, conflictPair{
-			NewChunk:           p.NewChunk,
-			ExistingChunk:      p.ExistingChunk,
-			ConflictType:       verdict,
-			Reason:             reason,
-			ClaimKeyHit:        p.ClaimKeyHit,
-			NewClaimIDs:        p.NewClaimIDs,
-			ExistClaimIDs:      p.ExistClaimIDs,
-			NewClaimEvidence:   p.NewClaimEvidence,
-			ExistClaimEvidence: p.ExistClaimEvidence,
-			ExistWikiSlug:      p.ExistWikiSlug,
-		})
+		out = append(out, conflictPairWithVerdict(p, verdict, reason))
 	}
 	return out
 }
