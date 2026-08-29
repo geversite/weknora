@@ -1,4 +1,4 @@
-.PHONY: help build run test clean docker-build-app docker-build-docreader docker-build-frontend docker-build-all docker-run migrate-up migrate-down docker-restart docker-stop start-all stop-all start-ollama stop-ollama build-images build-images-app build-images-docreader build-images-frontend clean-images check-env list-containers pull-images show-platform dev-start dev-stop dev-restart dev-logs dev-status dev-app dev-frontend docs install-swagger build-lite run-lite package-lite experiment-check experiment-c1 experiment-p2 experiment-p3 experiment-p12 experiment-v1 experiment-audit experiment-audit-summary experiment-audit-metrics experiment-gold-v2 experiment-gold-v2-review experiment-gold-v2-scope-review
+.PHONY: help build run test clean docker-build-app docker-build-docreader docker-build-frontend docker-build-all docker-run migrate-up migrate-down docker-restart docker-stop start-all stop-all start-ollama stop-ollama build-images build-images-app build-images-docreader build-images-frontend clean-images check-env list-containers pull-images show-platform dev-start dev-stop dev-restart dev-logs dev-status dev-app dev-frontend docs install-swagger build-lite run-lite package-lite experiment-check experiment-c1 experiment-p2 experiment-p3 experiment-p12 experiment-v1 experiment-audit experiment-audit-summary experiment-audit-metrics experiment-gold-v2 experiment-gold-v2-review experiment-gold-v2-scope-review experiment-gold-v2-apply-recommendations
 
 # Show help
 help:
@@ -71,6 +71,7 @@ help:
 	@echo "  experiment-gold-v2       生成待复核 gold-v2 候选集（ADDITIONS=... OUTPUT=...）"
 	@echo "  experiment-gold-v2-review 生成 gold-v2 quote 补全表（ADDITIONS=... REVIEW=...）"
 	@echo "  experiment-gold-v2-scope-review 生成 broad/narrow scope 审核表（CANDIDATE=... REVIEW=...）"
+	@echo "  experiment-gold-v2-apply-recommendations 应用版本化 dual-scope 推荐（REVIEW=... OUTPUT=...）"
 	@echo ""
 	@echo "Lite 模式（零外部依赖）:"
 	@echo "  build-lite        构建 Lite 版本（先构建前端到 web/，再构建 Go；SKIP_FRONTEND=1 跳过前端）"
@@ -409,5 +410,12 @@ experiment-gold-v2-scope-review:
 	@test -n "$(REVIEW)" || (echo "Usage: make experiment-gold-v2-scope-review CANDIDATE=<gold-v2-candidate-dir> REVIEW=<scope-review.csv>"; exit 2)
 	python3 scripts/experiments/prepare_gold_v2_scope_review.py \
 		--candidate-dir "$(CANDIDATE)" --output "$(REVIEW)"
+
+# Usage: make experiment-gold-v2-apply-recommendations REVIEW=<scope-review.csv> OUTPUT=<recommended-review.csv>
+experiment-gold-v2-apply-recommendations:
+	@test -n "$(REVIEW)" || (echo "Usage: make experiment-gold-v2-apply-recommendations REVIEW=<scope-review.csv> OUTPUT=<recommended-review.csv>"; exit 2)
+	@test -n "$(OUTPUT)" || (echo "Usage: make experiment-gold-v2-apply-recommendations REVIEW=<scope-review.csv> OUTPUT=<recommended-review.csv>"; exit 2)
+	python3 scripts/experiments/apply_gold_v2_scope_recommendations.py \
+		--review "$(REVIEW)" --output "$(OUTPUT)"
 
 

@@ -1,0 +1,70 @@
+{
+  "version": "c1-gold-v2-dual-scope-v1",
+  "policy": "dual_scope",
+  "description": "Research recommendation for the nine human-reviewed gold-v2 additions from run 20260826T162227Z-c1_full-c1-433c19cc. Broad-maintenance retains source-grounded wiki facts; narrow conflict-critical keeps only facts likely to produce a material value/status/time conflict.",
+  "recommendations": {
+    "v2-audit-0008": {
+      "broad_maintenance": "yes",
+      "conflict_critical": "no",
+      "dedup_decision": "keep",
+      "merge_into_gold_id": "",
+      "review_note": "项目代号可保留为广义 wiki 身份信息，但不纳入狭义冲突关键事实。"
+    },
+    "v2-audit-0011": {
+      "broad_maintenance": "yes",
+      "conflict_critical": "no",
+      "dedup_decision": "keep",
+      "merge_into_gold_id": "",
+      "review_note": "实验室用途可服务于广义 wiki 维护，但当前评估不将其作为直接冲突关键槽位。"
+    },
+    "v2-audit-0029": {
+      "broad_maintenance": "yes",
+      "conflict_critical": "yes",
+      "dedup_decision": "merge",
+      "merge_into_gold_id": "v2-audit-0032",
+      "review_note": "与 v2-audit-0032 表达同一星晶幻觉副作用事实；合并到更具体的“导致极度幻觉”。"
+    },
+    "v2-audit-0030": {
+      "broad_maintenance": "yes",
+      "conflict_critical": "no",
+      "dedup_decision": "keep",
+      "merge_into_gold_id": "",
+      "review_note": "理论验证目标属于广义实验上下文；当前狭义冲突集聚焦规则、数值、时限、状态与供应主体。"
+    },
+    "v2-audit-0031": {
+      "broad_maintenance": "no",
+      "conflict_critical": "no",
+      "dedup_decision": "exclude",
+      "merge_into_gold_id": "",
+      "review_note": "StarQuartz 是纯别名信息；不纳入本轮 broad-maintenance 或 narrow-conflict 金标准。"
+    },
+    "v2-audit-0032": {
+      "broad_maintenance": "yes",
+      "conflict_critical": "yes",
+      "dedup_decision": "keep",
+      "merge_into_gold_id": "",
+      "review_note": "保留为星晶副作用的更具体表述，可形成安全状态/效果冲突。"
+    },
+    "v2-audit-0054": {
+      "broad_maintenance": "yes",
+      "conflict_critical": "no",
+      "dedup_decision": "keep",
+      "merge_into_gold_id": "",
+      "review_note": "发布机构保留为广义来源元数据；C3 可将其用于权威度，不作为当前狭义冲突事实。"
+    },
+    "v2-audit-0089": {
+      "broad_maintenance": "yes",
+      "conflict_critical": "yes",
+      "dedup_decision": "keep",
+      "merge_into_gold_id": "",
+      "review_note": "园区班车每日班次是可发生数值/日程冲突的运行规则。"
+    },
+    "v2-audit-0090": {
+      "broad_maintenance": "yes",
+      "conflict_critical": "yes",
+      "dedup_decision": "keep",
+      "merge_into_gold_id": "",
+      "review_note": "节假日闭馆是可发生状态冲突的运营规则。"
+    }
+  }
+}

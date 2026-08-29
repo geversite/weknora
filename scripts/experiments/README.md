@@ -361,6 +361,17 @@ merge_into_gold_id = <仅 merge 时填写>
 别名、项目代号、发布机构属于 broad-maintenance 或 metadata，但不应自动计入 narrow-conflict；
 同一文档内同 subject+predicate 的多个新增项应检查是否只是重复表述。
 
+若采用仓库内版本化的 C1 双口径推荐（透明 JSON，可审阅），无需逐行填写：
+
+```bash
+make experiment-gold-v2-apply-recommendations \
+  REVIEW=experiments/runs/<run-id>/claim_audit/review_summary_v2/reviewed_metrics/gold_v2_scope_review.csv \
+  OUTPUT=experiments/runs/<run-id>/claim_audit/review_summary_v2/reviewed_metrics/gold_v2_scope_review_recommended.csv
+```
+
+该推荐保留 7 条 broad-maintenance 独立新增事实、3 条 narrow-conflict 独立新增事实；
+将“引发幻觉”合并到更具体的“导致极度幻觉”，并排除纯别名 `StarQuartz`。原 review CSV 永远不变。
+
 ## 当前边界
 
 运行器负责“真实执行 + 可复现导出 + C1 抽取评分”。候选通道和 fine verdict 已输出到
