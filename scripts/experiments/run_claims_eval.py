@@ -229,6 +229,35 @@ class PostgresExporter:
         return list(csv.DictReader(io.StringIO(result.stdout)))
 
 
+def document_pair_key(left: str, right: str) -> tuple[str, str]:
+    """Return an order-independent document-pair key for scenario assertions."""
+    return tuple(sorted((str(left), str(right))))
+
+
+def validate_scenario_document_pairs(
+    scenario: dict[str, Any], field: str, document_ids: set[str],
+) -> list[dict[str, Any]]:
+    """Validate one optional positive/negative document-pair assertion list."""
+    pairs = scenario.get(field, [])
+    if not isinstance(pairs, list):
+        raise ExperimentError(f"{field} 必须是数组")
+
+    seen_pairs: set[tuple[str, str]] = set()
+    for item in pairs:
+        if not isinstance(item, dict) or not item.get("left") or not item.get("right"):
+            raise ExperimentError(f"{field} 的每项必须包含 left/right: {item}")
+        left, right = str(item["left"]), str(item["right"])
+        if left == right:
+            raise ExperimentError(f"{field} 不允许同一文档与自身配对: {left}")
+        if left not in document_ids or right not in document_ids:
+            raise ExperimentError(f"{field} 引用了场景外文档: {left} ↔ {right}")
+        key = document_pair_key(left, right)
+        if key in seen_pairs:
+            raise ExperimentError(f"{field} 存在重复文档对: {left} ↔ {right}")
+        seen_pairs.add(key)
+    return pairs
+
+
 def load_scenario(path: Path) -> dict[str, Any]:
     scenario = read_json(path)
     if not scenario.get("name"):
@@ -236,17 +265,39 @@ def load_scenario(path: Path) -> dict[str, Any]:
     documents = scenario.get("documents")
     if not isinstance(documents, list) or not documents:
         raise ExperimentError(f"场景 documents 必须是非空数组: {path}")
-    seen: set[str] = set()
+    document_ids: set[str] = set()
     for document in documents:
         if not isinstance(document, dict) or not document.get("id") or not document.get("path"):
             raise ExperimentError(f"场景文档必须包含 id/path: {document}")
         doc_id = str(document["id"])
-        if doc_id in seen:
+        if doc_id in document_ids:
             raise ExperimentError(f"场景中存在重复文档 id: {doc_id}")
-        seen.add(doc_id)
+        document_ids.add(doc_id)
         source = ROOT / str(document["path"])
         if not source.is_file():
             raise ExperimentError(f"场景引用的文档不存在: {source}")
+
+    expected = validate_scenario_document_pairs(
+        scenario, "expected_conflict_document_pairs", document_ids,
+    )
+    forbidden = validate_scenario_document_pairs(
+        scenario, "forbidden_conflict_document_pairs", document_ids,
+    )
+    overlap = {
+        document_pair_key(str(item["left"]), str(item["right"]))
+        for item in expected
+    } & {
+        document_pair_key(str(item["left"]), str(item["right"]))
+        for item in forbidden
+    }
+    if overlap:
+        left, right = sorted(overlap)[0]
+        raise ExperimentError(
+            "同一文档对不能同时要求冲突与不冲突: " + left + " ↔ " + right,
+        )
+    # Normalize absent optional lists so downstream artifact schema is stable.
+    scenario["expected_conflict_document_pairs"] = expected
+    scenario["forbidden_conflict_document_pairs"] = forbidden
     return scenario
 
 
@@ -506,6 +557,27 @@ def has_document_pair(
     return any({str(pair["left_document"]), str(pair["right_document"])} == expected for pair in pairs)
 
 
+def observed_forbidden_conflict_pairs(
+    observed_pairs: list[dict[str, Any]], forbidden_pairs: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Return raw conflict rows whose document pair is asserted non-conflicting.
+
+    The assertion is intentionally document-pair scoped, not a raw-row count:
+    C4 has not yet clustered chunk-pair duplicates. Returning every matching
+    raw row still makes the resulting audit artifact useful to a reviewer.
+    """
+    forbidden_keys = {
+        document_pair_key(str(item["left"]), str(item["right"]))
+        for item in forbidden_pairs
+    }
+    return [
+        pair for pair in observed_pairs
+        if document_pair_key(
+            str(pair.get("left_document", "")), str(pair.get("right_document", "")),
+        ) in forbidden_keys
+    ]
+
+
 def wait_for_expected_pairs(
     db: PostgresExporter,
     kb_id: str,
@@ -615,7 +687,9 @@ def write_report(
     manifest: dict[str, Any],
     claim_counts: dict[str, int],
     expected_pairs: list[dict[str, Any]],
+    forbidden_pairs: list[dict[str, Any]],
     observed_pairs: list[dict[str, Any]],
+    observed_forbidden_pairs: list[dict[str, Any]],
     evaluator: dict[str, Any] | None,
     cascade_metrics: dict[str, Any] | None,
 ) -> None:
@@ -648,6 +722,31 @@ def write_report(
             )
     else:
         lines.append("该场景没有配置冲突文档对断言。")
+
+    lines += ["", "## 预期不存在的冲突文档对", ""]
+    if forbidden_pairs:
+        lines += ["| 标识 | 不应出现的文档对 | 观察结果 |", "|---|---|---|"]
+        for forbidden in forbidden_pairs:
+            key = document_pair_key(str(forbidden["left"]), str(forbidden["right"]))
+            raw_hits = sum(
+                1
+                for pair in observed_forbidden_pairs
+                if document_pair_key(
+                    str(pair.get("left_document", "")), str(pair.get("right_document", "")),
+                ) == key
+            )
+            verdict = "✅ 未出现" if raw_hits == 0 else f"❌ 出现 {raw_hits} 条 raw conflict"
+            lines.append(
+                f"| {forbidden.get('id', '')} | {forbidden['left']} ↔ {forbidden['right']} | {verdict} |"
+            )
+        if observed_forbidden_pairs:
+            lines += [
+                "",
+                "> 警告：上述不应出现的文档对至少有一条 raw conflict。"
+                "在 C4 聚类前，这是一项文档对级的精度回归信号，而不是去重后的最终 precision。",
+            ]
+    else:
+        lines.append("该场景没有配置非冲突文档对断言。")
 
     lines += ["", "## 原始 conflict 文档对", ""]
     if observed_pairs:
@@ -869,9 +968,14 @@ def run_experiment(args: argparse.Namespace) -> int:
 
         knowledge_to_doc = {knowledge_id: doc_id for doc_id, knowledge_id in manifest["knowledge_ids"].items()}
         expected_pairs = scenario.get("expected_conflict_document_pairs", [])
-        if not isinstance(expected_pairs, list):
-            raise ExperimentError("expected_conflict_document_pairs 必须是数组")
-        conflicts, observed_pairs = wait_for_expected_pairs(
+        forbidden_pairs = scenario.get("forbidden_conflict_document_pairs", [])
+        if not isinstance(expected_pairs, list) or not isinstance(forbidden_pairs, list):
+            raise ExperimentError("场景文档对断言必须是数组")
+        # This early wait provides a bounded positive-recall observation. It
+        # may return as soon as the expected pairs appear, while later upload
+        # tasks are still adjudicating, so final artifacts are re-queried only
+        # after every knowledge item has written its detection-run row.
+        wait_for_expected_pairs(
             db, kb_id, expected_pairs, knowledge_to_doc,
             args.conflict_timeout_seconds, args.poll_seconds,
         )
@@ -879,6 +983,8 @@ def run_experiment(args: argparse.Namespace) -> int:
             db, kb_id, manifest["knowledge_ids"].values(),
             args.conflict_timeout_seconds, args.poll_seconds,
         )
+        conflicts = query_conflicts(db, kb_id)
+        observed_pairs = observed_conflict_pairs(conflicts, knowledge_to_doc)
         cascade_metrics = aggregate_conflict_detection_runs(detection_runs)
         claims = query_claims(db, kb_id)
         dead_letters = query_dead_letters(db, manifest["knowledge_ids"].values())
@@ -914,6 +1020,7 @@ def run_experiment(args: argparse.Namespace) -> int:
             item for item in expected_pairs
             if not has_document_pair(observed_pairs, str(item["left"]), str(item["right"]))
         ]
+        observed_forbidden_pairs = observed_forbidden_conflict_pairs(observed_pairs, forbidden_pairs)
         metrics = {
             "claim_count_total": len(claims),
             "claim_counts_by_document": claim_counts,
@@ -922,17 +1029,24 @@ def run_experiment(args: argparse.Namespace) -> int:
             "cascade": cascade_metrics,
             "expected_conflict_document_pairs": expected_pairs,
             "missing_expected_conflict_document_pairs": missing_pairs,
+            "forbidden_conflict_document_pairs": forbidden_pairs,
+            "observed_forbidden_conflict_pairs": observed_forbidden_pairs,
             "evaluator_scope": evaluator_scope,
             "evaluator": evaluator_result,
         }
         json_dump(output_dir / "metrics.json", metrics)
 
-        manifest["status"] = "completed" if not missing_pairs else "completed_with_missing_expectations"
+        if missing_pairs:
+            manifest["status"] = "completed_with_missing_expectations"
+        elif observed_forbidden_pairs:
+            manifest["status"] = "completed_with_forbidden_conflicts"
+        else:
+            manifest["status"] = "completed"
         manifest["finished_at"] = utc_now()
         json_dump(output_dir / "manifest.json", manifest)
         write_report(
-            output_dir / "report.md", manifest, claim_counts, expected_pairs, observed_pairs,
-            evaluator_result, cascade_metrics,
+            output_dir / "report.md", manifest, claim_counts, expected_pairs, forbidden_pairs,
+            observed_pairs, observed_forbidden_pairs, evaluator_result, cascade_metrics,
         )
 
         print(f"实验完成: {output_dir}")
@@ -949,6 +1063,17 @@ def run_experiment(args: argparse.Namespace) -> int:
         )
         if missing_pairs:
             print("  缺失预期 conflict 文档对:", ", ".join(str(item.get("id", "?")) for item in missing_pairs))
+        if observed_forbidden_pairs:
+            unexpected_docs = sorted({
+                document_pair_key(
+                    str(pair.get("left_document", "")), str(pair.get("right_document", "")),
+                )
+                for pair in observed_forbidden_pairs
+            })
+            print(
+                "  观察到不应出现的 conflict 文档对:",
+                ", ".join(left + "↔" + right for left, right in unexpected_docs),
+            )
         if evaluator_result:
             print(
                 "  evaluator: "
@@ -956,9 +1081,13 @@ def run_experiment(args: argparse.Namespace) -> int:
                 f"exit={evaluator_result['exit_code']}"
             )
 
-        # A failed metric is a valid experiment result, but exit non-zero by
-        # default so unattended batches/CI cannot silently call it a pass.
-        if missing_pairs or (evaluator_result and evaluator_result["exit_code"] != 0):
+        # A failed assertion/metric is a valid experiment result, but exits
+        # non-zero so unattended batches/CI cannot silently call it a pass.
+        if (
+            missing_pairs
+            or observed_forbidden_pairs
+            or (evaluator_result and evaluator_result["exit_code"] != 0)
+        ):
             return 2
         return 0
 

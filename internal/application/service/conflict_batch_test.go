@@ -41,8 +41,8 @@ func (m *scriptedBatchChat) GetModelID() string   { return "scripted-batch" }
 
 func batchTestPair(key, newer, older string) conflictPair {
 	return conflictPair{
-		NewChunk:      &types.Chunk{ID: "new-" + key, KnowledgeID: "new-doc", Content: "新片段"},
-		ExistingChunk: &types.Chunk{ID: "old-" + key, KnowledgeID: "old-doc", Content: "旧片段"},
+		NewChunk:      &types.Chunk{ID: "new-" + key, KnowledgeID: "new-doc", Content: "新片段中的明确事实陈述"},
+		ExistingChunk: &types.Chunk{ID: "old-" + key, KnowledgeID: "old-doc", Content: "旧片段中的明确事实陈述"},
 		NewTitle:      "new-title",
 		ExistingTitle: "old-title",
 		ClaimKeyHit:   key,
@@ -88,10 +88,50 @@ func TestBuildConflictBatchPromptCarriesClaimEvidence(t *testing.T) {
 	}
 }
 
+func TestBuildConflictBatchPromptMarksFallbackAsRetrievalOnly(t *testing.T) {
+	pair := conflictPair{
+		NewChunk:      &types.Chunk{ID: "new-fallback", KnowledgeID: "new-doc", Content: "新文件中的事实描述"},
+		ExistingChunk: &types.Chunk{ID: "old-fallback", KnowledgeID: "old-doc", Content: "旧文件中的事实描述"},
+		NewTitle:      "new-title",
+		ExistingTitle: "old-title",
+	}
+	prompt := buildConflictBatchAdjudicationPrompt([]conflictPair{pair})
+	for _, want := range []string{"semantic_fallback", "仅语义检索相关", "默认应判 conflict=false"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("fallback batch prompt missing %q: %s", want, prompt)
+		}
+	}
+}
+
+func TestValidateConflictBatchVerdictEvidenceRequiresVerbatimQuotes(t *testing.T) {
+	pairs := []conflictPair{batchTestPair("供应实体", "两家", "唯一")}
+
+	invalid := map[string]conflictBatchVerdict{
+		"pair-000": {
+			ID: "pair-000", Conflict: true,
+			EvidenceA: "不存在的原文引用", EvidenceB: "旧片段中的明确事实陈述",
+		},
+	}
+	if err := validateConflictBatchVerdictEvidence(invalid, pairs); err == nil {
+		t.Fatal("positive verdict with invented evidence must be rejected")
+	}
+
+	valid := map[string]conflictBatchVerdict{
+		"pair-000": {
+			ID: "pair-000", Conflict: true,
+			// Formatting is intentionally allowed to differ from the source.
+			EvidenceA: "新片段中的 明确事实，陈述", EvidenceB: "旧片段中的明确事实陈述",
+		},
+	}
+	if err := validateConflictBatchVerdictEvidence(valid, pairs); err != nil {
+		t.Fatalf("verbatim evidence with formatting differences should pass: %v", err)
+	}
+}
+
 func TestAdjudicateConflictBatchRetriesMalformedResponse(t *testing.T) {
 	model := &scriptedBatchChat{responses: []string{
 		`not json`,
-		`{"results":[{"id":"pair-000","conflict":true,"type":"fact_contradiction","reason":"互斥"}]}`,
+		`{"results":[{"id":"pair-000","conflict":true,"type":"fact_contradiction","reason":"两侧事实互斥","evidence_a":"新片段中的明确事实陈述","evidence_b":"旧片段中的明确事实陈述"}]}`,
 	}}
 	var stats conflictCascadeExecutionStats
 	verdicts, err := adjudicateConflictBatch(context.Background(), model, []conflictPair{batchTestPair("供应实体", "两家", "唯一")}, &stats)
@@ -106,6 +146,26 @@ func TestAdjudicateConflictBatchRetriesMalformedResponse(t *testing.T) {
 	}
 	if !verdicts["pair-000"].Conflict {
 		t.Fatalf("verdict = %+v, want conflict", verdicts)
+	}
+}
+
+func TestAdjudicateConflictBatchRetriesUngroundedPositive(t *testing.T) {
+	model := &scriptedBatchChat{responses: []string{
+		`{"results":[{"id":"pair-000","conflict":true,"type":"fact_contradiction","reason":"推断出的冲突"}]}`,
+		`{"results":[{"id":"pair-000","conflict":true,"type":"fact_contradiction","reason":"两侧事实互斥","evidence_a":"新片段中的明确事实陈述","evidence_b":"旧片段中的明确事实陈述"}]}`,
+	}}
+	var stats conflictCascadeExecutionStats
+	verdicts, err := adjudicateConflictBatch(
+		context.Background(), model, []conflictPair{batchTestPair("供应实体", "两家", "唯一")}, &stats,
+	)
+	if err != nil {
+		t.Fatalf("adjudicate batch after ungrounded retry: %v", err)
+	}
+	if model.calls != 2 || stats.LLMBatchCallCount != 2 {
+		t.Fatalf("ungrounded positive should consume one bounded retry: calls=%d stats=%+v", model.calls, stats)
+	}
+	if !verdicts["pair-000"].Conflict {
+		t.Fatalf("verdict = %+v, want grounded conflict", verdicts)
 	}
 }
 

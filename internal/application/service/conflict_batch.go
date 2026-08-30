@@ -11,6 +11,9 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"unicode"
+
+	"golang.org/x/text/unicode/norm"
 
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/models/chat"
@@ -21,6 +24,12 @@ const (
 	conflictBatchSize       = 8
 	conflictBatchMaxTokens  = 2200
 	conflictBatchMaxRetries = 1
+
+	// A positive batched verdict must quote a substantive source excerpt from
+	// both sides. Small limits avoid turning the batch response into a second
+	// copy of every chunk while still requiring grounded evidence.
+	conflictBatchEvidenceQuoteMinRunes = 6
+	conflictBatchEvidenceQuoteMaxRunes = 160
 )
 
 type conflictBatchCandidate struct {
@@ -33,6 +42,13 @@ type conflictBatchVerdict struct {
 	Conflict bool   `json:"conflict"`
 	Type     string `json:"type"`
 	Reason   string `json:"reason"`
+
+	// EvidenceA/EvidenceB are required only for a positive batch verdict.
+	// They must be short, verbatim excerpts from the matching A/B source
+	// chunks. This makes a batch verdict auditable and blocks the common
+	// open-world error where an LLM treats a file's silence as a contradiction.
+	EvidenceA string `json:"evidence_a"`
+	EvidenceB string `json:"evidence_b"`
 }
 
 type conflictBatchEnvelope struct {
@@ -138,6 +154,10 @@ func adjudicateConflictBatch(
 			lastErr = err
 			continue
 		}
+		if err := validateConflictBatchVerdictEvidence(verdicts, pairs); err != nil {
+			lastErr = err
+			continue
+		}
 		return verdicts, nil
 	}
 	return nil, lastErr
@@ -192,6 +212,67 @@ func parseConflictBatchVerdicts(reply string, expectedCount int) (map[string]con
 	return out, nil
 }
 
+// validateConflictBatchVerdictEvidence makes positive batch results
+// proof-carrying. A model may still decide whether two propositions conflict,
+// but it may not infer a contradiction from an omitted statement, a document
+// title, or facts belonging to a different batch item. Invalid evidence makes
+// the entire batch take the already-proven C1 single-pair fallback path.
+func validateConflictBatchVerdictEvidence(
+	verdicts map[string]conflictBatchVerdict,
+	pairs []conflictPair,
+) error {
+	for index, pair := range pairs {
+		id := batchCandidateID(index)
+		verdict, ok := verdicts[id]
+		if !ok {
+			return fmt.Errorf("missing verdict %q during evidence validation", id)
+		}
+		if !verdict.Conflict {
+			continue
+		}
+		if pair.NewChunk == nil || pair.ExistingChunk == nil {
+			return fmt.Errorf("positive batch verdict %q has an incomplete chunk pair", id)
+		}
+		if !batchEvidenceQuoteMatches(pair.NewChunk.Content, verdict.EvidenceA) {
+			return fmt.Errorf("positive batch verdict %q lacks a valid evidence_a quote", id)
+		}
+		if !batchEvidenceQuoteMatches(pair.ExistingChunk.Content, verdict.EvidenceB) {
+			return fmt.Errorf("positive batch verdict %q lacks a valid evidence_b quote", id)
+		}
+	}
+	return nil
+}
+
+func batchEvidenceQuoteMatches(source, quote string) bool {
+	normalizedQuote := normalizeBatchEvidenceText(quote)
+	if runeCount(normalizedQuote) < conflictBatchEvidenceQuoteMinRunes ||
+		runeCount(normalizedQuote) > conflictBatchEvidenceQuoteMaxRunes {
+		return false
+	}
+	return strings.Contains(normalizeBatchEvidenceText(source), normalizedQuote)
+}
+
+// normalizeBatchEvidenceText allows harmless formatting differences in a
+// quoted source span (Markdown markers, whitespace, full-width punctuation)
+// but deliberately retains words and numbers. It is only a grounding check,
+// not a semantic contradiction classifier.
+func normalizeBatchEvidenceText(value string) string {
+	value = strings.ToLower(norm.NFKC.String(strings.TrimSpace(value)))
+	var builder strings.Builder
+	builder.Grow(len(value))
+	for _, r := range value {
+		if unicode.IsSpace(r) || unicode.IsPunct(r) {
+			continue
+		}
+		builder.WriteRune(r)
+	}
+	return builder.String()
+}
+
+func runeCount(value string) int {
+	return len([]rune(value))
+}
+
 func batchCandidateID(index int) string {
 	return fmt.Sprintf("pair-%03d", index)
 }
@@ -231,13 +312,18 @@ func conflictPairWithVerdict(pair conflictPair, conflictType, reason string) con
 	}
 }
 
-const conflictBatchAdjudicationSystemPrompt = `你是知识库一致性批量审查助手。你会收到多个候选对，每个都有唯一 id。严格逐项判断，不得遗漏任何 id。
+const conflictBatchAdjudicationSystemPrompt = `你是知识库一致性批量审查助手。你会收到多个候选对，每个都有唯一 id。候选仅表示检索相关，绝不预设为矛盾；多数语义召回候选应为 conflict=false。
+
+每个 id 必须完全独立判断：只能比较该 id 内片段 A 与片段 B 的明确陈述，严禁借用其他 id、标题、常识或隐含价值判断的事实。
+
 规则：
-1. 仅当同一主体与同一事实维度给出互斥数值、结论或状态时 conflict=true。
-2. 若候选带有“候选声明证据”，它是本次配对的直接事实锚点；同一声明槽位、限定词不明显互斥且 value/value_norm 不同，应在 fact_contradiction 与 version_update 之间选择，不得因为片段有其他背景直接判 false。
-3. 明确的更新、修订、推迟、替代关系用 version_update；同槽位互斥且无替代关系用 fact_contradiction；局部冲突用 partial_contradiction。
-4. 不同主体、明确不相交的适用范围、同值或互补事实必须 conflict=false。
-5. 仅输出 JSON：{"results":[{"id":"pair-000","conflict":true,"type":"fact_contradiction","reason":"中文一句话"}]}。results 必须恰好包含每个输入 id 一次。`
+1. 只有 A 和 B 都明确陈述“同一主体 + 同一事实维度 + 适用范围不明显互斥”的原子事实，且两个取值、结论或状态不能同时成立时，才可返回 conflict=true。
+2. 一侧没有提及某件事、较为笼统、未预留某个前提、没有说明风险，均不是否定，必须返回 conflict=false。禁止把沉默、推断、组织形象、伦理评价或常识补全当作矛盾。
+3. 标有“候选声明证据”的条目有直接同槽事实锚点；该锚点的 value/value_norm 不同且限定词不明显互斥时，应在 fact_contradiction 与 version_update 之间选择，不能因片段存在其他背景而判 false。
+4. 标有“semantic_fallback”的条目只有语义检索相关性、没有直接同槽锚点。计划与建议、风险/副作用与安全措施、原因与结果、不同阶段或不同时间的记录、互补技术事实，都不是矛盾；无法指出两侧明确互斥的原子事实时必须返回 conflict=false。
+5. 明确的更新、修订、推迟、替代关系用 version_update；同槽位互斥且无替代关系用 fact_contradiction；大体一致但某一点直接互斥用 partial_contradiction。
+6. 对每个 conflict=true，必须提供 evidence_a 和 evidence_b：分别是片段 A/B 中连续的原文短引（每段 6 至 160 个字，不能改写）。reason 必须基于这两段引文说明互斥点。conflict=false 时 evidence_a/evidence_b 留空即可。
+7. 仅输出 JSON：{"results":[{"id":"pair-000","conflict":true,"type":"fact_contradiction","reason":"中文一句话","evidence_a":"A 中原文短引","evidence_b":"B 中原文短引"}]}。results 必须恰好包含每个输入 id 一次。`
 
 func buildConflictBatchAdjudicationPrompt(pairs []conflictPair) string {
 	var builder strings.Builder
@@ -245,12 +331,22 @@ func buildConflictBatchAdjudicationPrompt(pairs []conflictPair) string {
 	for index, pair := range pairs {
 		fmt.Fprintf(&builder, "=== id: %s ===\n", batchCandidateID(index))
 		if evidence := renderClaimEvidence(pair); evidence != "" {
+			builder.WriteString("候选来源：claim_key（有直接同槽声明证据）。\n")
 			builder.WriteString(evidence)
+		} else {
+			builder.WriteString("候选来源：semantic_fallback（仅语义检索相关，不是冲突证据；默认应判 conflict=false）。\n")
 		}
 		fmt.Fprintf(&builder, "片段 A（新文件：%s）：\n\"\"\"\n%s\n\"\"\"\n",
-			pair.NewTitle, conflictTruncateRunes(pair.NewChunk.Content, 1200))
+			pair.NewTitle, conflictBatchChunkContent(pair.NewChunk))
 		fmt.Fprintf(&builder, "片段 B（已有文件：%s）：\n\"\"\"\n%s\n\"\"\"\n\n",
-			pair.ExistingTitle, conflictTruncateRunes(pair.ExistingChunk.Content, 1200))
+			pair.ExistingTitle, conflictBatchChunkContent(pair.ExistingChunk))
 	}
 	return builder.String()
+}
+
+func conflictBatchChunkContent(chunk *types.Chunk) string {
+	if chunk == nil {
+		return ""
+	}
+	return conflictTruncateRunes(chunk.Content, 1200)
 }

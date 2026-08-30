@@ -60,5 +60,19 @@
       "right": "doc6",
       "note": "报销时限、国际漫游补贴、市内交通费；P3 的 fallback 真实性另由 p3_fallback 场景验证"
     }
+  ],
+  "forbidden_conflict_document_pairs": [
+    {"id": "N_DOC1_DOC2", "left": "doc1", "right": "doc2", "note": "项目备忘录与技术白皮书是互补事实"},
+    {"id": "N_DOC1_DOC3", "left": "doc1", "right": "doc3", "note": "项目计划与个人日志/安全建议不是同槽位矛盾"},
+    {"id": "N_DOC1_DOC4", "left": "doc1", "right": "doc4"},
+    {"id": "N_DOC1_DOC6", "left": "doc1", "right": "doc6"},
+    {"id": "N_DOC2_DOC3", "left": "doc2", "right": "doc3", "note": "材料物性与风险/副作用是互补事实"},
+    {"id": "N_DOC2_DOC4", "left": "doc2", "right": "doc4"},
+    {"id": "N_DOC2_DOC6", "left": "doc2", "right": "doc6"},
+    {"id": "N_DOC3_DOC4", "left": "doc3", "right": "doc4"},
+    {"id": "N_DOC3_DOC5", "left": "doc3", "right": "doc5", "note": "日志、风险记录与后续运行/防护说明不是直接同槽位矛盾"},
+    {"id": "N_DOC3_DOC6", "left": "doc3", "right": "doc6"},
+    {"id": "N_DOC4_DOC5", "left": "doc4", "right": "doc5"},
+    {"id": "N_DOC5_DOC6", "left": "doc5", "right": "doc6"}
   ]
 }

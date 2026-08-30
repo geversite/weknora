@@ -177,6 +177,11 @@ cascade_metrics.json
 token 与延迟。运行器会拒绝缺少 `conflict_detection_runs` 的环境；重启后端以执行
 migration 000086 即可。
 
+C2-B 的正例是 **proof-carrying** 的：每个 `conflict=true` 的 batch verdict 都必须给出
+片段 A/B 各一段连续原文引文，运行时会核验引文确实来自对应片段。语义 fallback 仅表示
+检索相关，文件未提及某事实、风险与防护措施、建议与计划、不同时间阶段的记录均不能单独
+构成冲突。引用缺失、改写或不属于对应片段时，整个 batch 会安全降级为 C1 单对裁决。
+
 ### V1 行为对照
 
 ```bash
@@ -212,8 +217,8 @@ experiments/runs/<timestamp>-<scenario>-<variant>-<commit>/
 
 退出码：
 
-- `0`：预期文档对出现，且（若场景带完整 gold）`evaluate.py` 通过门槛；
-- `2`：服务链路完成并导出了证据，但缺少预期冲突对或抽取 P/R 未达门槛；
+- `0`：预期文档对出现、所有 `forbidden_conflict_document_pairs` 均未出现，且（若场景带完整 gold）`evaluate.py` 通过门槛；
+- `2`：服务链路完成并导出了证据，但缺少预期冲突对、出现禁止的冲突文档对，或抽取 P/R 未达门槛；
 - `1`：环境、API、任务或数据库导出失败；
 - `130`：用户中断。
 
@@ -237,12 +242,19 @@ experiments/runs/<timestamp>-<scenario>-<variant>-<commit>/
   ],
   "expected_conflict_document_pairs": [
     {"id": "P1", "left": "doc_a", "right": "doc_b"}
+  ],
+  "forbidden_conflict_document_pairs": [
+    {"id": "N1", "left": "doc_a", "right": "doc_c"}
   ]
 }
 ```
 
 `gold_doc` 只在需要调用现有 `testdata/claims_eval/evaluate.py` 时填写。隔离回归场景可以
 省略它，运行器仍会导出 claims/conflicts 并检查预期的文档对。
+
+`forbidden_conflict_document_pairs` 是可选的闭集负例断言。若任何该文档对出现 raw
+`knowledge_conflicts` 行，run 会保留全部证据、标记为 `completed_with_forbidden_conflicts`，并
+以退出码 `2` 结束。它在 C4 去重/聚类之前按文档对报警，不把同一对的多条 chunk-pair 行误称为多项独立错误。
 
 `evaluate.py` 的 P/R 是全六文档口径，因此运行器只会在场景覆盖全部 gold 文档时执行它。
 P2/P3/P1-P2 这类部分语料诊断场景会明确跳过全局 P/R，避免未注入的 gold 文档被错误计为漏检。
