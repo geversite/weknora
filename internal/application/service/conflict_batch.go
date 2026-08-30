@@ -3,13 +3,15 @@ package service
 // conflict_batch.go implements C2-B's batched LLM verifier. C2-A rule
 // decisions are applied first; only ambiguous candidates reach this code.
 // A malformed/partial batch response deliberately falls back to C1's proven
-// per-pair verifier so batching can reduce cost without silently losing recall.
+// per-pair verifier; a quote-invalid positive is retried and then selectively
+// rechecked. Both paths preserve recall without silently accepting ungrounded output.
 
 import (
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"unicode"
 
@@ -55,9 +57,10 @@ type conflictBatchEnvelope struct {
 	Results []conflictBatchVerdict `json:"results"`
 }
 
-// fineAdjudicateBatch is the C2-B LLM branch. Batch failures are bounded to a
-// single batch and then delegate to fineAdjudicateSingle, preserving C1's retry
-// and evidence prompt semantics for every pair in that batch.
+// fineAdjudicateBatch is the C2-B LLM branch. A malformed/partial envelope is
+// bounded to one batch and delegates every pair to C1. A structurally valid
+// batch with only one or more ungrounded positive verdicts instead delegates
+// just those invalid items, preserving both the evidence guard and batch cost.
 func (s *KnowledgeConflictService) fineAdjudicateBatch(
 	ctx context.Context,
 	kb *types.KnowledgeBase,
@@ -92,6 +95,23 @@ func (s *KnowledgeConflictService) fineAdjudicateBatch(
 		batch := pairs[start:end]
 		verdicts, err := adjudicateConflictBatch(ctx, chatModel, batch, stats)
 		if err != nil {
+			var evidenceErr *conflictBatchEvidenceValidationError
+			if errors.As(err, &evidenceErr) && len(verdicts) == len(batch) {
+				// The envelope, IDs and all other decisions were valid. Retain
+				// those batch decisions and re-check only the positive entries
+				// whose source quote was not grounded. This keeps the B2 safety
+				// property without turning one bad item into eight C1 calls.
+				logger.GetLogger(ctx).Warnf(
+					"[ConflictCascade] Batch adjudication %d-%d has invalid evidence for %d pair(s); fallback only those ids: %s",
+					start, end, len(evidenceErr.InvalidIDs), evidenceErr.IDs(),
+				)
+				out = append(out, s.applyConflictBatchVerdicts(
+					ctx, kb, batch, verdicts, evidenceErr.InvalidIDs, stats,
+				)...)
+				continue
+			}
+			// An unparseable/partial envelope has no trustworthy per-item
+			// boundary, so it still safely falls back as a whole batch.
 			logger.GetLogger(ctx).Warnf(
 				"[ConflictCascade] Batch adjudication %d-%d failed; fallback to per-pair C1 verifier: %v",
 				start, end, err,
@@ -99,22 +119,64 @@ func (s *KnowledgeConflictService) fineAdjudicateBatch(
 			out = append(out, s.fineAdjudicateSingle(ctx, kb, batch, stats, true, false)...)
 			continue
 		}
-		for index, pair := range batch {
-			id := batchCandidateID(index)
-			verdict := verdicts[id]
-			if !verdict.Conflict {
-				logger.GetLogger(ctx).Infof(
-					"[ConflictCascade] Batch verdict new_knowledge=%s existing_knowledge=%s channel=%s claim_key=%q verdict=not_conflict",
-					pair.NewChunk.KnowledgeID, pair.ExistingChunk.KnowledgeID, conflictPairChannel(pair), pair.ClaimKeyHit,
-				)
-				continue
-			}
-			logger.GetLogger(ctx).Infof(
-				"[ConflictCascade] Batch verdict new_knowledge=%s existing_knowledge=%s channel=%s claim_key=%q verdict=%s",
-				pair.NewChunk.KnowledgeID, pair.ExistingChunk.KnowledgeID, conflictPairChannel(pair), pair.ClaimKeyHit, verdict.Type,
+		out = append(out, s.applyConflictBatchVerdicts(ctx, kb, batch, verdicts, nil, stats)...)
+	}
+	return out
+}
+
+// applyConflictBatchVerdicts persists trusted batch decisions in memory and
+// routes only the evidence-invalid positive items through C1's single-pair
+// verifier. Batch false decisions remain as before: they are accepted only
+// after a structurally complete batch response, while malformed envelopes use
+// the whole-batch fallback above.
+func (s *KnowledgeConflictService) applyConflictBatchVerdicts(
+	ctx context.Context,
+	kb *types.KnowledgeBase,
+	batch []conflictPair,
+	verdicts map[string]conflictBatchVerdict,
+	invalidEvidenceIDs map[string]string,
+	stats *conflictCascadeExecutionStats,
+) []conflictPair {
+	out := make([]conflictPair, 0, len(batch))
+	fallback := make([]conflictPair, 0, len(invalidEvidenceIDs))
+	for index, pair := range batch {
+		id := batchCandidateID(index)
+		if reason, invalid := invalidEvidenceIDs[id]; invalid {
+			logger.GetLogger(ctx).Warnf(
+				"[ConflictCascade] Batch verdict id=%s has ungrounded positive evidence (%s); fallback to C1 verifier for this pair only",
+				id, reason,
 			)
-			out = append(out, conflictPairWithVerdict(pair, verdict.Type, verdict.Reason))
+			fallback = append(fallback, pair)
+			continue
 		}
+
+		verdict, ok := verdicts[id]
+		if !ok {
+			// Defensive only: parseConflictBatchVerdicts already requires all
+			// IDs. Treat an unexpected gap as one-pair fallback rather than
+			// silently dropping a candidate.
+			logger.GetLogger(ctx).Warnf(
+				"[ConflictCascade] Batch verdict id=%s missing after validation; fallback to C1 verifier for this pair",
+				id,
+			)
+			fallback = append(fallback, pair)
+			continue
+		}
+		if !verdict.Conflict {
+			logger.GetLogger(ctx).Infof(
+				"[ConflictCascade] Batch verdict new_knowledge=%s existing_knowledge=%s channel=%s claim_key=%q verdict=not_conflict",
+				pair.NewChunk.KnowledgeID, pair.ExistingChunk.KnowledgeID, conflictPairChannel(pair), pair.ClaimKeyHit,
+			)
+			continue
+		}
+		logger.GetLogger(ctx).Infof(
+			"[ConflictCascade] Batch verdict new_knowledge=%s existing_knowledge=%s channel=%s claim_key=%q verdict=%s",
+			pair.NewChunk.KnowledgeID, pair.ExistingChunk.KnowledgeID, conflictPairChannel(pair), pair.ClaimKeyHit, verdict.Type,
+		)
+		out = append(out, conflictPairWithVerdict(pair, verdict.Type, verdict.Reason))
+	}
+	if len(fallback) > 0 {
+		out = append(out, s.fineAdjudicateSingle(ctx, kb, fallback, stats, true, false)...)
 	}
 	return out
 }
@@ -154,8 +216,13 @@ func adjudicateConflictBatch(
 			lastErr = err
 			continue
 		}
-		if err := validateConflictBatchVerdictEvidence(verdicts, pairs); err != nil {
-			lastErr = err
+		if validationErr := validateConflictBatchVerdictEvidence(verdicts, pairs); validationErr != nil {
+			lastErr = validationErr
+			if attempt == conflictBatchMaxRetries {
+				// Preserve a structurally complete final response so callers can
+				// selectively re-check only ungrounded positive verdicts.
+				return verdicts, validationErr
+			}
 			continue
 		}
 		return verdicts, nil
@@ -212,15 +279,43 @@ func parseConflictBatchVerdicts(reply string, expectedCount int) (map[string]con
 	return out, nil
 }
 
+// conflictBatchEvidenceValidationError identifies only positive verdicts that
+// failed the proof-carrying evidence check. It is deliberately distinct from a
+// malformed batch envelope: the latter has no trustworthy item boundary and
+// must still fall back as a whole batch.
+type conflictBatchEvidenceValidationError struct {
+	InvalidIDs map[string]string
+}
+
+func (e *conflictBatchEvidenceValidationError) Error() string {
+	if e == nil || len(e.InvalidIDs) == 0 {
+		return "positive batch verdict has invalid evidence"
+	}
+	return "positive batch verdict has invalid evidence for ids: " + e.IDs()
+}
+
+func (e *conflictBatchEvidenceValidationError) IDs() string {
+	if e == nil || len(e.InvalidIDs) == 0 {
+		return ""
+	}
+	ids := make([]string, 0, len(e.InvalidIDs))
+	for id := range e.InvalidIDs {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return strings.Join(ids, ",")
+}
+
 // validateConflictBatchVerdictEvidence makes positive batch results
 // proof-carrying. A model may still decide whether two propositions conflict,
 // but it may not infer a contradiction from an omitted statement, a document
-// title, or facts belonging to a different batch item. Invalid evidence makes
-// the entire batch take the already-proven C1 single-pair fallback path.
+// title, or facts belonging to a different batch item. On final retry failure,
+// callers may safely re-check only the returned InvalidIDs with C1.
 func validateConflictBatchVerdictEvidence(
 	verdicts map[string]conflictBatchVerdict,
 	pairs []conflictPair,
 ) error {
+	invalid := make(map[string]string)
 	for index, pair := range pairs {
 		id := batchCandidateID(index)
 		verdict, ok := verdicts[id]
@@ -231,14 +326,19 @@ func validateConflictBatchVerdictEvidence(
 			continue
 		}
 		if pair.NewChunk == nil || pair.ExistingChunk == nil {
-			return fmt.Errorf("positive batch verdict %q has an incomplete chunk pair", id)
+			invalid[id] = "incomplete chunk pair"
+			continue
 		}
 		if !batchEvidenceQuoteMatches(pair.NewChunk.Content, verdict.EvidenceA) {
-			return fmt.Errorf("positive batch verdict %q lacks a valid evidence_a quote", id)
+			invalid[id] = "invalid evidence_a quote"
+			continue
 		}
 		if !batchEvidenceQuoteMatches(pair.ExistingChunk.Content, verdict.EvidenceB) {
-			return fmt.Errorf("positive batch verdict %q lacks a valid evidence_b quote", id)
+			invalid[id] = "invalid evidence_b quote"
 		}
+	}
+	if len(invalid) > 0 {
+		return &conflictBatchEvidenceValidationError{InvalidIDs: invalid}
 	}
 	return nil
 }
