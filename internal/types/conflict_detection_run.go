@@ -53,7 +53,7 @@ const (
 
 	// ConflictDetectorVersion is bumped whenever C2 decision semantics change
 	// in a way that would make historical cost/quality runs non-comparable.
-	// c2-v3 keeps c2-v2's closed-world, proof-carrying guard and changes
-	// quote-invalid fallback from whole-batch to item-level C1 verification.
-	ConflictDetectorVersion = "c2-v3"
+	// c2-v4 keeps c2-v3's selective quote-invalid fallback and adds
+	// prompt-only fuzzy claim hints for semantic-fallback schema drift.
+	ConflictDetectorVersion = "c2-v4"
 )

@@ -57,6 +57,75 @@ func batchTestPair(key, newer, older string) conflictPair {
 	}
 }
 
+type fallbackHintClaimRepo struct {
+	claimsBySource map[string][]*types.Claim
+	requested      []string
+}
+
+func (r *fallbackHintClaimRepo) ReplaceBySource(context.Context, string, string, string, []*types.Claim) error {
+	return nil
+}
+
+func (r *fallbackHintClaimRepo) DeleteBySource(context.Context, string, string) error {
+	return nil
+}
+
+func (r *fallbackHintClaimRepo) DeleteByKnowledge(context.Context, uint64, string) error {
+	return nil
+}
+
+func (r *fallbackHintClaimRepo) DeleteByKnowledgeBase(context.Context, uint64, string) error {
+	return nil
+}
+
+func (r *fallbackHintClaimRepo) ListBySource(_ context.Context, _ string, sourceID string) ([]*types.Claim, error) {
+	r.requested = append(r.requested, sourceID)
+	return r.claimsBySource[sourceID], nil
+}
+
+func (r *fallbackHintClaimRepo) ListByKnowledge(context.Context, uint64, string) ([]*types.Claim, error) {
+	return nil, nil
+}
+
+func (r *fallbackHintClaimRepo) ListByKeys(context.Context, uint64, string, []string, string, string) ([]*types.Claim, error) {
+	return nil, nil
+}
+
+func (r *fallbackHintClaimRepo) CountBySource(_ context.Context, _ string, sourceID string) (int64, error) {
+	return int64(len(r.claimsBySource[sourceID])), nil
+}
+
+func TestHydrateFallbackClaimEvidenceUsesSourceClaimsOnlyForFallback(t *testing.T) {
+	repo := &fallbackHintClaimRepo{claimsBySource: map[string][]*types.Claim{
+		"new-fallback": []*types.Claim{
+			&types.Claim{
+				ID: "new-claim", ClaimKey: "幽能引擎原型机测试计划开始时间",
+				Subject: "幽能引擎原型机测试", Predicate: "计划开始时间", Value: "2153 年", ValueNorm: "2153",
+				ValueKind: types.ClaimValueKindDate,
+			},
+		},
+		"old-fallback": []*types.Claim{
+			&types.Claim{
+				ID: "old-claim", ClaimKey: "幽能引擎原型机测试时间",
+				Subject: "幽能引擎原型机", Predicate: "测试时间", Value: "2150 年前", ValueNorm: "2150",
+				ValueKind: types.ClaimValueKindDate,
+			},
+		},
+	}}
+	service := &KnowledgeConflictService{claimRepo: repo}
+	pairs := []conflictPair{{
+		NewChunk:      &types.Chunk{ID: "new-fallback", Content: "new"},
+		ExistingChunk: &types.Chunk{ID: "old-fallback", Content: "old"},
+	}}
+	got := service.hydrateFallbackClaimEvidence(context.Background(), pairs)
+	if got[0].ClaimKeyHit != "" || len(got[0].NewClaimEvidence) != 1 || len(got[0].ExistClaimEvidence) != 1 {
+		t.Fatalf("fallback evidence hydration = %+v", got[0])
+	}
+	if len(repo.requested) != 2 {
+		t.Fatalf("source claim requests=%v, want exactly two", repo.requested)
+	}
+}
+
 func TestParseConflictBatchVerdictsAcceptsCompleteEnvelope(t *testing.T) {
 	verdicts, err := parseConflictBatchVerdicts(`{"results":[
 		{"id":"pair-000","conflict":true,"type":"version_update","reason":"更新"},
@@ -100,6 +169,36 @@ func TestBuildConflictBatchPromptMarksFallbackAsRetrievalOnly(t *testing.T) {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("fallback batch prompt missing %q: %s", want, prompt)
 		}
+	}
+}
+
+func TestBuildConflictBatchPromptCarriesFallbackSchemaDriftHints(t *testing.T) {
+	pair := conflictPair{
+		NewChunk:      &types.Chunk{ID: "new-version", KnowledgeID: "new-doc", Content: "原型机测试阶段已推迟至 2153 年。"},
+		ExistingChunk: &types.Chunk{ID: "old-version", KnowledgeID: "old-doc", Content: "原型机将在 2150 年前进入测试阶段。"},
+		NewTitle:      "new-version",
+		ExistingTitle: "old-version",
+		NewClaimEvidence: []claimEvidence{{
+			ID: "new-claim", ClaimKey: "幽能引擎原型机测试计划开始时间",
+			Subject: "幽能引擎原型机测试", Predicate: "计划开始时间", Value: "2153 年",
+			ValueNorm: "2153", ValueKind: types.ClaimValueKindDate, Qualifiers: `{"status":"已推迟"}`,
+		}},
+		ExistClaimEvidence: []claimEvidence{{
+			ID: "old-claim", ClaimKey: "幽能引擎原型机测试时间",
+			Subject: "幽能引擎原型机", Predicate: "测试时间", Value: "2150 年前",
+			ValueNorm: "2150", ValueKind: types.ClaimValueKindDate, Qualifiers: "{}",
+		}},
+	}
+	prompt := buildConflictBatchAdjudicationPrompt([]conflictPair{pair})
+	for _, want := range []string{
+		"semantic_fallback", "候选声明线索", "计划开始时间", "测试时间", "2153 年", "2150 年前", "非 exact claim_key",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("schema-drift fallback prompt missing %q: %s", want, prompt)
+		}
+	}
+	if hints := selectFallbackClaimHints(pair.NewClaimEvidence, pair.ExistClaimEvidence); len(hints) != 1 {
+		t.Fatalf("schema-drift hint count=%d, want 1", len(hints))
 	}
 }
 

@@ -184,6 +184,10 @@ C2-B 的正例是 **proof-carrying** 的：每个 `conflict=true` 的 batch verd
 只有个别正例的引文缺失、改写或不属于对应片段时，会在一次 batch 重试后**仅降级该 pair**，
 不让一个坏条目额外触发整批单对调用。
 
+对于没有 exact `claim_key` 的 semantic fallback，C2-B 会从两侧 source chunk 中选取至多两组
+高词槽相似的声明线索（例如“测试时间”与“计划开始时间”）。线索只帮助 batch 定位可能的
+同一事实，不触发规则直判；正例仍必须由 A/B 原文引文落地，避免把 schema drift 修复成开放世界误报。
+
 ### C1/C2 离线消融比较
 
 完成同一场景的 V1、C1、C2-A 和 C2-B run 后，显式传入四个 artifact 目录：

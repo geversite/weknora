@@ -362,13 +362,15 @@ type conflictPair struct {
 	ExistingTitle string // 候选文件标题（用于上下文判断主体）
 	ConflictType  string
 	Reason        string
-	// C1 claim-channel provenance (empty for fallback-channel pairs). Carried
-	// through adjudication for logging now and for C2/C4 (cascade routing /
-	// DisputedFact clustering) later.
-	ClaimKeyHit       string
-	NewClaimIDs       []string
-	ExistClaimIDs     []string
-	NewClaimEvidence  []claimEvidence
+	// C1 claim-channel provenance. When ClaimKeyHit is non-empty, the evidence
+	// is an exact claim-key pairing anchor. For C2-B fallback pairs the same
+	// evidence fields may carry non-decisive, fuzzy-slot hints solely for the
+	// batch prompt; deterministic rules always require ClaimKeyHit and cannot
+	// treat those hints as an exact match.
+	ClaimKeyHit        string
+	NewClaimIDs        []string
+	ExistClaimIDs      []string
+	NewClaimEvidence   []claimEvidence
 	ExistClaimEvidence []claimEvidence
 	// ExistWikiSlug is set when the counterpart is a wiki page (C1: pseudo
 	// chunk, no disable side-effects; formalized by the C4 migration).
@@ -745,6 +747,11 @@ func (s *KnowledgeConflictService) fineAdjudicate(
 
 	var adjudicated []conflictPair
 	if kb.EffectiveConflictCascadeMode() == types.ConflictCascadeModeRulesBatch {
+		// Exact claim-key evidence is already attached by C1. For semantic
+		// fallback pairs, add only non-decisive fuzzy-slot hints so the batch
+		// model can recognize schema drift such as "测试时间" vs
+		// "计划开始时间" without weakening the deterministic rule gate.
+		unresolved = s.hydrateFallbackClaimEvidence(ctx, unresolved)
 		adjudicated = s.fineAdjudicateBatch(ctx, kb, unresolved, &stats)
 	} else {
 		// C2-A routes remaining pairs through C1's evidence-conditioned

@@ -32,6 +32,11 @@ const (
 	// copy of every chunk while still requiring grounded evidence.
 	conflictBatchEvidenceQuoteMinRunes = 6
 	conflictBatchEvidenceQuoteMaxRunes = 160
+
+	// Fallback claim hints are deliberately fuzzy and prompt-only. They recover
+	// schema drift while preserving the hard ClaimKeyHit requirement in rules.
+	conflictBatchFallbackHintMinSimilarity = 0.35
+	conflictBatchFallbackHintMaxPairs      = 2
 )
 
 type conflictBatchCandidate struct {
@@ -122,6 +127,65 @@ func (s *KnowledgeConflictService) fineAdjudicateBatch(
 		out = append(out, s.applyConflictBatchVerdicts(ctx, kb, batch, verdicts, nil, stats)...)
 	}
 	return out
+}
+
+// hydrateFallbackClaimEvidence attaches current claims from the two source
+// chunks to semantic-fallback candidates. The attached claims are never exact
+// pairing proof (ClaimKeyHit deliberately stays empty), and applyConflictRules
+// has already run before this method is called. They are compact semantic hints
+// for C2-B only, allowing the batch model to recover harmless schema drift
+// without mistaking raw chunk-topic similarity for a fact relation.
+func (s *KnowledgeConflictService) hydrateFallbackClaimEvidence(
+	ctx context.Context,
+	pairs []conflictPair,
+) []conflictPair {
+	if s == nil || s.claimRepo == nil || len(pairs) == 0 {
+		return pairs
+	}
+
+	cache := make(map[string][]claimEvidence)
+	loaded := make(map[string]bool)
+	load := func(chunk *types.Chunk) []claimEvidence {
+		if chunk == nil || chunk.ID == "" {
+			return nil
+		}
+		if loaded[chunk.ID] {
+			return cache[chunk.ID]
+		}
+		loaded[chunk.ID] = true
+		claims, err := s.claimRepo.ListBySource(ctx, types.ClaimSourceChunk, chunk.ID)
+		if err != nil {
+			logger.GetLogger(ctx).Warnf(
+				"[ConflictCascade] ListBySource fallback claim hints for chunk %s failed: %v",
+				chunk.ID, err,
+			)
+			return nil
+		}
+		evidence := make([]claimEvidence, 0, len(claims))
+		for _, claim := range claims {
+			item := claimEvidenceFromClaim(claim)
+			if item.ClaimKey == "" {
+				continue
+			}
+			evidence = append(evidence, item)
+		}
+		cache[chunk.ID] = evidence
+		return evidence
+	}
+
+	for index := range pairs {
+		pair := &pairs[index]
+		if pair.ClaimKeyHit != "" {
+			continue
+		}
+		if len(pair.NewClaimEvidence) == 0 {
+			pair.NewClaimEvidence = load(pair.NewChunk)
+		}
+		if len(pair.ExistClaimEvidence) == 0 {
+			pair.ExistClaimEvidence = load(pair.ExistingChunk)
+		}
+	}
+	return pairs
 }
 
 // applyConflictBatchVerdicts persists trusted batch decisions in memory and
@@ -420,7 +484,7 @@ const conflictBatchAdjudicationSystemPrompt = `你是知识库一致性批量审
 1. 只有 A 和 B 都明确陈述“同一主体 + 同一事实维度 + 适用范围不明显互斥”的原子事实，且两个取值、结论或状态不能同时成立时，才可返回 conflict=true。
 2. 一侧没有提及某件事、较为笼统、未预留某个前提、没有说明风险，均不是否定，必须返回 conflict=false。禁止把沉默、推断、组织形象、伦理评价或常识补全当作矛盾。
 3. 标有“候选声明证据”的条目有直接同槽事实锚点；该锚点的 value/value_norm 不同且限定词不明显互斥时，应在 fact_contradiction 与 version_update 之间选择，不能因片段存在其他背景而判 false。
-4. 标有“semantic_fallback”的条目只有语义检索相关性、没有直接同槽锚点。计划与建议、风险/副作用与安全措施、原因与结果、不同阶段或不同时间的记录、互补技术事实，都不是矛盾；无法指出两侧明确互斥的原子事实时必须返回 conflict=false。
+4. 标有“semantic_fallback”的条目只有语义检索相关性、没有直接同槽锚点。若同时给出“候选声明线索”，它只是模糊槽位相似提示，不是自动结论；必须再由 A/B 原文确认同一对象和同一事实。若同一命名对象/事件的旧计划、旧标准或旧状态，被另一侧明确写成“推迟、修订、替代、调整为”的新取值，则应判 version_update，不能只因文本处于不同时间而判 false。反之，计划与建议、风险/副作用与安全措施、原因与结果、仅仅不同阶段的记录、互补技术事实，都不是矛盾；无法指出两侧明确互斥的原子事实时必须返回 conflict=false。
 5. 明确的更新、修订、推迟、替代关系用 version_update；同槽位互斥且无替代关系用 fact_contradiction；大体一致但某一点直接互斥用 partial_contradiction。
 6. 对每个 conflict=true，必须提供 evidence_a 和 evidence_b：分别是片段 A/B 中连续的原文短引（每段 6 至 160 个字，不能改写）。reason 必须基于这两段引文说明互斥点。conflict=false 时 evidence_a/evidence_b 留空即可。
 7. 仅输出 JSON：{"results":[{"id":"pair-000","conflict":true,"type":"fact_contradiction","reason":"中文一句话","evidence_a":"A 中原文短引","evidence_b":"B 中原文短引"}]}。results 必须恰好包含每个输入 id 一次。`
@@ -435,6 +499,9 @@ func buildConflictBatchAdjudicationPrompt(pairs []conflictPair) string {
 			builder.WriteString(evidence)
 		} else {
 			builder.WriteString("候选来源：semantic_fallback（仅语义检索相关，不是冲突证据；默认应判 conflict=false）。\n")
+			if hints := renderFallbackClaimHints(pair); hints != "" {
+				builder.WriteString(hints)
+			}
 		}
 		fmt.Fprintf(&builder, "片段 A（新文件：%s）：\n\"\"\"\n%s\n\"\"\"\n",
 			pair.NewTitle, conflictBatchChunkContent(pair.NewChunk))
@@ -449,4 +516,124 @@ func conflictBatchChunkContent(chunk *types.Chunk) string {
 		return ""
 	}
 	return conflictTruncateRunes(chunk.Content, 1200)
+}
+
+type conflictFallbackClaimHint struct {
+	Newer      claimEvidence
+	Older      claimEvidence
+	Similarity float64
+}
+
+// renderFallbackClaimHints gives the batch model a small number of fuzzy slot
+// matches when exact claim-key pairing missed because the extractor chose
+// different schema wording. They are deliberately labeled as non-decisive:
+// the model must still ground a positive verdict in A/B source quotes.
+func renderFallbackClaimHints(pair conflictPair) string {
+	if pair.ClaimKeyHit != "" || len(pair.NewClaimEvidence) == 0 || len(pair.ExistClaimEvidence) == 0 {
+		return ""
+	}
+	hints := selectFallbackClaimHints(pair.NewClaimEvidence, pair.ExistClaimEvidence)
+	if len(hints) == 0 {
+		return ""
+	}
+
+	var builder strings.Builder
+	builder.WriteString("候选声明线索（semantic_fallback 的模糊槽位相似提示，非 exact claim_key，不能单独构成冲突）：\n")
+	for index, hint := range hints {
+		fmt.Fprintf(&builder, "- 线索 %d（slot_similarity=%.2f）\n", index+1, hint.Similarity)
+		fmt.Fprintf(&builder, "  A: subject=%q; predicate=%q; value=%q; value_norm=%q; qualifiers=%s\n",
+			hint.Newer.Subject, hint.Newer.Predicate, hint.Newer.Value, hint.Newer.ValueNorm, hint.Newer.Qualifiers)
+		fmt.Fprintf(&builder, "  B: subject=%q; predicate=%q; value=%q; value_norm=%q; qualifiers=%s\n",
+			hint.Older.Subject, hint.Older.Predicate, hint.Older.Value, hint.Older.ValueNorm, hint.Older.Qualifiers)
+	}
+	builder.WriteString("若线索与原文共同表明同一对象/事件的明确旧值被推迟、修订、替代或改为新值，可判 version_update；否则不要从相似词或缺失信息推断冲突。\n\n")
+	return builder.String()
+}
+
+func selectFallbackClaimHints(newer, older []claimEvidence) []conflictFallbackClaimHint {
+	all := make([]conflictFallbackClaimHint, 0)
+	for _, newClaim := range newer {
+		for _, oldClaim := range older {
+			similarity := fallbackClaimSlotSimilarity(newClaim, oldClaim)
+			if similarity < conflictBatchFallbackHintMinSimilarity {
+				continue
+			}
+			all = append(all, conflictFallbackClaimHint{
+				Newer: newClaim, Older: oldClaim, Similarity: similarity,
+			})
+		}
+	}
+	sort.Slice(all, func(i, j int) bool {
+		if all[i].Similarity != all[j].Similarity {
+			return all[i].Similarity > all[j].Similarity
+		}
+		left := fallbackClaimHintIdentity(all[i].Newer) + "|" + fallbackClaimHintIdentity(all[i].Older)
+		right := fallbackClaimHintIdentity(all[j].Newer) + "|" + fallbackClaimHintIdentity(all[j].Older)
+		return left < right
+	})
+
+	out := make([]conflictFallbackClaimHint, 0, conflictBatchFallbackHintMaxPairs)
+	usedNew := make(map[string]bool)
+	usedOld := make(map[string]bool)
+	for _, hint := range all {
+		newID := fallbackClaimHintIdentity(hint.Newer)
+		oldID := fallbackClaimHintIdentity(hint.Older)
+		if usedNew[newID] || usedOld[oldID] {
+			continue
+		}
+		out = append(out, hint)
+		usedNew[newID] = true
+		usedOld[oldID] = true
+		if len(out) >= conflictBatchFallbackHintMaxPairs {
+			break
+		}
+	}
+	return out
+}
+
+func fallbackClaimSlotSimilarity(left, right claimEvidence) float64 {
+	leftBigrams := fallbackClaimSlotBigrams(fallbackClaimSlotKey(left))
+	rightBigrams := fallbackClaimSlotBigrams(fallbackClaimSlotKey(right))
+	if len(leftBigrams) == 0 || len(rightBigrams) == 0 {
+		return 0
+	}
+	intersection := 0
+	for bigram := range leftBigrams {
+		if _, ok := rightBigrams[bigram]; ok {
+			intersection++
+		}
+	}
+	union := len(leftBigrams) + len(rightBigrams) - intersection
+	if union == 0 {
+		return 0
+	}
+	return float64(intersection) / float64(union)
+}
+
+func fallbackClaimSlotKey(evidence claimEvidence) string {
+	key := evidence.ClaimKey
+	if key == "" {
+		key = evidence.Subject + evidence.Predicate
+	}
+	return normalizeBatchEvidenceText(key)
+}
+
+func fallbackClaimSlotBigrams(value string) map[string]struct{} {
+	runes := []rune(value)
+	out := make(map[string]struct{})
+	if len(runes) == 1 {
+		out[string(runes)] = struct{}{}
+		return out
+	}
+	for index := 0; index+1 < len(runes); index++ {
+		out[string(runes[index:index+2])] = struct{}{}
+	}
+	return out
+}
+
+func fallbackClaimHintIdentity(evidence claimEvidence) string {
+	if evidence.ID != "" {
+		return evidence.ID
+	}
+	return evidence.ClaimKey + "\x00" + evidence.Subject + "\x00" + evidence.Predicate + "\x00" + evidence.ValueNorm
 }
