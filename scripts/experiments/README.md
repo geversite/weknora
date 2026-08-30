@@ -182,6 +182,27 @@ C2-B 的正例是 **proof-carrying** 的：每个 `conflict=true` 的 batch verd
 检索相关，文件未提及某事实、风险与防护措施、建议与计划、不同时间阶段的记录均不能单独
 构成冲突。引用缺失、改写或不属于对应片段时，整个 batch 会安全降级为 C1 单对裁决。
 
+### C1/C2 离线消融比较
+
+完成同一场景的 V1、C1、C2-A 和 C2-B run 后，显式传入四个 artifact 目录：
+
+```bash
+make experiment-c2-compare \
+  RUNS="experiments/runs/<v1-run> experiments/runs/<c1-run> experiments/runs/<c2-rules-run> experiments/runs/<c2-batch-run>"
+```
+
+比较器不访问 API、数据库或模型，只读取每个 run 的 `manifest.json`、`metrics.json` 和
+`cascade_metrics.json`，默认以 `variant=c1` 为成本基线，输出到 Git 忽略的：
+
+```text
+experiments/comparisons/<timestamp>-conflict-ablation/
+├── comparison.json
+└── comparison.md
+```
+
+报告将检测完整性（预期对、禁止对、死信、task failed）与 volatile 的 claim-extractor P/R
+门槛分开呈现；它是可重现 artifact 汇总，不把独立生产模型运行误称为严格因果实验。
+
 ### V1 行为对照
 
 ```bash
