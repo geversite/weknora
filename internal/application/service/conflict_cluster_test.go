@@ -318,6 +318,26 @@ func TestConflictFactAnchorUsesCanonicalFuzzySlot(t *testing.T) {
 	}
 }
 
+func TestConflictFactAnchorCanonicalizesEqualFallbackClaimKeys(t *testing.T) {
+	pair := conflictPair{
+		FallbackFactAnchorHints: []conflictFallbackClaimHint{{
+			Newer: claimEvidence{
+				ClaimKey: "国内出差餐费补贴每日标准", Subject: "国内出差餐费补贴", Predicate: "每日标准", Value: "150 元",
+			},
+			Older: claimEvidence{
+				ClaimKey: "国内出差餐费补贴每日标准", Subject: "国内出差餐费补贴", Predicate: "每日标准", Value: "100 元",
+			},
+			Similarity: 1,
+		}},
+	}
+	anchor := conflictFactAnchorForPair(pair)
+	if anchor.AnchorKind != types.ConflictFactAnchorClaimKey ||
+		anchor.FactKey != "claim_key:国内出差餐费补贴每日标准" ||
+		anchor.ClaimKey != "国内出差餐费补贴每日标准" {
+		t.Fatalf("equal fallback claim keys must canonicalize to claim_key: %+v", anchor)
+	}
+}
+
 func TestConflictClusterRebuildAggregatesMembersAndBackfillsLegacy(t *testing.T) {
 	const (
 		tenantID = uint64(7)

@@ -312,6 +312,22 @@ func conflictFactAnchorForPair(pair conflictPair) conflictFactAnchor {
 	}
 	if len(hints) > 0 {
 		hint := hints[0]
+		// A candidate may enter HybridSearch fallback because another claim in
+		// its chunk was unmatched, even though this final conflict's selected
+		// hint has an exact equal ClaimKey on both sides. Canonicalize it back
+		// to the exact cluster key so claim_key:<k> and
+		// fuzzy_slot:<k>|<k> never split one logical fact.
+		if sharedKey := sharedExactClaimKey(hint.Newer, hint.Older); sharedKey != "" {
+			return conflictFactAnchor{
+				FactKey:    stableConflictFactKey(types.ConflictFactAnchorClaimKey, sharedKey),
+				AnchorKind: types.ConflictFactAnchorClaimKey,
+				ClaimKey:   sharedKey,
+				Subject:    firstNonEmpty(hint.Newer.Subject, hint.Older.Subject),
+				Predicate:  firstNonEmpty(hint.Newer.Predicate, hint.Older.Predicate),
+				ValueA:     hint.Newer.Value,
+				ValueB:     hint.Older.Value,
+			}
+		}
 		leftKey := fallbackClaimSlotKey(hint.Newer)
 		rightKey := fallbackClaimSlotKey(hint.Older)
 		keys := []string{leftKey, rightKey}
@@ -389,6 +405,15 @@ func inferConflictAnchorKind(factKey string) string {
 		}
 	}
 	return types.ConflictFactAnchorChunkPair
+}
+
+func sharedExactClaimKey(left, right claimEvidence) string {
+	leftKey := strings.TrimSpace(left.ClaimKey)
+	rightKey := strings.TrimSpace(right.ClaimKey)
+	if leftKey != "" && leftKey == rightKey {
+		return leftKey
+	}
+	return ""
 }
 
 func claimEvidenceForKey(evidence []claimEvidence, claimKey string) []claimEvidence {

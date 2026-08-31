@@ -6,7 +6,7 @@
 >
 > 依赖：C1 claims 与 C2-Lite 最终 raw `knowledge_conflicts`。
 >
-> Clusterer version：`c4-v3`；迁移：PostgreSQL `000088` / SQLite `000009`。
+> Clusterer version：`c4-v4`；迁移：PostgreSQL `000088` / SQLite `000009`。
 
 ---
 
@@ -102,7 +102,9 @@ C4-Lite 以保守优先级生成 `fact_key`：
 | `chunk_pair` | `chunk_pair:<sorted chunk IDs>` | 无任何可用声明时的保守单例；不跨 chunk 合并 |
 
 所有 key 限制在 512 runes 内；超长 key 改为 SHA-256 形式。方向无关：A↔B 与 B↔A 的
-anchor 相同。
+anchor 相同。若 fallback pair 的最终 selected hint 恰好两侧 `ClaimKey` 完全相同，C4-v4
+会 canonicalize 为 `claim_key:<k>`，而不会保留冗余的 `fuzzy_slot:<k>|<k>` cluster；候选
+来源是 fallback 不应改变事实身份。
 
 `fuzzy_slot` 只在 **已经被 C1/C2 判为 conflict 的 raw row** 上帮助聚类。它不会反向影响
 candidate generation、规则层或 LLM verdict，因此不会把 C2-B4 的 prompt-only fuzzy hint
