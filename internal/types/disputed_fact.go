@@ -46,6 +46,10 @@ const (
 	// ConflictFactAnchorFuzzySlot is a C4 prompt-only fuzzy slot pairing that
 	// was grounded by a final conflict verdict; it is never a direct rule.
 	ConflictFactAnchorFuzzySlot = "fuzzy_slot"
+	// ConflictFactAnchorDocumentSingleton is a post-verdict C4 fallback for
+	// two documents that each contain exactly one usable claim. It is used
+	// when schema wording has no safe lexical fuzzy-slot match.
+	ConflictFactAnchorDocumentSingleton = "document_singleton"
 	// ConflictFactAnchorChunkPair is the conservative legacy fallback when no
 	// usable claim evidence exists. It deliberately does not merge across
 	// different chunk pairs.
@@ -57,10 +61,9 @@ const (
 	DisputedFactConflictTypeMixed  = "mixed"
 
 	// ConflictClustererVersion identifies deterministic clustering semantics.
-	// c4-v4 canonicalizes a fallback hint whose two ClaimKeys are equal back
-	// to the exact claim_key cluster, preventing one fact from splitting by
-	// candidate channel provenance.
-	ConflictClustererVersion = "c4-v4"
+	// c4-v5 adds an explicit document_singleton anchor for a final fallback
+	// conflict whose two documents each have exactly one usable claim.
+	ConflictClustererVersion = "c4-v5"
 )
 
 // DisputedFactRebuildResult is returned by the C4-Lite rebuild endpoint and

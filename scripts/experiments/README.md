@@ -233,12 +233,15 @@ expected_disputed_fact_anchor_kinds：{"claim_key": 1}
 make experiment-c4-fuzzy
 ```
 
-它要求同一 semantic fallback 的 raw conflicts 聚为一条 `fuzzy_slot` cluster：
+它要求同一 semantic fallback 的 raw conflicts 聚为一条 `document_singleton` cluster：
 
 ```text
 expected_disputed_fact_count：1
-expected_disputed_fact_anchor_kinds：{"fuzzy_slot": 1}
+expected_disputed_fact_anchor_kinds：{"document_singleton": 1}
 ```
+
+`document_singleton` 只在两份已检出冲突的文档各恰有一条 usable claim 时启用；它是
+C4 的 post-verdict 身份锚点，不参与 C1/C2 的候选或判定。
 
 每个 run 会调用一次幂等的：
 
@@ -341,8 +344,8 @@ experiments/runs/<timestamp>-<scenario>-<variant>-<commit>/
 
 `expected_disputed_fact_count` 是可选 C4-Lite 聚类断言。它只适用于事实设计明确、预期 cluster
 数量稳定的隔离场景；全量 `c1_full` 因 extractor 与 raw chunk-pair 输出有模型波动，不配置该断言。
-`expected_disputed_fact_anchor_kinds` 可进一步断言 cluster 使用 `claim_key`、`fuzzy_slot` 或
-`chunk_pair` 的数量；它用于验证 C4 的 anchor 路径，而不是推断 LLM 裁决正确性。
+`expected_disputed_fact_anchor_kinds` 可进一步断言 cluster 使用 `claim_key`、`fuzzy_slot`、
+`document_singleton` 或 `chunk_pair` 的数量；它用于验证 C4 的 anchor 路径，而不是推断 LLM 裁决正确性。
 
 `evaluate.py` 的 P/R 是全六文档口径，因此运行器只会在场景覆盖全部 gold 文档时执行它。
 P2/P3/P1-P2 这类部分语料诊断场景会明确跳过全局 P/R，避免未注入的 gold 文档被错误计为漏检。

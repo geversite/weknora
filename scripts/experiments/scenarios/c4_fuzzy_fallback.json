@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "name": "c4_fuzzy_fallback",
-  "description": "C4-Lite regression for a semantic-fallback contradiction with schema drift: 报销申请 vs 报销单 and 30 natural days vs 45 days. Duplicate raw chunk-pair rows must converge to one fuzzy_slot DisputedFact.",
+  "description": "C4-Lite regression for a semantic-fallback contradiction with schema drift: 报销申请 vs 报销单 and 30 natural days vs 45 days. Duplicate raw chunk-pair rows must converge to one document_singleton DisputedFact when chunk-level claims are absent.",
   "min_claims_per_document": 1,
   "documents": [
     {
@@ -25,6 +25,6 @@
   ],
   "expected_disputed_fact_count": 1,
   "expected_disputed_fact_anchor_kinds": {
-    "fuzzy_slot": 1
+    "document_singleton": 1
   }
 }

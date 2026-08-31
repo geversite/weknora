@@ -248,6 +248,29 @@ func TestHydrateFallbackFactAnchorHintsUsesUniqueDocumentSlot(t *testing.T) {
 	}
 }
 
+func TestHydrateFallbackFactAnchorHintsUsesDocumentSingletonForExtremeSchemaDrift(t *testing.T) {
+	repo := &fallbackHintClaimRepo{claimsByKnowledge: map[string][]*types.Claim{
+		"new-doc": {
+			{ID: "new-claim", ClaimKey: "报销单最晚提交日期", Subject: "报销单", Predicate: "最晚提交日期", Value: "45 天", ValueNorm: "45|天"},
+		},
+		"old-doc": {
+			{ID: "old-claim", ClaimKey: "费用申请受理期限", Subject: "费用申请", Predicate: "受理期限", Value: "30 个自然日", ValueNorm: "30|天"},
+		},
+	}}
+	service := &KnowledgeConflictService{claimRepo: repo}
+	pairs := []conflictPair{{
+		NewChunk:      &types.Chunk{ID: "summary-new", KnowledgeID: "new-doc"},
+		ExistingChunk: &types.Chunk{ID: "summary-old", KnowledgeID: "old-doc"},
+	}}
+	got := service.hydrateFallbackFactAnchorHints(context.Background(), 1, pairs)
+	if got[0].FallbackFactAnchorKind != types.ConflictFactAnchorDocumentSingleton || len(got[0].FallbackFactAnchorHints) != 1 {
+		t.Fatalf("document singleton fallback = %+v", got[0])
+	}
+	if anchor := conflictFactAnchorForPair(got[0]); anchor.AnchorKind != types.ConflictFactAnchorDocumentSingleton {
+		t.Fatalf("document singleton anchor = %+v", anchor)
+	}
+}
+
 func TestHydrateFallbackFactAnchorHintsRejectsAmbiguousDocuments(t *testing.T) {
 	repo := &fallbackHintClaimRepo{claimsByKnowledge: map[string][]*types.Claim{
 		"new-doc": {

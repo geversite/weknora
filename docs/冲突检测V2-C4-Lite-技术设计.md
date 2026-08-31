@@ -99,6 +99,7 @@ C4-Lite 以保守优先级生成 `fact_key`：
 |---|---|---|
 | `claim_key` | `claim_key:<exact ClaimKeyHit>` | 同一 exact 声明槽位的所有 raw rows 合并 |
 | `fuzzy_slot` | `fuzzy_slot:<sorted slot key pair>` | source claims 的 schema drift 提示；若 raw chunk 是无 claim 的 summary/child，则 post-verdict 可从文档 claims 选择唯一最佳、高相似 slot pair（≥0.35，且无接近竞争项），两侧值必须不同 |
+| `document_singleton` | `document_singleton:<sorted document claim keys>` | 两份已检出冲突的文档各恰有一条 usable claim 时的 post-verdict anchor；允许极端 schema drift，但不参与检测判定 |
 | `chunk_pair` | `chunk_pair:<sorted chunk IDs>` | 无任何可用声明时的保守单例；不跨 chunk 合并 |
 
 所有 key 限制在 512 runes 内；超长 key 改为 SHA-256 形式。方向无关：A↔B 与 B↔A 的
@@ -109,9 +110,9 @@ anchor 相同。若 fallback pair 的最终 selected hint 恰好两侧 `ClaimKey
 `fuzzy_slot` 只在 **已经被 C1/C2 判为 conflict 的 raw row** 上帮助聚类。它不会反向影响
 candidate generation、规则层或 LLM verdict，因此不会把 C2-B4 的 prompt-only fuzzy hint
 升级成危险的 direct rule。若 raw pair 的 source chunk 恰好是没有 claim 的 summary/child，C4
-只在文档级候选中存在唯一最佳 slot pairing（score ≥0.35、值不同、第二名低至少 0.10）时
-才使用 document-level fallback；多个接近的多事实解释仍保持 `chunk_pair` 单例，宁可少合并
-也不错误合并。
+会优先在两份文档各恰有一条 usable claim 时使用 `document_singleton`；否则只在文档级候选中
+存在唯一最佳 slot pairing（score ≥0.35、值不同、第二名低至少 0.10）时使用 `fuzzy_slot`。
+多个接近的多事实解释仍保持 `chunk_pair` 单例，宁可少合并也不错误合并。
 
 ---
 
@@ -202,9 +203,10 @@ expected_disputed_fact_count = 1
 expected_disputed_fact_anchor_kinds = {"claim_key": 1}
 ```
 
-另有 `make experiment-c4-fuzzy`：复用 P3 的报销申请/报销单 schema drift，要求 semantic
-fallback 产生的 raw rows 聚为一个 `fuzzy_slot` cluster。两者均没有全局 claim P/R evaluator；
-它们是针对 raw-pair → fact-cluster 语义的独立回归。
+另有 `make experiment-c4-fuzzy`：复用 P3 的报销申请/报销单 schema drift。该文档对各有一条
+usable claim，但 raw pair 可来自无 claim 的 summary/child，因此要求聚为一个
+`document_singleton` cluster。`fuzzy_slot` 仍用于多 claim 文档中唯一最佳的高相似 slot pairing。
+两者均没有全局 claim P/R evaluator；它们是针对 raw-pair → fact-cluster 语义的独立回归。
 
 ---
 

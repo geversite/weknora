@@ -407,6 +407,7 @@ type conflictPair struct {
 	// from an unambiguous document-level claim set when raw candidate chunks
 	// are synthetic summary/child chunks with no directly attached claim.
 	FallbackFactAnchorHints []conflictFallbackClaimHint
+	FallbackFactAnchorKind  string
 	// ExistWikiSlug is set when the counterpart is a wiki page (C1: pseudo
 	// chunk, no disable side-effects; formalized by the C4 migration).
 	ExistWikiSlug string

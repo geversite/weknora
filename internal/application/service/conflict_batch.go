@@ -470,9 +470,11 @@ func conflictPairWithVerdict(pair conflictPair, conflictType, reason string) con
 		ClaimKeyHit:        pair.ClaimKeyHit,
 		NewClaimIDs:        pair.NewClaimIDs,
 		ExistClaimIDs:      pair.ExistClaimIDs,
-		NewClaimEvidence:   pair.NewClaimEvidence,
-		ExistClaimEvidence: pair.ExistClaimEvidence,
-		ExistWikiSlug:      pair.ExistWikiSlug,
+		NewClaimEvidence:        pair.NewClaimEvidence,
+		ExistClaimEvidence:      pair.ExistClaimEvidence,
+		FallbackFactAnchorHints: pair.FallbackFactAnchorHints,
+		FallbackFactAnchorKind:  pair.FallbackFactAnchorKind,
+		ExistWikiSlug:           pair.ExistWikiSlug,
 	}
 }
 

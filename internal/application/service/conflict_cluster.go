@@ -148,11 +148,10 @@ func (s *conflictClusterService) Rebuild(
 
 // hydrateFallbackFactAnchorHints is deliberately post-verdict and C4-only.
 // Raw search candidates can be synthetic child/summary chunks that carry no
-// direct claim row even though their documents contain one uniquely best,
-// high-similarity conflicting slot pair plus harmless contextual claims. In
-// that narrow case, use document-level claims to recover a fuzzy cluster
-// anchor. It never changes candidate generation, deterministic rules, or an
-// LLM verdict.
+// direct claim row. C4 first tries source-level fuzzy hints, then a uniquely
+// best document-level pairing, and finally an explicit document_singleton
+// anchor when each document has one usable claim. It never changes candidate
+// generation, deterministic rules, or an LLM verdict.
 func (s *KnowledgeConflictService) hydrateFallbackFactAnchorHints(
 	ctx context.Context,
 	tenantID uint64,
@@ -195,16 +194,30 @@ func (s *KnowledgeConflictService) hydrateFallbackFactAnchorHints(
 	for index := range pairs {
 		pair := &pairs[index]
 		if pair.ClaimKeyHit != "" || len(pair.FallbackFactAnchorHints) > 0 ||
-			pair.NewChunk == nil || pair.ExistingChunk == nil {
+			pair.FallbackFactAnchorKind != "" || pair.NewChunk == nil || pair.ExistingChunk == nil {
 			continue
 		}
 		if hints := selectFallbackClaimHints(pair.NewClaimEvidence, pair.ExistClaimEvidence); len(hints) > 0 {
 			pair.FallbackFactAnchorHints = hints
+			pair.FallbackFactAnchorKind = types.ConflictFactAnchorFuzzySlot
 			continue
 		}
 
 		newClaims := loadKnowledgeClaims(pair.NewChunk.KnowledgeID)
 		existingClaims := loadKnowledgeClaims(pair.ExistingChunk.KnowledgeID)
+		// If both documents have exactly one usable claim, a final LLM conflict
+		// has an unambiguous document-level fact identity even when the two
+		// extractor labels have no lexical overlap. This is C4-only and retains
+		// a distinct anchor kind rather than pretending the keys matched.
+		if len(newClaims) == 1 && len(existingClaims) == 1 && fallbackAnchorValuesDiffer(newClaims[0], existingClaims[0]) {
+			pair.FallbackFactAnchorHints = []conflictFallbackClaimHint{{
+				Newer: newClaims[0], Older: existingClaims[0],
+				Similarity: fallbackClaimSlotSimilarity(newClaims[0], existingClaims[0]),
+			}}
+			pair.FallbackFactAnchorKind = types.ConflictFactAnchorDocumentSingleton
+			continue
+		}
+
 		// A document may contain contextual claims (for example a policy's
 		// applicability scope) in addition to the conflicting rule. Promote
 		// document-level evidence only when there is one unambiguous, high
@@ -212,6 +225,7 @@ func (s *KnowledgeConflictService) hydrateFallbackFactAnchorHints(
 		// at a conservative chunk_pair anchor.
 		if hints := selectUnambiguousDocumentFallbackHint(newClaims, existingClaims); len(hints) > 0 {
 			pair.FallbackFactAnchorHints = hints
+			pair.FallbackFactAnchorKind = types.ConflictFactAnchorFuzzySlot
 		}
 	}
 	return pairs
@@ -307,8 +321,12 @@ func conflictFactAnchorForPair(pair conflictPair) conflictFactAnchor {
 	}
 
 	hints := pair.FallbackFactAnchorHints
+	anchorKind := pair.FallbackFactAnchorKind
 	if len(hints) == 0 {
 		hints = selectFallbackClaimHints(pair.NewClaimEvidence, pair.ExistClaimEvidence)
+	}
+	if anchorKind == "" {
+		anchorKind = types.ConflictFactAnchorFuzzySlot
 	}
 	if len(hints) > 0 {
 		hint := hints[0]
@@ -333,8 +351,8 @@ func conflictFactAnchorForPair(pair conflictPair) conflictFactAnchor {
 		keys := []string{leftKey, rightKey}
 		sort.Strings(keys)
 		return conflictFactAnchor{
-			FactKey:    stableConflictFactKey(types.ConflictFactAnchorFuzzySlot, keys...),
-			AnchorKind: types.ConflictFactAnchorFuzzySlot,
+			FactKey:    stableConflictFactKey(anchorKind, keys...),
+			AnchorKind: anchorKind,
 			Subject:    firstNonEmpty(hint.Newer.Subject, hint.Older.Subject),
 			Predicate:  firstNonEmpty(hint.Newer.Predicate, hint.Older.Predicate),
 			ValueA:     hint.Newer.Value,
@@ -398,6 +416,7 @@ func inferConflictAnchorKind(factKey string) string {
 	for _, kind := range []string{
 		types.ConflictFactAnchorClaimKey,
 		types.ConflictFactAnchorFuzzySlot,
+		types.ConflictFactAnchorDocumentSingleton,
 		types.ConflictFactAnchorChunkPair,
 	} {
 		if strings.HasPrefix(factKey, kind+":") {

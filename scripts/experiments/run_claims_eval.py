@@ -307,11 +307,11 @@ def load_scenario(path: Path) -> dict[str, Any]:
     if expected_anchor_kinds is not None:
         if not isinstance(expected_anchor_kinds, dict):
             raise ExperimentError("expected_disputed_fact_anchor_kinds 必须是对象")
-        allowed_anchor_kinds = {"claim_key", "fuzzy_slot", "chunk_pair"}
+        allowed_anchor_kinds = {"claim_key", "fuzzy_slot", "document_singleton", "chunk_pair"}
         for kind, count in expected_anchor_kinds.items():
             if kind not in allowed_anchor_kinds or isinstance(count, bool) or not isinstance(count, int) or count < 0:
                 raise ExperimentError(
-                    "expected_disputed_fact_anchor_kinds 只能包含 claim_key/fuzzy_slot/chunk_pair 的非负整数计数"
+                    "expected_disputed_fact_anchor_kinds 只能包含 claim_key/fuzzy_slot/document_singleton/chunk_pair 的非负整数计数"
                 )
 
     # Normalize absent optional lists so downstream artifact schema is stable.
