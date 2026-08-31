@@ -40,3 +40,6 @@ ClaimExtractService 后，应以本套件复跑并归档结果。
 - 语料含中文引号/括号等标点陷阱，属故意设计（测试规范化健壮性），修改时保留;
 - 预埋矛盾对的措辞分歧程度是刻意分层的：P4/P5 同措辞（必中 strict）、
   P2 同键异值、P1 主谓边界漂移、P3 主体同义词（预期 strict 漏、走兜底通道）。
+- `c4_meal_allowance_a/b/c.md` 不属于六文档 claim P/R gold；它们仅由
+  `scripts/experiments/scenarios/c4_cluster_triplet.json` 使用，验证三条 raw conflict
+  是否聚合为一条 `DisputedFact`。

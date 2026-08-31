@@ -178,6 +178,14 @@ func (s *knowledgeService) DeleteKnowledge(ctx context.Context, id string) error
 			logger.Warnf(ctx, "Failed to delete conflicts for knowledge %s: %v", id, err)
 		}
 	}
+	// C4-Lite aggregates are derived from raw conflicts. Rebuild after a source
+	// delete so clusters no longer advertise removed member rows; a failure is
+	// recoverable through the explicit rebuild endpoint.
+	if s.clusterService != nil && knowledge.KnowledgeBaseID != "" {
+		if _, err := s.clusterService.Rebuild(ctx, tenantID, knowledge.KnowledgeBaseID); err != nil {
+			logger.Warnf(ctx, "Failed to rebuild disputed facts after deleting knowledge %s: %v", id, err)
+		}
+	}
 	// Best-effort: remove the knowledge's claims from the pairing index (C1).
 	if s.claimRepo != nil {
 		if err := s.claimRepo.DeleteByKnowledge(ctx, tenantID, id); err != nil {

@@ -14,6 +14,9 @@ type KnowledgeConflictRepository interface {
 	// ListByKB lists conflicts for a KB, optionally filtered by status, ordered
 	// newest-first with pagination.
 	ListByKB(ctx context.Context, tenantID uint64, kbID, status string, limit, offset int) ([]*types.KnowledgeConflict, error)
+	// ListByKBForClustering returns every conflict in a KB (all statuses) in a
+	// deterministic order. C4-Lite uses it to rebuild fact aggregates.
+	ListByKBForClustering(ctx context.Context, tenantID uint64, kbID string) ([]*types.KnowledgeConflict, error)
 	// CountByKB counts conflicts for a KB, optionally filtered by status.
 	CountByKB(ctx context.Context, tenantID uint64, kbID, status string) (int64, error)
 	// GetByID returns a single conflict by id.

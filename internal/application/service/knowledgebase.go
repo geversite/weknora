@@ -50,6 +50,7 @@ type knowledgeBaseService struct {
 	audit           interfaces.AuditLogService
 	referenceRepo   interfaces.ReferenceEventRepository    // Repository for citation event cleanup
 	conflictRepo    interfaces.KnowledgeConflictRepository // Repository for M3 conflict cleanup
+	disputedFactRepo interfaces.DisputedFactRepository      // Repository for C4-Lite cluster cleanup
 	folderRepo      interfaces.KnowledgeFolderRepository   // M4: file-level folder cleanup
 	summaryRepo     interfaces.FolderSummaryRepository     // M4: folder summary cleanup
 }
@@ -76,6 +77,7 @@ func NewKnowledgeBaseService(repo interfaces.KnowledgeBaseRepository,
 	audit interfaces.AuditLogService,
 	referenceRepo interfaces.ReferenceEventRepository,
 	conflictRepo interfaces.KnowledgeConflictRepository,
+	disputedFactRepo interfaces.DisputedFactRepository,
 	folderRepo interfaces.KnowledgeFolderRepository,
 	summaryRepo interfaces.FolderSummaryRepository,
 ) interfaces.KnowledgeBaseService {
@@ -90,9 +92,10 @@ func NewKnowledgeBaseService(repo interfaces.KnowledgeBaseRepository,
 		ownership:       ownership,
 		tenantRepo:      tenantRepo,
 		fileSvc:         fileSvc,
-		referenceRepo:   referenceRepo,
-		conflictRepo:    conflictRepo,
-		storageResolver: storageResolver,
+		referenceRepo:    referenceRepo,
+		conflictRepo:     conflictRepo,
+		disputedFactRepo: disputedFactRepo,
+		storageResolver:  storageResolver,
 		graphEngine:     graphEngine,
 		asynqClient:     asynqClient,
 		taskInspector:   taskInspector,
@@ -983,6 +986,13 @@ func (s *knowledgeBaseService) ProcessKBDelete(ctx context.Context, t *asynq.Tas
 	if s.conflictRepo != nil {
 		if err := s.conflictRepo.DeleteByKB(ctx, kbID); err != nil {
 			logger.Warnf(ctx, "Failed to delete conflicts for KB %s: %v", kbID, err)
+		}
+	}
+	// C4-Lite clusters are derived from those raw rows and can be removed
+	// directly on KB deletion. This is best-effort like conflict cleanup.
+	if s.disputedFactRepo != nil {
+		if err := s.disputedFactRepo.DeleteByKB(ctx, tenantID, kbID); err != nil {
+			logger.Warnf(ctx, "Failed to delete disputed facts for KB %s: %v", kbID, err)
 		}
 	}
 

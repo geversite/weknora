@@ -16,6 +16,21 @@ type KnowledgeConflict struct {
 	KnowledgeIDB string `json:"knowledge_id_b" gorm:"type:varchar(36);index"`
 	ChunkIDA     string `json:"chunk_id_a" gorm:"type:varchar(36);index"`
 	ChunkIDB     string `json:"chunk_id_b" gorm:"type:varchar(36);index"`
+
+	// C4-Lite provenance. FactKey / FactAnchorKind are deterministic at
+	// detection time; ClusterID points at the fact-level aggregate created by
+	// ConflictClusterService. ClaimKey is populated only for an exact C1 claim
+	// anchor; fallback anchors retain empty ClaimKey rather than pretending to
+	// be exact.
+	ClusterID      string `json:"cluster_id" gorm:"type:varchar(36);index"`
+	FactKey        string `json:"fact_key" gorm:"type:varchar(512);index"`
+	FactAnchorKind string `json:"fact_anchor_kind" gorm:"type:varchar(32);index"`
+	ClaimKey       string `json:"claim_key" gorm:"type:varchar(512);index"`
+	FactSubject    string `json:"fact_subject" gorm:"type:text"`
+	FactPredicate  string `json:"fact_predicate" gorm:"type:text"`
+	FactValueA     string `json:"fact_value_a" gorm:"type:text"`
+	FactValueB     string `json:"fact_value_b" gorm:"type:text"`
+
 	// ContentA / ContentB are snapshots of the conflicting chunks taken at
 	// detection time. They remain stable even if the source chunk is later
 	// edited (adjudication targets the concrete contradiction found).

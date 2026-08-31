@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "name": "c4_cluster_triplet",
+  "description": "Three concise documents state mutually incompatible values for one identical allowance fact. The detector should create three raw document-pair conflicts but C4-Lite must aggregate them into one DisputedFact.",
+  "min_claims_per_document": 1,
+  "documents": [
+    {
+      "id": "c4_a",
+      "path": "testdata/claims_eval/docs/c4_meal_allowance_a.md",
+      "title": "c4_meal_allowance_a"
+    },
+    {
+      "id": "c4_b",
+      "path": "testdata/claims_eval/docs/c4_meal_allowance_b.md",
+      "title": "c4_meal_allowance_b"
+    },
+    {
+      "id": "c4_c",
+      "path": "testdata/claims_eval/docs/c4_meal_allowance_c.md",
+      "title": "c4_meal_allowance_c"
+    }
+  ],
+  "expected_conflict_document_pairs": [
+    {
+      "id": "C4_AB",
+      "left": "c4_a",
+      "right": "c4_b",
+      "note": "100 元 vs 150 元"
+    },
+    {
+      "id": "C4_AC",
+      "left": "c4_a",
+      "right": "c4_c",
+      "note": "100 元 vs 200 元"
+    },
+    {
+      "id": "C4_BC",
+      "left": "c4_b",
+      "right": "c4_c",
+      "note": "150 元 vs 200 元"
+    }
+  ],
+  "expected_disputed_fact_count": 1
+}

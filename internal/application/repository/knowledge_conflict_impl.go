@@ -53,6 +53,15 @@ func (r *knowledgeConflictRepo) ListByKB(ctx context.Context, tenantID uint64, k
 	return conflicts, err
 }
 
+func (r *knowledgeConflictRepo) ListByKBForClustering(ctx context.Context, tenantID uint64, kbID string) ([]*types.KnowledgeConflict, error) {
+	var conflicts []*types.KnowledgeConflict
+	err := r.db.WithContext(ctx).Model(&types.KnowledgeConflict{}).
+		Where("tenant_id = ? AND knowledge_base_id = ?", tenantID, kbID).
+		Order("fact_key ASC, created_at ASC, id ASC").
+		Find(&conflicts).Error
+	return conflicts, err
+}
+
 func (r *knowledgeConflictRepo) CountByKB(ctx context.Context, tenantID uint64, kbID, status string) (int64, error) {
 	q := r.db.WithContext(ctx).Model(&types.KnowledgeConflict{}).
 		Where("tenant_id = ? AND knowledge_base_id = ?", tenantID, kbID)

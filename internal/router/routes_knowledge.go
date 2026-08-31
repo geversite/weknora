@@ -271,10 +271,12 @@ func RegisterKnowledgeConflictRoutes(r *gin.RouterGroup, conflictHandler *handle
 	{
 		conf.GET("", g.Viewer(), g.KBAccessRead("id"), conflictHandler.ListConflicts)
 		conf.GET("/stats", g.Viewer(), g.KBAccessRead("id"), conflictHandler.GetConflictStats)
+		conf.GET("/clusters", g.Viewer(), g.KBAccessRead("id"), conflictHandler.ListDisputedFacts)
 	}
 	confWrite := g.apiKeyGroup(r.Group("/knowledge-bases/:id/conflicts"), apiKeyIngest(apiKeyFullAccess()))
 	{
 		confWrite.POST("/resolve", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), conflictHandler.Resolve)
+		confWrite.POST("/clusters/rebuild", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), conflictHandler.RebuildDisputedFacts)
 	}
 }
 

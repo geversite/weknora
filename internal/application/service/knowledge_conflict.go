@@ -55,9 +55,10 @@ type KnowledgeConflictService struct {
 	modelService interfaces.ModelService
 	taskEnqueuer interfaces.TaskEnqueuer
 	pendingRepo  interfaces.TaskPendingOpsRepository
-	claimRepo    interfaces.ClaimRepository            // C1: claim-key pairing channel (nil-safe)
-	wikiRepo     interfaces.WikiPageRepository         // C1: wiki counterpart resolution (nil-safe)
-	runRepo      interfaces.ConflictDetectionRunRepository // C2: aggregate experiment metrics (nil-safe)
+	claimRepo       interfaces.ClaimRepository              // C1: claim-key pairing channel (nil-safe)
+	wikiRepo        interfaces.WikiPageRepository           // C1: wiki counterpart resolution (nil-safe)
+	runRepo         interfaces.ConflictDetectionRunRepository // C2: aggregate experiment metrics (nil-safe)
+	clusterService  interfaces.ConflictClusterService       // C4-Lite: deterministic raw-row aggregation (nil-safe)
 }
 
 // NewKnowledgeConflictService constructs the conflict detect + adjudicate service.
@@ -72,6 +73,7 @@ func NewKnowledgeConflictService(
 	claimRepo interfaces.ClaimRepository,
 	wikiRepo interfaces.WikiPageRepository,
 	runRepo interfaces.ConflictDetectionRunRepository,
+	clusterService interfaces.ConflictClusterService,
 ) *KnowledgeConflictService {
 	return &KnowledgeConflictService{
 		conflictRepo: conflictRepo,
@@ -81,9 +83,10 @@ func NewKnowledgeConflictService(
 		modelService: modelService,
 		taskEnqueuer: taskEnqueuer,
 		pendingRepo: pendingRepo,
-		claimRepo:   claimRepo,
-		wikiRepo:    wikiRepo,
-		runRepo:     runRepo,
+		claimRepo:      claimRepo,
+		wikiRepo:       wikiRepo,
+		runRepo:        runRepo,
+		clusterService: clusterService,
 	}
 }
 
@@ -236,8 +239,14 @@ func (s *KnowledgeConflictService) Handle(ctx context.Context, task *asynq.Task)
 	run.LLMPromptTokens = cascadeStats.LLMPromptTokens
 	run.LLMCompletionTokens = cascadeStats.LLMCompletionTokens
 
+	// C4-Lite anchors every final raw conflict before persistence. C2-B may
+	// already have hydrated fallback claim hints for its batch prompt; C1/C2-A
+	// fallbacks are hydrated here solely to derive a conservative fact anchor.
+	adjudicated = s.hydrateFallbackClaimEvidence(detectCtx, adjudicated)
+
 	conflicts := make([]*types.KnowledgeConflict, 0, len(adjudicated))
 	for _, p := range adjudicated {
+		anchor := conflictFactAnchorForPair(p)
 		reason := p.Reason
 		if p.ExistWikiSlug != "" {
 			// C1 transitional wiki marker: the counterpart is a wiki page
@@ -253,6 +262,13 @@ func (s *KnowledgeConflictService) Handle(ctx context.Context, task *asynq.Task)
 			KnowledgeIDB:    p.ExistingChunk.KnowledgeID,
 			ChunkIDA:        p.NewChunk.ID,
 			ChunkIDB:        p.ExistingChunk.ID,
+			FactKey:         anchor.FactKey,
+			FactAnchorKind:  anchor.AnchorKind,
+			ClaimKey:        anchor.ClaimKey,
+			FactSubject:     anchor.Subject,
+			FactPredicate:   anchor.Predicate,
+			FactValueA:      anchor.ValueA,
+			FactValueB:      anchor.ValueB,
 			ContentA:        conflictTruncateRunes(p.NewChunk.Content, conflictContentMaxRunes),
 			ContentB:        conflictTruncateRunes(p.ExistingChunk.Content, conflictContentMaxRunes),
 			ConflictType:    p.ConflictType,
@@ -269,6 +285,20 @@ func (s *KnowledgeConflictService) Handle(ctx context.Context, task *asynq.Task)
 	}
 	if err := s.conflictRepo.BatchCreate(ctx, conflicts); err != nil {
 		return fmt.Errorf("persist conflicts: %w", err)
+	}
+	// C4-Lite aggregation is best-effort with respect to the proven detector:
+	// a transient cluster write must not discard valid raw conflicts or trigger
+	// a duplicate conflict-detect retry. The explicit rebuild endpoint/script
+	// can deterministically converge the aggregate afterward.
+	if s.clusterService != nil {
+		if result, err := s.clusterService.Rebuild(detectCtx, payload.TenantID, payload.KnowledgeBaseID); err != nil {
+			logger.GetLogger(ctx).Warnf("[ConflictCluster] Rebuild after detection for KB %s failed: %v", payload.KnowledgeBaseID, err)
+		} else {
+			logger.GetLogger(ctx).Infof(
+				"[ConflictCluster] Rebuilt KB %s: raw_conflicts=%d disputed_facts=%d assigned=%d",
+				payload.KnowledgeBaseID, result.RawConflictCount, result.DisputedFactCount, result.AssignedConflictCount,
+			)
+		}
 	}
 	logger.GetLogger(ctx).Infof("[ConflictDetect] Persisted %d pending conflicts for knowledge %s", len(conflicts), payload.KnowledgeID)
 	return nil
@@ -1110,6 +1140,14 @@ func (s *KnowledgeConflictService) Resolve(
 	conflict.UpdatedAt = now
 	if err := s.conflictRepo.Update(ctx, conflict); err != nil {
 		return nil, err
+	}
+	// Keep C4-Lite aggregate status/counts convergent after a raw member is
+	// adjudicated. A rebuild failure must not undo an already-applied legacy
+	// resolution side effect; the explicit rebuild endpoint remains available.
+	if s.clusterService != nil {
+		if _, err := s.clusterService.Rebuild(ctx, conflict.TenantID, conflict.KnowledgeBaseID); err != nil {
+			logger.GetLogger(ctx).Warnf("[ConflictCluster] Rebuild after resolving conflict %s failed: %v", conflict.ID, err)
+		}
 	}
 
 	return &types.ConflictAdjudicationResult{

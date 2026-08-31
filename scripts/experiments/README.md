@@ -2,7 +2,7 @@
 
 本目录是冲突检测 V2 的**研究实验入口**。它通过真实的 WeKnora HTTP API 创建临时实验 KB、
 注入 Markdown、等待 Asynq 任务完成，并只读导出 PostgreSQL 中的 `claims`、
-`knowledge_conflicts`、处理 spans 与 dead letters。
+`knowledge_conflicts`、`disputed_facts`、处理 spans 与 dead letters。
 
 它不依赖前端 UI，也不会直接向 `claims` 或 `knowledge_conflicts` 写入数据。
 
@@ -84,7 +84,8 @@ python3 scripts/experiments/run_claims_eval.py --check --check-db
 
 1. `GET /health` 返回 `{"status":"ok"}`；
 2. API key 是否存在（不会输出其值）；
-3. Docker/psql 是否能执行只读 `SELECT 1`。
+3. Docker/psql 是否能执行只读 `SELECT 1`；
+4. C2 的 `conflict_detection_runs` 与 C4 的 `disputed_facts` 表已由 migration 创建。
 
 ## 运行场景
 
@@ -209,6 +210,40 @@ experiments/comparisons/<timestamp>-conflict-ablation/
 报告将检测完整性（预期对、禁止对、死信、task failed）与 volatile 的 claim-extractor P/R
 门槛分开呈现；它是可重现 artifact 汇总，不把独立生产模型运行误称为严格因果实验。
 
+### C4-Lite 事实级聚类
+
+后端运行 C4 migration `000088` 后，运行三文档同事实三取值场景：
+
+```bash
+make experiment-c4
+```
+
+场景依次注入 100 / 150 / 200 元三份“国内出差餐费补贴每日标准”文档。预期产生三个
+跨文档 raw conflict 对，但聚为一个 `DisputedFact`：
+
+```text
+C4_AB / C4_AC / C4_BC：全部命中
+expected_disputed_fact_count：1
+```
+
+每个 run 会调用一次幂等的：
+
+```text
+POST /api/v1/knowledge-bases/:id/conflicts/clusters/rebuild
+```
+
+然后导出：
+
+```text
+disputed_facts.json
+cluster_rebuild.json
+cluster_metrics.json
+```
+
+`cluster_metrics.json` 中的 `review_units_saved = raw_conflict_count - cluster_count` 是 C4-Lite
+“可减少的人工裁决单元”口径。它不等于最终人工时间节省，且对无 claim anchor 的旧 row
+会保守地使用 `chunk_pair` 单例 anchor，不做不安全的跨 chunk 合并。
+
 ### V1 行为对照
 
 ```bash
@@ -234,6 +269,9 @@ experiments/runs/<timestamp>-<scenario>-<variant>-<commit>/
 ├── evaluator_output.txt
 ├── conflicts.json
 ├── conflict_document_pairs.json
+├── disputed_facts.json
+├── cluster_rebuild.json
+├── cluster_metrics.json
 ├── dead_letters.json
 ├── metrics.json
 └── report.md
@@ -244,8 +282,8 @@ experiments/runs/<timestamp>-<scenario>-<variant>-<commit>/
 
 退出码：
 
-- `0`：预期文档对出现、所有 `forbidden_conflict_document_pairs` 均未出现，且（若场景带完整 gold）`evaluate.py` 通过门槛；
-- `2`：服务链路完成并导出了证据，但缺少预期冲突对、出现禁止的冲突文档对，或抽取 P/R 未达门槛；
+- `0`：预期文档对出现、所有 `forbidden_conflict_document_pairs` 均未出现、`expected_disputed_fact_count`（若配置）匹配，且（若场景带完整 gold）`evaluate.py` 通过门槛；
+- `2`：服务链路完成并导出了证据，但缺少预期冲突对、出现禁止的冲突文档对、聚类数量断言失败，或抽取 P/R 未达门槛；
 - `1`：环境、API、任务或数据库导出失败；
 - `130`：用户中断。
 
@@ -272,7 +310,8 @@ experiments/runs/<timestamp>-<scenario>-<variant>-<commit>/
   ],
   "forbidden_conflict_document_pairs": [
     {"id": "N1", "left": "doc_a", "right": "doc_c"}
-  ]
+  ],
+  "expected_disputed_fact_count": 1
 }
 ```
 
@@ -282,6 +321,9 @@ experiments/runs/<timestamp>-<scenario>-<variant>-<commit>/
 `forbidden_conflict_document_pairs` 是可选的闭集负例断言。若任何该文档对出现 raw
 `knowledge_conflicts` 行，run 会保留全部证据、标记为 `completed_with_forbidden_conflicts`，并
 以退出码 `2` 结束。它在 C4 去重/聚类之前按文档对报警，不把同一对的多条 chunk-pair 行误称为多项独立错误。
+
+`expected_disputed_fact_count` 是可选 C4-Lite 聚类断言。它只适用于事实设计明确、预期 cluster
+数量稳定的隔离场景；全量 `c1_full` 因 extractor 与 raw chunk-pair 输出有模型波动，不配置该断言。
 
 `evaluate.py` 的 P/R 是全六文档口径，因此运行器只会在场景覆盖全部 gold 文档时执行它。
 P2/P3/P1-P2 这类部分语料诊断场景会明确跳过全局 P/R，避免未注入的 gold 文档被错误计为漏检。

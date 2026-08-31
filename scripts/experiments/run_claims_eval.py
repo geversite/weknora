@@ -2,8 +2,10 @@
 """Run a reproducible C1 claim-extraction experiment against a live WeKnora app.
 
 The runner deliberately drives the public HTTP API and waits for the real
-Asynq workers.  It never inserts rows into claims or knowledge_conflicts.
-PostgreSQL is read only and is used solely to export the experiment evidence.
+Asynq workers. It never inserts rows into claims, knowledge_conflicts, or
+disputed_facts directly; C4 aggregation is requested only through the public,
+idempotent cluster-rebuild API. PostgreSQL access is read only and is used
+solely to export experiment evidence.
 
 Typical use (on the Linux host where make dev-app is already running):
 
@@ -295,6 +297,12 @@ def load_scenario(path: Path) -> dict[str, Any]:
         raise ExperimentError(
             "同一文档对不能同时要求冲突与不冲突: " + left + " ↔ " + right,
         )
+    expected_fact_count = scenario.get("expected_disputed_fact_count")
+    if expected_fact_count is not None and (
+        isinstance(expected_fact_count, bool) or not isinstance(expected_fact_count, int) or expected_fact_count < 0
+    ):
+        raise ExperimentError("expected_disputed_fact_count 必须是非负整数")
+
     # Normalize absent optional lists so downstream artifact schema is stable.
     scenario["expected_conflict_document_pairs"] = expected
     scenario["forbidden_conflict_document_pairs"] = forbidden
@@ -438,6 +446,8 @@ def query_claims(db: PostgresExporter, kb_id: str) -> list[dict[str, str]]:
 def query_conflicts(db: PostgresExporter, kb_id: str) -> list[dict[str, str]]:
     return db.query(
         "SELECT c.id, c.knowledge_id_a, c.knowledge_id_b, c.chunk_id_a, c.chunk_id_b, "
+        "c.cluster_id, c.fact_key, c.fact_anchor_kind, c.claim_key, c.fact_subject, c.fact_predicate, "
+        "c.fact_value_a, c.fact_value_b, "
         "c.content_a, c.content_b, c.conflict_type, c.llm_reason, c.status, c.detected_by, "
         "c.created_at, c.updated_at, "
         "COALESCE(ka.title, '') AS title_a, COALESCE(kb.title, '') AS title_b "
@@ -452,6 +462,59 @@ def query_conflicts(db: PostgresExporter, kb_id: str) -> list[dict[str, str]]:
 def conflict_detection_runs_table_exists(db: PostgresExporter) -> bool:
     rows = db.query("SELECT to_regclass('public.conflict_detection_runs') AS table_name")
     return bool(rows and rows[0].get("table_name"))
+
+
+def disputed_facts_table_exists(db: PostgresExporter) -> bool:
+    rows = db.query("SELECT to_regclass('public.disputed_facts') AS table_name")
+    return bool(rows and rows[0].get("table_name"))
+
+
+def query_disputed_facts(db: PostgresExporter, kb_id: str) -> list[dict[str, str]]:
+    if not disputed_facts_table_exists(db):
+        raise ExperimentError(
+            "缺少 disputed_facts 表；请确认后端已拉取 C4 代码并重启，以执行 migration 000088。"
+        )
+    return db.query(
+        "SELECT id, tenant_id, knowledge_base_id, clusterer_version, fact_key, anchor_kind, claim_key, subject, predicate, "
+        "conflict_type, status, conflict_count, pending_conflict_count, source_count, candidate_value_count, "
+        "COALESCE(candidate_values::text, '[]') AS candidate_values, "
+        "COALESCE(source_refs::text, '[]') AS source_refs, created_at, updated_at "
+        "FROM disputed_facts "
+        f"WHERE knowledge_base_id = {sql_literal(kb_id)} "
+        "ORDER BY updated_at DESC, id"
+    )
+
+
+def aggregate_disputed_facts(
+    rows: list[dict[str, str]], raw_conflict_count: int, rebuild: dict[str, Any] | None,
+) -> dict[str, Any]:
+    statuses: dict[str, int] = {}
+    anchor_kinds: dict[str, int] = {}
+    clusterer_versions: dict[str, int] = {}
+    clustered_conflicts = 0
+    pending_conflicts = 0
+    for row in rows:
+        status = row.get("status", "") or "unknown"
+        kind = row.get("anchor_kind", "") or "unknown"
+        version = row.get("clusterer_version", "") or "unknown"
+        statuses[status] = statuses.get(status, 0) + 1
+        anchor_kinds[kind] = anchor_kinds.get(kind, 0) + 1
+        clusterer_versions[version] = clusterer_versions.get(version, 0) + 1
+        clustered_conflicts += as_int(row.get("conflict_count"))
+        pending_conflicts += as_int(row.get("pending_conflict_count"))
+    cluster_count = len(rows)
+    return {
+        "cluster_count": cluster_count,
+        "raw_conflict_count": raw_conflict_count,
+        "clustered_conflict_count": clustered_conflicts,
+        "pending_conflict_count": pending_conflicts,
+        "review_units_saved": max(raw_conflict_count - cluster_count, 0),
+        "raw_conflicts_per_disputed_fact": (raw_conflict_count / cluster_count) if cluster_count else None,
+        "statuses": statuses,
+        "anchor_kinds": anchor_kinds,
+        "clusterer_versions": clusterer_versions,
+        "rebuild": rebuild,
+    }
 
 
 def query_conflict_detection_runs(db: PostgresExporter, kb_id: str) -> list[dict[str, str]]:
@@ -545,6 +608,9 @@ def observed_conflict_pairs(
             "right_document": right,
             "type": conflict.get("conflict_type", ""),
             "status": conflict.get("status", ""),
+            "cluster_id": conflict.get("cluster_id", ""),
+            "fact_key": conflict.get("fact_key", ""),
+            "fact_anchor_kind": conflict.get("fact_anchor_kind", ""),
             "reason": conflict.get("llm_reason", ""),
         })
     return rows
@@ -692,6 +758,7 @@ def write_report(
     observed_forbidden_pairs: list[dict[str, Any]],
     evaluator: dict[str, Any] | None,
     cascade_metrics: dict[str, Any] | None,
+    cluster_metrics: dict[str, Any] | None,
 ) -> None:
     lines = [
         f"# Conflict experiment: {manifest['run_id']}",
@@ -778,6 +845,33 @@ def write_report(
         ):
             lines.append(f"| {key} | {totals.get(key, 0)} |")
 
+    if cluster_metrics is not None:
+        ratio = cluster_metrics.get("raw_conflicts_per_disputed_fact")
+        ratio_text = f"{ratio:.3f}" if isinstance(ratio, (int, float)) else "-"
+        lines += [
+            "", "## C4 争议事实聚类", "",
+            f"- disputed facts：`{cluster_metrics.get('cluster_count', 0)}`",
+            f"- raw conflicts：`{cluster_metrics.get('raw_conflict_count', 0)}`",
+            f"- raw conflicts / disputed fact：`{ratio_text}`",
+            f"- review units saved（raw - cluster）：`{cluster_metrics.get('review_units_saved', 0)}`",
+            f"- clusterer versions：`{cluster_metrics.get('clusterer_versions', {})}`",
+            f"- anchor kinds：`{cluster_metrics.get('anchor_kinds', {})}`",
+            f"- statuses：`{cluster_metrics.get('statuses', {})}`",
+        ]
+        rebuild = cluster_metrics.get("rebuild")
+        if isinstance(rebuild, dict):
+            lines.append(
+                "- rebuild："
+                f"assigned=`{rebuild.get('assigned_conflict_count', 0)}`，"
+                f"unanchored=`{rebuild.get('unanchored_conflict_count', 0)}`"
+            )
+        expected_fact_count = cluster_metrics.get("expected_disputed_fact_count")
+        if expected_fact_count is not None:
+            lines.append(
+                "- expected disputed facts："
+                f"`{expected_fact_count}`；match=`{cluster_metrics.get('disputed_fact_count_matches', False)}`"
+            )
+
     if evaluator is not None:
         lines += ["", "## 抽取质量评估", ""]
         lines.append(f"- evaluate.py exit code：`{evaluator['exit_code']}`")
@@ -817,8 +911,13 @@ def check_environment(client: APIClient, check_db: bool) -> int:
                 raise ExperimentError(
                     "缺少 conflict_detection_runs；请重启包含 C2 migration 000086 的后端。"
                 )
+            if not disputed_facts_table_exists(db):
+                raise ExperimentError(
+                    "缺少 disputed_facts；请重启包含 C4 migration 000088 的后端。"
+                )
             print("[check] PostgreSQL export: OK", db.describe_mode())
             print("[check] C2 conflict_detection_runs: OK")
+            print("[check] C4 disputed_facts: OK")
         except ExperimentError as exc:
             print("[check] PostgreSQL export: FAIL", exc, file=sys.stderr)
             return 1
@@ -983,8 +1082,19 @@ def run_experiment(args: argparse.Namespace) -> int:
             db, kb_id, manifest["knowledge_ids"].values(),
             args.conflict_timeout_seconds, args.poll_seconds,
         )
+        # C4-Lite also rebuilds after every detector task, but invoke its
+        # explicit idempotent endpoint once after all tasks finish. This gives
+        # a single deterministic cluster snapshot for the artifact even when
+        # asynchronous detector tasks completed close together.
+        cluster_rebuild = client.post(
+            f"/knowledge-bases/{kb_id}/conflicts/clusters/rebuild", {},
+        )
+        if not isinstance(cluster_rebuild, dict):
+            raise ExperimentError("C4 disputed-fact rebuild 响应格式异常")
         conflicts = query_conflicts(db, kb_id)
         observed_pairs = observed_conflict_pairs(conflicts, knowledge_to_doc)
+        disputed_facts = query_disputed_facts(db, kb_id)
+        cluster_metrics = aggregate_disputed_facts(disputed_facts, len(conflicts), cluster_rebuild)
         cascade_metrics = aggregate_conflict_detection_runs(detection_runs)
         claims = query_claims(db, kb_id)
         dead_letters = query_dead_letters(db, manifest["knowledge_ids"].values())
@@ -992,6 +1102,9 @@ def run_experiment(args: argparse.Namespace) -> int:
         json_dump(output_dir / "conflicts.json", conflicts)
         json_dump(output_dir / "conflict_detection_runs.json", detection_runs)
         json_dump(output_dir / "cascade_metrics.json", cascade_metrics)
+        json_dump(output_dir / "disputed_facts.json", disputed_facts)
+        json_dump(output_dir / "cluster_rebuild.json", cluster_rebuild)
+        json_dump(output_dir / "cluster_metrics.json", cluster_metrics)
         json_dump(output_dir / "dead_letters.json", dead_letters)
         json_dump(output_dir / "conflict_document_pairs.json", observed_pairs)
 
@@ -1021,12 +1134,23 @@ def run_experiment(args: argparse.Namespace) -> int:
             if not has_document_pair(observed_pairs, str(item["left"]), str(item["right"]))
         ]
         observed_forbidden_pairs = observed_forbidden_conflict_pairs(observed_pairs, forbidden_pairs)
+        expected_disputed_fact_count = scenario.get("expected_disputed_fact_count")
+        disputed_fact_count_matches = (
+            expected_disputed_fact_count is None
+            or len(disputed_facts) == expected_disputed_fact_count
+        )
+        cluster_metrics["expected_disputed_fact_count"] = expected_disputed_fact_count
+        cluster_metrics["disputed_fact_count_matches"] = disputed_fact_count_matches
         metrics = {
             "claim_count_total": len(claims),
             "claim_counts_by_document": claim_counts,
             "conflict_count_total": len(conflicts),
             "dead_letter_count": len(dead_letters),
             "cascade": cascade_metrics,
+            "clusters": cluster_metrics,
+            "expected_disputed_fact_count": expected_disputed_fact_count,
+            "observed_disputed_fact_count": len(disputed_facts),
+            "disputed_fact_count_matches": disputed_fact_count_matches,
             "expected_conflict_document_pairs": expected_pairs,
             "missing_expected_conflict_document_pairs": missing_pairs,
             "forbidden_conflict_document_pairs": forbidden_pairs,
@@ -1040,19 +1164,28 @@ def run_experiment(args: argparse.Namespace) -> int:
             manifest["status"] = "completed_with_missing_expectations"
         elif observed_forbidden_pairs:
             manifest["status"] = "completed_with_forbidden_conflicts"
+        elif not disputed_fact_count_matches:
+            manifest["status"] = "completed_with_cluster_expectation_failure"
         else:
             manifest["status"] = "completed"
         manifest["finished_at"] = utc_now()
         json_dump(output_dir / "manifest.json", manifest)
         write_report(
             output_dir / "report.md", manifest, claim_counts, expected_pairs, forbidden_pairs,
-            observed_pairs, observed_forbidden_pairs, evaluator_result, cascade_metrics,
+            observed_pairs, observed_forbidden_pairs, evaluator_result, cascade_metrics, cluster_metrics,
         )
 
         print(f"实验完成: {output_dir}")
         print(f"  KB: {kb_id}")
         print(f"  claims: {len(claims)}")
         print(f"  conflicts: {len(conflicts)}")
+        cluster_ratio = cluster_metrics["raw_conflicts_per_disputed_fact"]
+        cluster_ratio_text = f"{cluster_ratio:.3f}" if isinstance(cluster_ratio, (int, float)) else "-"
+        print(
+            "  disputed facts: "
+            f"{cluster_metrics['cluster_count']} "
+            f"(raw/cluster={cluster_ratio_text})"
+        )
         cascade_totals = cascade_metrics["totals"]
         print(
             "  cascade: "
@@ -1074,6 +1207,11 @@ def run_experiment(args: argparse.Namespace) -> int:
                 "  观察到不应出现的 conflict 文档对:",
                 ", ".join(left + "↔" + right for left, right in unexpected_docs),
             )
+        if not disputed_fact_count_matches:
+            print(
+                "  disputed fact 数量不符合场景断言: "
+                f"expected={expected_disputed_fact_count} observed={len(disputed_facts)}"
+            )
         if evaluator_result:
             print(
                 "  evaluator: "
@@ -1086,6 +1224,7 @@ def run_experiment(args: argparse.Namespace) -> int:
         if (
             missing_pairs
             or observed_forbidden_pairs
+            or not disputed_fact_count_matches
             or (evaluator_result and evaluator_result["exit_code"] != 0)
         ):
             return 2

@@ -94,6 +94,7 @@ type knowledgeService struct {
 	audit             interfaces.AuditLogService
 	conflictRepo      interfaces.KnowledgeConflictRepository // M3 conflict cleanup
 	claimRepo         interfaces.ClaimRepository             // C1 claim cleanup
+	clusterService    interfaces.ConflictClusterService      // C4-Lite cluster refresh after deletion
 	folderSummaryRepo interfaces.FolderSummaryRepository     // M4: folder summary lookup
 	folderSummarySvc  interfaces.FolderSummaryService        // M4: folder summary refresh
 	folderRepo        interfaces.KnowledgeFolderRepository   // M4: folder lookup
@@ -136,6 +137,7 @@ func NewKnowledgeService(
 	audit interfaces.AuditLogService,
 	conflictRepo interfaces.KnowledgeConflictRepository,
 	claimRepo interfaces.ClaimRepository,
+	clusterService interfaces.ConflictClusterService,
 	folderSummaryRepo interfaces.FolderSummaryRepository,
 	folderSummarySvc interfaces.FolderSummaryService,
 	folderRepo interfaces.KnowledgeFolderRepository,
@@ -170,6 +172,7 @@ func NewKnowledgeService(
 		audit:             audit,
 		conflictRepo:      conflictRepo,
 		claimRepo:         claimRepo,
+		clusterService:    clusterService,
 		folderSummaryRepo: folderSummaryRepo,
 		folderSummarySvc:  folderSummarySvc,
 		folderRepo:        folderRepo,

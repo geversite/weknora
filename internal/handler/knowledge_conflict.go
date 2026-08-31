@@ -16,16 +16,19 @@ import (
 // adjudication queue.
 type KnowledgeConflictHandler struct {
 	conflictService interfaces.ConflictAdjudicateService
+	clusterService  interfaces.ConflictClusterService
 	kbService       interfaces.KnowledgeBaseService
 }
 
 // NewKnowledgeConflictHandler creates a new conflict handler instance.
 func NewKnowledgeConflictHandler(
 	conflictService interfaces.ConflictAdjudicateService,
+	clusterService interfaces.ConflictClusterService,
 	kbService interfaces.KnowledgeBaseService,
 ) *KnowledgeConflictHandler {
 	return &KnowledgeConflictHandler{
 		conflictService: conflictService,
+		clusterService:  clusterService,
 		kbService:       kbService,
 	}
 }
@@ -100,6 +103,84 @@ func (h *KnowledgeConflictHandler) GetConflictStats(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": stats})
+}
+
+// ListDisputedFacts godoc
+// @Summary      List C4-Lite fact-level conflict clusters for a knowledge base
+// @Description  Returns a paged list of deterministic DisputedFact aggregates.
+//
+//	Each item may represent multiple raw chunk-pair conflict rows.
+//
+// @Tags         知识冲突
+// @Param        id       path      string  true  "Knowledge base ID"
+// @Param        status   query     string  false "Filter by pending|resolved"
+// @Param        page     query     int     false "Page number (default 1)"
+// @Param        page_size query    int     false "Page size (default 20, max 200)"
+// @Success      200      {object}  map[string]interface{}
+// @Failure      500      {object}  errors.AppError
+// @Security     Bearer
+// @Security     ApiKeyAuth
+// @Router       /knowledge-bases/{id}/conflicts/clusters [get]
+func (h *KnowledgeConflictHandler) ListDisputedFacts(c *gin.Context) {
+	if h.clusterService == nil {
+		c.Error(errors.NewInternalServerError("conflict cluster service is not configured"))
+		return
+	}
+	ctx := c.Request.Context()
+	kbID := c.Param("id")
+	tenantID := c.GetUint64(types.TenantIDContextKey.String())
+	status := c.Query("status")
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 {
+		pageSize = 20
+	}
+
+	facts, total, err := h.clusterService.ListDisputedFacts(ctx, tenantID, kbID, status, pageSize, (page-1)*pageSize)
+	if err != nil {
+		logger.Errorf(ctx, "List disputed facts for KB %s failed: %v", kbID, err)
+		c.Error(errors.NewInternalServerError("failed to list disputed facts"))
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data": gin.H{
+			"list":      facts,
+			"total":     total,
+			"page":      page,
+			"page_size": pageSize,
+		},
+	})
+}
+
+// RebuildDisputedFacts godoc
+// @Summary      Rebuild C4-Lite fact-level conflict clusters
+// @Description  Deterministically re-clusters current raw conflicts in a KB.
+// @Tags         知识冲突
+// @Param        id path string true "Knowledge base ID"
+// @Success      200 {object} map[string]interface{}
+// @Failure      500 {object} errors.AppError
+// @Security     Bearer
+// @Security     ApiKeyAuth
+// @Router       /knowledge-bases/{id}/conflicts/clusters/rebuild [post]
+func (h *KnowledgeConflictHandler) RebuildDisputedFacts(c *gin.Context) {
+	if h.clusterService == nil {
+		c.Error(errors.NewInternalServerError("conflict cluster service is not configured"))
+		return
+	}
+	ctx := c.Request.Context()
+	kbID := c.Param("id")
+	tenantID := c.GetUint64(types.TenantIDContextKey.String())
+	result, err := h.clusterService.Rebuild(ctx, tenantID, kbID)
+	if err != nil {
+		logger.Errorf(ctx, "Rebuild disputed facts for KB %s failed: %v", kbID, err)
+		c.Error(errors.NewInternalServerError("failed to rebuild disputed facts"))
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": result})
 }
 
 // Resolve godoc
