@@ -194,9 +194,12 @@ scripts/experiments/scenarios/c4_cluster_triplet.json
 ```text
 C4_AB / C4_AC / C4_BC 三个文档对均出现
 expected_disputed_fact_count = 1
+expected_disputed_fact_anchor_kinds = {"claim_key": 1}
 ```
 
-该场景没有全局 claim P/R evaluator；它是针对 raw-pair → fact-cluster 语义的独立回归。
+另有 `make experiment-c4-fuzzy`：复用 P3 的报销申请/报销单 schema drift，要求 semantic
+fallback 产生的 raw rows 聚为一个 `fuzzy_slot` cluster。两者均没有全局 claim P/R evaluator；
+它们是针对 raw-pair → fact-cluster 语义的独立回归。
 
 ---
 

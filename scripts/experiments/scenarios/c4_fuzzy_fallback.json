@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "name": "c4_fuzzy_fallback",
+  "description": "C4-Lite regression for a semantic-fallback contradiction with schema drift: 报销申请 vs 报销单 and 30 natural days vs 45 days. Duplicate raw chunk-pair rows must converge to one fuzzy_slot DisputedFact.",
+  "min_claims_per_document": 1,
+  "documents": [
+    {
+      "id": "p3_policy",
+      "path": "testdata/claims_eval/docs/p3_reimbursement_policy.md",
+      "title": "c4_p3_reimbursement_policy"
+    },
+    {
+      "id": "p3_faq",
+      "path": "testdata/claims_eval/docs/p3_reimbursement_faq.md",
+      "title": "c4_p3_reimbursement_faq"
+    }
+  ],
+  "expected_conflict_document_pairs": [
+    {
+      "id": "C4_P3_FALLBACK",
+      "left": "p3_policy",
+      "right": "p3_faq",
+      "note": "报销申请 30 个自然日 vs 报销单 45 天"
+    }
+  ],
+  "expected_disputed_fact_count": 1,
+  "expected_disputed_fact_anchor_kinds": {
+    "fuzzy_slot": 1
+  }
+}

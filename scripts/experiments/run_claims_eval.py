@@ -303,6 +303,17 @@ def load_scenario(path: Path) -> dict[str, Any]:
     ):
         raise ExperimentError("expected_disputed_fact_count 必须是非负整数")
 
+    expected_anchor_kinds = scenario.get("expected_disputed_fact_anchor_kinds")
+    if expected_anchor_kinds is not None:
+        if not isinstance(expected_anchor_kinds, dict):
+            raise ExperimentError("expected_disputed_fact_anchor_kinds 必须是对象")
+        allowed_anchor_kinds = {"claim_key", "fuzzy_slot", "chunk_pair"}
+        for kind, count in expected_anchor_kinds.items():
+            if kind not in allowed_anchor_kinds or isinstance(count, bool) or not isinstance(count, int) or count < 0:
+                raise ExperimentError(
+                    "expected_disputed_fact_anchor_kinds 只能包含 claim_key/fuzzy_slot/chunk_pair 的非负整数计数"
+                )
+
     # Normalize absent optional lists so downstream artifact schema is stable.
     scenario["expected_conflict_document_pairs"] = expected
     scenario["forbidden_conflict_document_pairs"] = forbidden
@@ -871,6 +882,12 @@ def write_report(
                 "- expected disputed facts："
                 f"`{expected_fact_count}`；match=`{cluster_metrics.get('disputed_fact_count_matches', False)}`"
             )
+        expected_anchor_kinds = cluster_metrics.get("expected_anchor_kinds")
+        if expected_anchor_kinds is not None:
+            lines.append(
+                "- expected anchor kinds："
+                f"`{expected_anchor_kinds}`；match=`{cluster_metrics.get('anchor_kinds_match', False)}`"
+            )
 
     if evaluator is not None:
         lines += ["", "## 抽取质量评估", ""]
@@ -1139,8 +1156,15 @@ def run_experiment(args: argparse.Namespace) -> int:
             expected_disputed_fact_count is None
             or len(disputed_facts) == expected_disputed_fact_count
         )
+        expected_anchor_kinds = scenario.get("expected_disputed_fact_anchor_kinds")
+        disputed_fact_anchor_kinds_match = (
+            expected_anchor_kinds is None
+            or cluster_metrics["anchor_kinds"] == expected_anchor_kinds
+        )
         cluster_metrics["expected_disputed_fact_count"] = expected_disputed_fact_count
         cluster_metrics["disputed_fact_count_matches"] = disputed_fact_count_matches
+        cluster_metrics["expected_anchor_kinds"] = expected_anchor_kinds
+        cluster_metrics["anchor_kinds_match"] = disputed_fact_anchor_kinds_match
         metrics = {
             "claim_count_total": len(claims),
             "claim_counts_by_document": claim_counts,
@@ -1151,6 +1175,8 @@ def run_experiment(args: argparse.Namespace) -> int:
             "expected_disputed_fact_count": expected_disputed_fact_count,
             "observed_disputed_fact_count": len(disputed_facts),
             "disputed_fact_count_matches": disputed_fact_count_matches,
+            "expected_disputed_fact_anchor_kinds": expected_anchor_kinds,
+            "disputed_fact_anchor_kinds_match": disputed_fact_anchor_kinds_match,
             "expected_conflict_document_pairs": expected_pairs,
             "missing_expected_conflict_document_pairs": missing_pairs,
             "forbidden_conflict_document_pairs": forbidden_pairs,
@@ -1164,7 +1190,7 @@ def run_experiment(args: argparse.Namespace) -> int:
             manifest["status"] = "completed_with_missing_expectations"
         elif observed_forbidden_pairs:
             manifest["status"] = "completed_with_forbidden_conflicts"
-        elif not disputed_fact_count_matches:
+        elif not disputed_fact_count_matches or not disputed_fact_anchor_kinds_match:
             manifest["status"] = "completed_with_cluster_expectation_failure"
         else:
             manifest["status"] = "completed"
@@ -1212,6 +1238,11 @@ def run_experiment(args: argparse.Namespace) -> int:
                 "  disputed fact 数量不符合场景断言: "
                 f"expected={expected_disputed_fact_count} observed={len(disputed_facts)}"
             )
+        if not disputed_fact_anchor_kinds_match:
+            print(
+                "  disputed fact anchor kinds 不符合场景断言: "
+                f"expected={expected_anchor_kinds} observed={cluster_metrics['anchor_kinds']}"
+            )
         if evaluator_result:
             print(
                 "  evaluator: "
@@ -1225,6 +1256,7 @@ def run_experiment(args: argparse.Namespace) -> int:
             missing_pairs
             or observed_forbidden_pairs
             or not disputed_fact_count_matches
+            or not disputed_fact_anchor_kinds_match
             or (evaluator_result and evaluator_result["exit_code"] != 0)
         ):
             return 2

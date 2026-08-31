@@ -40,5 +40,8 @@
       "note": "150 元 vs 200 元"
     }
   ],
-  "expected_disputed_fact_count": 1
+  "expected_disputed_fact_count": 1,
+  "expected_disputed_fact_anchor_kinds": {
+    "claim_key": 1
+  }
 }
