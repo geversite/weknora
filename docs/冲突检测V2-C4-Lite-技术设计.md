@@ -6,7 +6,7 @@
 >
 > 依赖：C1 claims 与 C2-Lite 最终 raw `knowledge_conflicts`。
 >
-> Clusterer version：`c4-v1`；迁移：PostgreSQL `000088` / SQLite `000009`。
+> Clusterer version：`c4-v2`；迁移：PostgreSQL `000088` / SQLite `000009`。
 
 ---
 
@@ -98,7 +98,7 @@ C4-Lite 以保守优先级生成 `fact_key`：
 | Anchor kind | key | 合并语义 |
 |---|---|---|
 | `claim_key` | `claim_key:<exact ClaimKeyHit>` | 同一 exact 声明槽位的所有 raw rows 合并 |
-| `fuzzy_slot` | `fuzzy_slot:<sorted slot key pair>` | 已有 source claims 的 schema drift 提示，两侧 slot key 字符 bigram Jaccard ≥0.35 |
+| `fuzzy_slot` | `fuzzy_slot:<sorted slot key pair>` | source claims 的 schema drift 提示；若 raw chunk 是无 claim 的 summary/child 且两份文档各仅一条 usable claim，则 post-verdict 安全回退到该 singleton 文档 claim，两侧 slot key 字符 bigram Jaccard ≥0.35 |
 | `chunk_pair` | `chunk_pair:<sorted chunk IDs>` | 无任何可用声明时的保守单例；不跨 chunk 合并 |
 
 所有 key 限制在 512 runes 内；超长 key 改为 SHA-256 形式。方向无关：A↔B 与 B↔A 的
@@ -106,7 +106,9 @@ anchor 相同。
 
 `fuzzy_slot` 只在 **已经被 C1/C2 判为 conflict 的 raw row** 上帮助聚类。它不会反向影响
 candidate generation、规则层或 LLM verdict，因此不会把 C2-B4 的 prompt-only fuzzy hint
-升级成危险的 direct rule。
+升级成危险的 direct rule。若 raw pair 的 source chunk 恰好是没有 claim 的 summary/child，C4
+只在两侧文档各有一条 usable claim 时才使用 document-level fallback；多事实文档仍保持
+`chunk_pair` 单例，宁可少合并也不错误合并。
 
 ---
 

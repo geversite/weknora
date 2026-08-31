@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 )
@@ -145,6 +146,77 @@ func (s *conflictClusterService) Rebuild(
 	return result, nil
 }
 
+// hydrateFallbackFactAnchorHints is deliberately post-verdict and C4-only.
+// Raw search candidates can be synthetic child/summary chunks that carry no
+// direct claim row even though each underlying document has exactly one
+// unambiguous factual claim. In that narrow case, use document-level claims to
+// recover a fuzzy cluster anchor. It never changes candidate generation,
+// deterministic rules, or an LLM verdict.
+func (s *KnowledgeConflictService) hydrateFallbackFactAnchorHints(
+	ctx context.Context,
+	tenantID uint64,
+	pairs []conflictPair,
+) []conflictPair {
+	if s == nil || s.claimRepo == nil || tenantID == 0 || len(pairs) == 0 {
+		return pairs
+	}
+
+	cache := make(map[string][]claimEvidence)
+	loaded := make(map[string]bool)
+	loadKnowledgeClaims := func(knowledgeID string) []claimEvidence {
+		knowledgeID = strings.TrimSpace(knowledgeID)
+		if knowledgeID == "" {
+			return nil
+		}
+		if loaded[knowledgeID] {
+			return cache[knowledgeID]
+		}
+		loaded[knowledgeID] = true
+		claims, err := s.claimRepo.ListByKnowledge(ctx, tenantID, knowledgeID)
+		if err != nil {
+			logger.GetLogger(ctx).Warnf(
+				"[ConflictCluster] ListByKnowledge fallback anchor hints for knowledge %s failed: %v",
+				knowledgeID, err,
+			)
+			return nil
+		}
+		evidence := make([]claimEvidence, 0, len(claims))
+		for _, claim := range claims {
+			item := claimEvidenceFromClaim(claim)
+			if item.ClaimKey != "" {
+				evidence = append(evidence, item)
+			}
+		}
+		cache[knowledgeID] = evidence
+		return evidence
+	}
+
+	for index := range pairs {
+		pair := &pairs[index]
+		if pair.ClaimKeyHit != "" || len(pair.FallbackFactAnchorHints) > 0 ||
+			pair.NewChunk == nil || pair.ExistingChunk == nil {
+			continue
+		}
+		if hints := selectFallbackClaimHints(pair.NewClaimEvidence, pair.ExistClaimEvidence); len(hints) > 0 {
+			pair.FallbackFactAnchorHints = hints
+			continue
+		}
+
+		newClaims := loadKnowledgeClaims(pair.NewChunk.KnowledgeID)
+		existingClaims := loadKnowledgeClaims(pair.ExistingChunk.KnowledgeID)
+		// A document-level source may legitimately contain many unrelated facts.
+		// Only promote this scope when exactly one usable claim exists on each
+		// side; otherwise leave the row at a conservative chunk_pair anchor.
+		if len(newClaims) != 1 || len(existingClaims) != 1 {
+			continue
+		}
+		if hints := selectFallbackClaimHints(newClaims, existingClaims); len(hints) > 0 {
+			pair.FallbackFactAnchorHints = hints
+		}
+	}
+	return pairs
+}
+
 type conflictFactAnchor struct {
 	FactKey    string
 	AnchorKind string
@@ -175,7 +247,11 @@ func conflictFactAnchorForPair(pair conflictPair) conflictFactAnchor {
 		}
 	}
 
-	if hints := selectFallbackClaimHints(pair.NewClaimEvidence, pair.ExistClaimEvidence); len(hints) > 0 {
+	hints := pair.FallbackFactAnchorHints
+	if len(hints) == 0 {
+		hints = selectFallbackClaimHints(pair.NewClaimEvidence, pair.ExistClaimEvidence)
+	}
+	if len(hints) > 0 {
 		hint := hints[0]
 		leftKey := fallbackClaimSlotKey(hint.Newer)
 		rightKey := fallbackClaimSlotKey(hint.Older)

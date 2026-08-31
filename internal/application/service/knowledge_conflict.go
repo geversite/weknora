@@ -243,6 +243,7 @@ func (s *KnowledgeConflictService) Handle(ctx context.Context, task *asynq.Task)
 	// already have hydrated fallback claim hints for its batch prompt; C1/C2-A
 	// fallbacks are hydrated here solely to derive a conservative fact anchor.
 	adjudicated = s.hydrateFallbackClaimEvidence(detectCtx, adjudicated)
+	adjudicated = s.hydrateFallbackFactAnchorHints(detectCtx, payload.TenantID, adjudicated)
 
 	conflicts := make([]*types.KnowledgeConflict, 0, len(adjudicated))
 	for _, p := range adjudicated {
@@ -402,6 +403,10 @@ type conflictPair struct {
 	ExistClaimIDs      []string
 	NewClaimEvidence   []claimEvidence
 	ExistClaimEvidence []claimEvidence
+	// FallbackFactAnchorHints are C4-only, post-verdict hints. They may come
+	// from an unambiguous document-level claim set when raw candidate chunks
+	// are synthetic summary/child chunks with no directly attached claim.
+	FallbackFactAnchorHints []conflictFallbackClaimHint
 	// ExistWikiSlug is set when the counterpart is a wiki page (C1: pseudo
 	// chunk, no disable side-effects; formalized by the C4 migration).
 	ExistWikiSlug string

@@ -58,8 +58,9 @@ func batchTestPair(key, newer, older string) conflictPair {
 }
 
 type fallbackHintClaimRepo struct {
-	claimsBySource map[string][]*types.Claim
-	requested      []string
+	claimsBySource    map[string][]*types.Claim
+	claimsByKnowledge map[string][]*types.Claim
+	requested         []string
 }
 
 func (r *fallbackHintClaimRepo) ReplaceBySource(context.Context, string, string, string, []*types.Claim) error {
@@ -83,8 +84,8 @@ func (r *fallbackHintClaimRepo) ListBySource(_ context.Context, _ string, source
 	return r.claimsBySource[sourceID], nil
 }
 
-func (r *fallbackHintClaimRepo) ListByKnowledge(context.Context, uint64, string) ([]*types.Claim, error) {
-	return nil, nil
+func (r *fallbackHintClaimRepo) ListByKnowledge(_ context.Context, _ uint64, knowledgeID string) ([]*types.Claim, error) {
+	return r.claimsByKnowledge[knowledgeID], nil
 }
 
 func (r *fallbackHintClaimRepo) ListByKeys(context.Context, uint64, string, []string, string, string) ([]*types.Claim, error) {

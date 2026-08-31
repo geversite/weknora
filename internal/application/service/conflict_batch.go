@@ -133,7 +133,7 @@ func (s *KnowledgeConflictService) fineAdjudicateBatch(
 // chunks to semantic-fallback candidates. The attached claims are never exact
 // pairing proof (ClaimKeyHit deliberately stays empty), and applyConflictRules
 // has already run before this method is called. They are compact semantic hints
-// for C2-B only, allowing the batch model to recover harmless schema drift
+// for C2-B and the preferred C4 anchor source, allowing schema drift recovery
 // without mistaking raw chunk-topic similarity for a fact relation.
 func (s *KnowledgeConflictService) hydrateFallbackClaimEvidence(
 	ctx context.Context,

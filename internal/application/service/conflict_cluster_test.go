@@ -214,6 +214,60 @@ func (r *memoryDisputedFactRepo) DeleteByKB(_ context.Context, tenantID uint64, 
 	return nil
 }
 
+func TestHydrateFallbackFactAnchorHintsUsesSingletonDocumentClaims(t *testing.T) {
+	repo := &fallbackHintClaimRepo{claimsByKnowledge: map[string][]*types.Claim{
+		"new-doc": {
+			{
+				ID: "new-claim", ClaimKey: "报销单提交时限", Subject: "报销单", Predicate: "提交时限",
+				Value: "45 天", ValueNorm: "45|天", ValueKind: types.ClaimValueKindNumber,
+			},
+		},
+		"old-doc": {
+			{
+				ID: "old-claim", ClaimKey: "报销申请提交时限", Subject: "报销申请", Predicate: "提交时限",
+				Value: "30 个自然日", ValueNorm: "30|天", ValueKind: types.ClaimValueKindNumber,
+			},
+		},
+	}}
+	service := &KnowledgeConflictService{claimRepo: repo}
+	pairs := []conflictPair{{
+		NewChunk:      &types.Chunk{ID: "summary-new", KnowledgeID: "new-doc"},
+		ExistingChunk: &types.Chunk{ID: "summary-old", KnowledgeID: "old-doc"},
+	}}
+	got := service.hydrateFallbackFactAnchorHints(context.Background(), 1, pairs)
+	if len(got[0].FallbackFactAnchorHints) != 1 {
+		t.Fatalf("singleton document fallback hints = %+v, want one", got[0].FallbackFactAnchorHints)
+	}
+	anchor := conflictFactAnchorForPair(got[0])
+	if anchor.AnchorKind != types.ConflictFactAnchorFuzzySlot || anchor.ValueA != "45 天" || anchor.ValueB != "30 个自然日" {
+		t.Fatalf("singleton document fallback anchor = %+v", anchor)
+	}
+}
+
+func TestHydrateFallbackFactAnchorHintsRejectsAmbiguousDocuments(t *testing.T) {
+	repo := &fallbackHintClaimRepo{claimsByKnowledge: map[string][]*types.Claim{
+		"new-doc": {
+			{ID: "new-1", ClaimKey: "报销单提交时限", Subject: "报销单", Predicate: "提交时限", Value: "45 天"},
+			{ID: "new-2", ClaimKey: "病假提报时限", Subject: "病假", Predicate: "提报时限", Value: "24 小时"},
+		},
+		"old-doc": {
+			{ID: "old-1", ClaimKey: "报销申请提交时限", Subject: "报销申请", Predicate: "提交时限", Value: "30 个自然日"},
+		},
+	}}
+	service := &KnowledgeConflictService{claimRepo: repo}
+	pairs := []conflictPair{{
+		NewChunk:      &types.Chunk{ID: "summary-new", KnowledgeID: "new-doc"},
+		ExistingChunk: &types.Chunk{ID: "summary-old", KnowledgeID: "old-doc"},
+	}}
+	got := service.hydrateFallbackFactAnchorHints(context.Background(), 1, pairs)
+	if len(got[0].FallbackFactAnchorHints) != 0 {
+		t.Fatalf("ambiguous multi-claim document must remain unanchored: %+v", got[0].FallbackFactAnchorHints)
+	}
+	if anchor := conflictFactAnchorForPair(got[0]); anchor.AnchorKind != types.ConflictFactAnchorChunkPair {
+		t.Fatalf("ambiguous document anchor = %+v, want chunk_pair", anchor)
+	}
+}
+
 func TestConflictFactAnchorPrefersExactClaimKey(t *testing.T) {
 	pair := conflictPair{
 		ClaimKeyHit: "差旅餐补每日标准",
