@@ -261,6 +261,41 @@ cluster_metrics.json
 “可减少的人工裁决单元”口径。它不等于最终人工时间节省，且对无 claim anchor 的旧 row
 会保守地使用 `chunk_pair` 单例 anchor，不做不安全的跨 chunk 合并。
 
+### C4.5 安全 cluster 级裁决传播
+
+C4.5 把一次**无副作用**裁决传播到一个 `DisputedFact` 的全部 pending raw members：
+
+```bash
+make experiment-c4-resolve RUN=experiments/runs/<c4-run>
+```
+
+默认 resolution 是 `resolved_keep_both`；也可验证 false-positive 关闭路径：
+
+```bash
+make experiment-c4-resolve \
+  RUN=experiments/runs/<c4-run> \
+  RESOLUTION=resolved_not_conflict
+```
+
+脚本通过 public API 调用：
+
+```text
+POST /api/v1/knowledge-bases/:id/conflicts/clusters/resolve
+```
+
+并只读验证每个原本 pending 的 member row 已统一更新，`DisputedFact` 已 rebuild 为
+`status=resolved`、`pending_conflict_count=0`。它不直接写数据库。
+
+C4.5 **只允许**：
+
+```text
+resolved_keep_both
+resolved_not_conflict
+```
+
+`resolved_newer_wins` / `resolved_older_wins` 目前会被明确拒绝：cluster 内 member 的 A/B
+方向可能不同，不能在没有 C3 文档版本/权威元数据的情况下逐 pair 套用“新/旧胜出”。
+
 ### V1 行为对照
 
 ```bash

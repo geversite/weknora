@@ -183,6 +183,44 @@ func (h *KnowledgeConflictHandler) RebuildDisputedFacts(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": result})
 }
 
+// ResolveDisputedFact godoc
+// @Summary      Safely resolve every pending raw member of a DisputedFact
+// @Description  C4.5 currently permits only keep_both and not_conflict because
+//
+//	newer/older wins require C3's cluster-wide authority semantics.
+//
+// @Tags         知识冲突
+// @Param        id   path string true "Knowledge base ID"
+// @Param        body body types.DisputedFactResolution true "Cluster resolution payload"
+// @Success      200  {object} map[string]interface{}
+// @Failure      400  {object} errors.AppError
+// @Failure      500  {object} errors.AppError
+// @Security     Bearer
+// @Security     ApiKeyAuth
+// @Router       /knowledge-bases/{id}/conflicts/clusters/resolve [post]
+func (h *KnowledgeConflictHandler) ResolveDisputedFact(c *gin.Context) {
+	if h.clusterService == nil {
+		c.Error(errors.NewInternalServerError("conflict cluster service is not configured"))
+		return
+	}
+	ctx := c.Request.Context()
+	kbID := c.Param("id")
+	tenantID := c.GetUint64(types.TenantIDContextKey.String())
+	resolverUserID := c.GetString(types.UserIDContextKey.String())
+	var req types.DisputedFactResolution
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(errors.NewValidationError("invalid disputed fact resolution payload: " + err.Error()))
+		return
+	}
+	result, err := h.clusterService.ResolveDisputedFact(ctx, tenantID, resolverUserID, kbID, req)
+	if err != nil {
+		logger.Errorf(ctx, "Resolve disputed fact %s in KB %s failed: %v", req.DisputedFactID, kbID, err)
+		c.Error(errors.NewValidationError(err.Error()))
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": result})
+}
+
 // Resolve godoc
 // @Summary      Adjudicate a content conflict
 // @Description  Resolves a pending conflict, applying the disable/penalty side-effects.

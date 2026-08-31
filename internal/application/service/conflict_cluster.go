@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"sort"
 	"strings"
 	"sync"
@@ -63,6 +64,85 @@ func (s *conflictClusterService) ListDisputedFacts(
 	return facts, count, nil
 }
 
+// ResolveDisputedFact propagates one research-safe resolution to every pending
+// raw member of a cluster. Only no-disable resolutions are intentionally
+// supported: a cluster can contain member pairs with opposite A/B directions,
+// so applying newer_wins/older_wins pair-by-pair would be unsafe until C3
+// supplies a globally comparable authority/version policy.
+func (s *conflictClusterService) ResolveDisputedFact(
+	ctx context.Context,
+	tenantID uint64,
+	resolverUserID string,
+	kbID string,
+	req types.DisputedFactResolution,
+) (*types.DisputedFactAdjudicationResult, error) {
+	if s == nil || s.conflictRepo == nil || s.factRepo == nil {
+		return nil, errors.New("conflict cluster repositories not configured")
+	}
+	if tenantID == 0 || kbID == "" || req.DisputedFactID == "" {
+		return nil, errors.New("tenant id, knowledge base id and disputed_fact_id are required")
+	}
+	if !isSafeDisputedFactResolution(req.Resolution) {
+		return nil, fmt.Errorf(
+			"unsupported cluster resolution %q: only %s and %s are safe before C3",
+			req.Resolution, types.ConflictStatusResolvedKeepBoth, types.ConflictStatusResolvedNotConflict,
+		)
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	fact, err := s.factRepo.GetByID(ctx, tenantID, kbID, req.DisputedFactID)
+	if err != nil {
+		return nil, fmt.Errorf("load disputed fact %s: %w", req.DisputedFactID, err)
+	}
+	if fact == nil {
+		return nil, fmt.Errorf("disputed fact %s not found", req.DisputedFactID)
+	}
+	members, err := s.conflictRepo.ResolvePendingByClusterID(
+		ctx, tenantID, kbID, fact.ID, req.Resolution, resolverUserID, req.Note,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("resolve disputed fact %s members: %w", fact.ID, err)
+	}
+	if len(members) == 0 {
+		return nil, fmt.Errorf("disputed fact %s has no pending member conflicts", fact.ID)
+	}
+
+	rebuild, err := s.rebuildLocked(ctx, tenantID, kbID)
+	if err != nil {
+		return nil, fmt.Errorf("resolved %d raw conflicts but rebuild failed: %w", len(members), err)
+	}
+	result := &types.DisputedFactAdjudicationResult{
+		DisputedFactID:      fact.ID,
+		Resolution:           req.Resolution,
+		UpdatedConflictIDs:   make([]string, 0, len(members)),
+		ClearPenaltyChunkIDs: make([]string, 0, 2*len(members)),
+		Rebuild:              rebuild,
+	}
+	clearPenalty := make(map[string]struct{})
+	for _, member := range members {
+		if member == nil {
+			continue
+		}
+		result.UpdatedConflictIDs = append(result.UpdatedConflictIDs, member.ID)
+		for _, chunkID := range []string{member.ChunkIDA, member.ChunkIDB} {
+			if chunkID != "" {
+				clearPenalty[chunkID] = struct{}{}
+			}
+		}
+	}
+	sort.Strings(result.UpdatedConflictIDs)
+	result.ClearPenaltyChunkIDs = []string(sortedStringSet(clearPenalty))
+	result.UpdatedConflictCount = len(result.UpdatedConflictIDs)
+	return result, nil
+}
+
+func isSafeDisputedFactResolution(resolution string) bool {
+	return resolution == types.ConflictStatusResolvedKeepBoth ||
+		resolution == types.ConflictStatusResolvedNotConflict
+}
+
 // Rebuild deterministically groups every current conflict row in one KB by
 // FactKey and writes each member's ClusterID. It is idempotent: repeated calls
 // converge on the unique (tenant, kb, fact_key) DisputedFact row. It also
@@ -80,7 +160,13 @@ func (s *conflictClusterService) Rebuild(
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.rebuildLocked(ctx, tenantID, kbID)
+}
 
+// rebuildLocked is Rebuild's implementation. Callers must hold s.mu.
+func (s *conflictClusterService) rebuildLocked(
+	ctx context.Context, tenantID uint64, kbID string,
+) (*types.DisputedFactRebuildResult, error) {
 	conflicts, err := s.conflictRepo.ListByKBForClustering(ctx, tenantID, kbID)
 	if err != nil {
 		return nil, err

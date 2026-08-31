@@ -10,6 +10,7 @@ import (
 type DisputedFactRepository interface {
 	// UpsertByFactKey creates or refreshes a cluster while preserving its ID.
 	UpsertByFactKey(ctx context.Context, fact *types.DisputedFact) (*types.DisputedFact, error)
+	GetByID(ctx context.Context, tenantID uint64, kbID, factID string) (*types.DisputedFact, error)
 	ListByKB(ctx context.Context, tenantID uint64, kbID, status string, limit, offset int) ([]*types.DisputedFact, error)
 	CountByKB(ctx context.Context, tenantID uint64, kbID, status string) (int64, error)
 	// DeleteExceptFactKeys removes orphaned aggregates during a full rebuild.
@@ -25,4 +26,5 @@ type DisputedFactRepository interface {
 type ConflictClusterService interface {
 	Rebuild(ctx context.Context, tenantID uint64, kbID string) (*types.DisputedFactRebuildResult, error)
 	ListDisputedFacts(ctx context.Context, tenantID uint64, kbID, status string, limit, offset int) ([]*types.DisputedFact, int64, error)
+	ResolveDisputedFact(ctx context.Context, tenantID uint64, resolverUserID string, kbID string, req types.DisputedFactResolution) (*types.DisputedFactAdjudicationResult, error)
 }

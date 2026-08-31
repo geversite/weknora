@@ -211,7 +211,51 @@ usable claim，但 raw pair 可来自无 claim 的 summary/child，因此要求�
 
 ---
 
-## 8. 已知限制
+## 8. C4.5：安全 cluster 级裁决传播（实现待运行验证）
+
+C4-Lite 的 identity 已冻结后，C4.5 增加无 UI 的：
+
+```text
+POST /api/v1/knowledge-bases/:id/conflicts/clusters/resolve
+```
+
+请求：
+
+```json
+{
+  "disputed_fact_id": "<cluster id>",
+  "resolution": "resolved_keep_both | resolved_not_conflict",
+  "note": "optional audit note"
+}
+```
+
+它在一个 repository transaction 中更新该 cluster 的全部 **pending** raw members 的：
+
+```text
+status
+resolved_by
+resolved_at
+resolution_note
+```
+
+随后 rebuild，令 `DisputedFact.status=resolved` 且 `pending_conflict_count=0`。脚本
+`make experiment-c4-resolve RUN=<c4-run>` 通过 API 执行并读取 PostgreSQL 验证所有
+member 都已传播。
+
+C4.5 明确拒绝：
+
+```text
+resolved_newer_wins
+resolved_older_wins
+```
+
+因为一个 cluster 内不同 raw member 的 A/B 方向可不同。没有 C3 的文档版本、时间和来源
+权威性时，逐 member 套用“新/旧胜出”会错误禁用来源。`keep_both` 与 `not_conflict` 不禁用
+chunk，因而是当前唯一允许传播的安全子集。
+
+---
+
+## 9. 已知限制
 
 1. 对已有历史 raw rows，若 C4 前没有保存 claim provenance，只能安全回填 `chunk_pair`，不能
    追溯地猜测跨 chunk 同一事实；

@@ -277,6 +277,7 @@ func RegisterKnowledgeConflictRoutes(r *gin.RouterGroup, conflictHandler *handle
 	{
 		confWrite.POST("/resolve", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), conflictHandler.Resolve)
 		confWrite.POST("/clusters/rebuild", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), conflictHandler.RebuildDisputedFacts)
+		confWrite.POST("/clusters/resolve", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), conflictHandler.ResolveDisputedFact)
 	}
 }
 

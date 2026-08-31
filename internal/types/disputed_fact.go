@@ -70,11 +70,33 @@ const (
 // exported by experiment scripts. It quantifies how much raw chunk-pair work
 // compresses into human-reviewable fact clusters.
 type DisputedFactRebuildResult struct {
-	KnowledgeBaseID         string         `json:"knowledge_base_id"`
-	ClustererVersion        string         `json:"clusterer_version"`
-	RawConflictCount       int            `json:"raw_conflict_count"`
-	DisputedFactCount      int            `json:"disputed_fact_count"`
-	AssignedConflictCount  int            `json:"assigned_conflict_count"`
-	UnanchoredConflictCount int           `json:"unanchored_conflict_count"`
-	AnchorKinds            map[string]int `json:"anchor_kinds"`
+	KnowledgeBaseID          string         `json:"knowledge_base_id"`
+	ClustererVersion         string         `json:"clusterer_version"`
+	RawConflictCount         int            `json:"raw_conflict_count"`
+	DisputedFactCount        int            `json:"disputed_fact_count"`
+	AssignedConflictCount    int            `json:"assigned_conflict_count"`
+	UnanchoredConflictCount  int            `json:"unanchored_conflict_count"`
+	AnchorKinds              map[string]int `json:"anchor_kinds"`
+}
+
+// DisputedFactResolution is a C4.5 cluster-level adjudication request. The
+// first research-safe implementation deliberately permits only resolutions
+// that disable no chunk: keep_both and not_conflict. Global winner selection
+// awaits C3 metadata/version semantics.
+type DisputedFactResolution struct {
+	DisputedFactID string `json:"disputed_fact_id"`
+	Resolution      string `json:"resolution"`
+	Note            string `json:"note,omitempty"`
+}
+
+// DisputedFactAdjudicationResult records one propagated safe resolution. It
+// makes the reduction from raw-pair actions to one fact-level action explicit
+// for C4.5 experiments.
+type DisputedFactAdjudicationResult struct {
+	DisputedFactID       string                      `json:"disputed_fact_id"`
+	Resolution            string                      `json:"resolution"`
+	UpdatedConflictIDs    []string                    `json:"updated_conflict_ids"`
+	UpdatedConflictCount  int                         `json:"updated_conflict_count"`
+	ClearPenaltyChunkIDs  []string                    `json:"clear_penalty_chunk_ids"`
+	Rebuild               *DisputedFactRebuildResult `json:"rebuild,omitempty"`
 }

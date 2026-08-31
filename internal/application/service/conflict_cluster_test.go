@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"testing"
+	"time"
 
 	"github.com/Tencent/WeKnora/internal/types"
 )
@@ -74,6 +75,28 @@ func (r *memoryConflictClusterRepo) GetByID(_ context.Context, id string) (*type
 func (r *memoryConflictClusterRepo) Update(_ context.Context, _ *types.KnowledgeConflict) error {
 	r.updates++
 	return nil
+}
+
+func (r *memoryConflictClusterRepo) ResolvePendingByClusterID(
+	_ context.Context,
+	tenantID uint64,
+	kbID, clusterID, status, resolverUserID, note string,
+) ([]*types.KnowledgeConflict, error) {
+	now := time.Now()
+	updated := make([]*types.KnowledgeConflict, 0)
+	for _, conflict := range r.conflicts {
+		if conflict == nil || conflict.TenantID != tenantID || conflict.KnowledgeBaseID != kbID ||
+			conflict.ClusterID != clusterID || conflict.Status != types.ConflictStatusPending {
+			continue
+		}
+		conflict.Status = status
+		conflict.ResolvedBy = resolverUserID
+		conflict.ResolvedAt = &now
+		conflict.ResolutionNote = note
+		conflict.UpdatedAt = now
+		updated = append(updated, conflict)
+	}
+	return updated, nil
 }
 
 func (r *memoryConflictClusterRepo) ListPendingByChunkIDs(_ context.Context, chunkIDs []string) ([]*types.KnowledgeConflict, error) {
@@ -161,6 +184,15 @@ func (r *memoryDisputedFactRepo) UpsertByFactKey(_ context.Context, fact *types.
 	*stored = *fact
 	stored.ID = id
 	return stored, nil
+}
+
+func (r *memoryDisputedFactRepo) GetByID(_ context.Context, tenantID uint64, kbID, factID string) (*types.DisputedFact, error) {
+	for _, fact := range r.facts {
+		if fact.ID == factID && fact.TenantID == tenantID && fact.KnowledgeBaseID == kbID {
+			return fact, nil
+		}
+	}
+	return nil, fmt.Errorf("disputed fact %s not found", factID)
 }
 
 func (r *memoryDisputedFactRepo) ListByKB(
@@ -443,5 +475,90 @@ func TestConflictClusterRebuildAggregatesMembersAndBackfillsLegacy(t *testing.T)
 	}
 	if conflicts.conflicts[0].ClusterID != clusterID {
 		t.Fatalf("cluster ID changed after rebuild: %q -> %q", clusterID, conflicts.conflicts[0].ClusterID)
+	}
+}
+
+func TestSafeDisputedFactResolutionAllowsOnlyNoDisableStatuses(t *testing.T) {
+	if !isSafeDisputedFactResolution(types.ConflictStatusResolvedKeepBoth) ||
+		!isSafeDisputedFactResolution(types.ConflictStatusResolvedNotConflict) {
+		t.Fatal("safe cluster resolutions should be allowed")
+	}
+	for _, resolution := range []string{
+		types.ConflictStatusResolvedNewer,
+		types.ConflictStatusResolvedOlder,
+		"pending",
+		"",
+	} {
+		if isSafeDisputedFactResolution(resolution) {
+			t.Fatalf("unsafe cluster resolution %q was allowed", resolution)
+		}
+	}
+}
+
+func TestResolveDisputedFactPropagatesSafeResolution(t *testing.T) {
+	const (
+		tenantID = uint64(8)
+		kbID     = "kb-resolve"
+		factKey  = "claim_key:同一事实"
+	)
+	conflicts := &memoryConflictClusterRepo{conflicts: []*types.KnowledgeConflict{
+		{
+			ID: "c1", TenantID: tenantID, KnowledgeBaseID: kbID,
+			KnowledgeIDA: "doc-b", KnowledgeIDB: "doc-a", ChunkIDA: "chunk-b", ChunkIDB: "chunk-a",
+			FactKey: factKey, FactAnchorKind: types.ConflictFactAnchorClaimKey, ClaimKey: "同一事实",
+			FactValueA: "150", FactValueB: "100", ConflictType: types.ConflictTypeFactContradiction,
+			Status: types.ConflictStatusPending,
+		},
+		{
+			ID: "c2", TenantID: tenantID, KnowledgeBaseID: kbID,
+			KnowledgeIDA: "doc-c", KnowledgeIDB: "doc-a", ChunkIDA: "chunk-c", ChunkIDB: "chunk-a",
+			FactKey: factKey, FactAnchorKind: types.ConflictFactAnchorClaimKey, ClaimKey: "同一事实",
+			FactValueA: "200", FactValueB: "100", ConflictType: types.ConflictTypeFactContradiction,
+			Status: types.ConflictStatusPending,
+		},
+	}}
+	facts := &memoryDisputedFactRepo{}
+	service := &conflictClusterService{conflictRepo: conflicts, factRepo: facts}
+	if _, err := service.Rebuild(context.Background(), tenantID, kbID); err != nil {
+		t.Fatalf("initial Rebuild: %v", err)
+	}
+	clusterID := conflicts.conflicts[0].ClusterID
+	if clusterID == "" || conflicts.conflicts[1].ClusterID != clusterID {
+		t.Fatalf("initial cluster IDs = %q / %q", clusterID, conflicts.conflicts[1].ClusterID)
+	}
+
+	if _, err := service.ResolveDisputedFact(context.Background(), tenantID, "reviewer-1", kbID, types.DisputedFactResolution{
+		DisputedFactID: clusterID,
+		Resolution:      types.ConflictStatusResolvedNewer,
+	}); err == nil {
+		t.Fatal("newer_wins must be rejected before C3")
+	}
+	if conflicts.conflicts[0].Status != types.ConflictStatusPending {
+		t.Fatal("unsupported cluster resolution must not mutate member conflicts")
+	}
+
+	result, err := service.ResolveDisputedFact(context.Background(), tenantID, "reviewer-1", kbID, types.DisputedFactResolution{
+		DisputedFactID: clusterID,
+		Resolution:      types.ConflictStatusResolvedKeepBoth,
+		Note:            "同一事实保留多个来源",
+	})
+	if err != nil {
+		t.Fatalf("ResolveDisputedFact: %v", err)
+	}
+	if result.UpdatedConflictCount != 2 || len(result.UpdatedConflictIDs) != 2 || len(result.ClearPenaltyChunkIDs) != 3 {
+		t.Fatalf("unexpected cluster resolution result: %+v", result)
+	}
+	for _, conflict := range conflicts.conflicts {
+		if conflict.Status != types.ConflictStatusResolvedKeepBoth || conflict.ResolvedBy != "reviewer-1" ||
+			conflict.ResolutionNote != "同一事实保留多个来源" {
+			t.Fatalf("member was not propagated safely: %+v", conflict)
+		}
+	}
+	fact, err := facts.GetByID(context.Background(), tenantID, kbID, clusterID)
+	if err != nil {
+		t.Fatalf("GetByID after cluster resolve: %v", err)
+	}
+	if fact.Status != types.DisputedFactStatusResolved || fact.PendingConflictCount != 0 || fact.ConflictCount != 2 {
+		t.Fatalf("rebuilt fact status = %+v", fact)
 	}
 }

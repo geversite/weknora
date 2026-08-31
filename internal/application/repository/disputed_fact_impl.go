@@ -91,6 +91,19 @@ func (r *disputedFactRepo) UpsertByFactKey(ctx context.Context, fact *types.Disp
 	return &stored, nil
 }
 
+func (r *disputedFactRepo) GetByID(
+	ctx context.Context, tenantID uint64, kbID, factID string,
+) (*types.DisputedFact, error) {
+	var fact types.DisputedFact
+	err := r.db.WithContext(ctx).
+		Where("id = ? AND tenant_id = ? AND knowledge_base_id = ?", factID, tenantID, kbID).
+		First(&fact).Error
+	if err != nil {
+		return nil, err
+	}
+	return &fact, nil
+}
+
 func (r *disputedFactRepo) ListByKB(
 	ctx context.Context, tenantID uint64, kbID, status string, limit, offset int,
 ) ([]*types.DisputedFact, error) {

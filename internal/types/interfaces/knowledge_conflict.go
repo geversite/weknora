@@ -23,6 +23,9 @@ type KnowledgeConflictRepository interface {
 	GetByID(ctx context.Context, id string) (*types.KnowledgeConflict, error)
 	// Update persists an updated conflict row.
 	Update(ctx context.Context, conflict *types.KnowledgeConflict) error
+	// ResolvePendingByClusterID atomically applies a no-disable resolution to
+	// every pending member of one C4 DisputedFact and returns those members.
+	ResolvePendingByClusterID(ctx context.Context, tenantID uint64, kbID, clusterID, status, resolverUserID, note string) ([]*types.KnowledgeConflict, error)
 	// ListPendingByChunkIDs returns pending conflicts where either chunk is in the list.
 	// Used by rerank penalty and answer-time divergence tagging.
 	ListPendingByChunkIDs(ctx context.Context, chunkIDs []string) ([]*types.KnowledgeConflict, error)

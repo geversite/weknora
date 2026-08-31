@@ -2,9 +2,11 @@ package repository
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
@@ -84,6 +86,66 @@ func (r *knowledgeConflictRepo) GetByID(ctx context.Context, id string) (*types.
 
 func (r *knowledgeConflictRepo) Update(ctx context.Context, conflict *types.KnowledgeConflict) error {
 	return r.db.WithContext(ctx).Save(conflict).Error
+}
+
+// ResolvePendingByClusterID is the C4.5 atomic member update for safe
+// no-disable resolutions. The caller validates the allowed status; keeping
+// this repository operation narrowly scoped prevents accidentally reusing it
+// for newer/older-wins before C3 defines a cluster-wide authority policy.
+func (r *knowledgeConflictRepo) ResolvePendingByClusterID(
+	ctx context.Context,
+	tenantID uint64,
+	kbID, clusterID, status, resolverUserID, note string,
+) ([]*types.KnowledgeConflict, error) {
+	if kbID == "" || clusterID == "" || status == "" {
+		return nil, gorm.ErrInvalidData
+	}
+	var conflicts []*types.KnowledgeConflict
+	resolvedAt := time.Now()
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("tenant_id = ? AND knowledge_base_id = ? AND cluster_id = ? AND status = ?",
+				tenantID, kbID, clusterID, types.ConflictStatusPending).
+			Order("created_at ASC, id ASC").
+			Find(&conflicts).Error; err != nil {
+			return err
+		}
+		if len(conflicts) == 0 {
+			return nil
+		}
+		ids := make([]string, 0, len(conflicts))
+		for _, conflict := range conflicts {
+			if conflict != nil {
+				ids = append(ids, conflict.ID)
+			}
+		}
+		if len(ids) == 0 {
+			return nil
+		}
+		if err := tx.Model(&types.KnowledgeConflict{}).
+			Where("id IN ?", ids).
+			Updates(map[string]interface{}{
+				"status":          status,
+				"resolved_by":     resolverUserID,
+				"resolved_at":     resolvedAt,
+				"resolution_note": note,
+				"updated_at":      resolvedAt,
+			}).Error; err != nil {
+			return err
+		}
+		for _, conflict := range conflicts {
+			if conflict == nil {
+				continue
+			}
+			conflict.Status = status
+			conflict.ResolvedBy = resolverUserID
+			conflict.ResolvedAt = &resolvedAt
+			conflict.ResolutionNote = note
+			conflict.UpdatedAt = resolvedAt
+		}
+		return nil
+	})
+	return conflicts, err
 }
 
 func (r *knowledgeConflictRepo) ListPendingByChunkIDs(ctx context.Context, chunkIDs []string) ([]*types.KnowledgeConflict, error) {
