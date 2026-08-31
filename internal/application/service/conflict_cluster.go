@@ -148,10 +148,11 @@ func (s *conflictClusterService) Rebuild(
 
 // hydrateFallbackFactAnchorHints is deliberately post-verdict and C4-only.
 // Raw search candidates can be synthetic child/summary chunks that carry no
-// direct claim row even though each underlying document has exactly one
-// unambiguous factual claim. In that narrow case, use document-level claims to
-// recover a fuzzy cluster anchor. It never changes candidate generation,
-// deterministic rules, or an LLM verdict.
+// direct claim row even though their documents contain one uniquely best,
+// high-similarity conflicting slot pair plus harmless contextual claims. In
+// that narrow case, use document-level claims to recover a fuzzy cluster
+// anchor. It never changes candidate generation, deterministic rules, or an
+// LLM verdict.
 func (s *KnowledgeConflictService) hydrateFallbackFactAnchorHints(
 	ctx context.Context,
 	tenantID uint64,
@@ -204,17 +205,75 @@ func (s *KnowledgeConflictService) hydrateFallbackFactAnchorHints(
 
 		newClaims := loadKnowledgeClaims(pair.NewChunk.KnowledgeID)
 		existingClaims := loadKnowledgeClaims(pair.ExistingChunk.KnowledgeID)
-		// A document-level source may legitimately contain many unrelated facts.
-		// Only promote this scope when exactly one usable claim exists on each
-		// side; otherwise leave the row at a conservative chunk_pair anchor.
-		if len(newClaims) != 1 || len(existingClaims) != 1 {
-			continue
-		}
-		if hints := selectFallbackClaimHints(newClaims, existingClaims); len(hints) > 0 {
+		// A document may contain contextual claims (for example a policy's
+		// applicability scope) in addition to the conflicting rule. Promote
+		// document-level evidence only when there is one unambiguous, high
+		// similarity slot pair with different values. Otherwise leave the row
+		// at a conservative chunk_pair anchor.
+		if hints := selectUnambiguousDocumentFallbackHint(newClaims, existingClaims); len(hints) > 0 {
 			pair.FallbackFactAnchorHints = hints
 		}
 	}
 	return pairs
+}
+
+const conflictDocumentFallbackHintMinMargin = 0.10
+
+// selectUnambiguousDocumentFallbackHint is the post-verdict C4 fallback for
+// source chunks without claims. Unlike selectFallbackClaimHints (which may
+// return two prompt hints), it accepts exactly one top document-level pairing
+// only when no competing pairing is within the ambiguity margin.
+func selectUnambiguousDocumentFallbackHint(
+	newer, older []claimEvidence,
+) []conflictFallbackClaimHint {
+	all := make([]conflictFallbackClaimHint, 0)
+	seen := make(map[string]bool)
+	for _, newClaim := range newer {
+		for _, oldClaim := range older {
+			similarity := fallbackClaimSlotSimilarity(newClaim, oldClaim)
+			if similarity < conflictBatchFallbackHintMinSimilarity {
+				continue
+			}
+			key := fallbackClaimHintIdentity(newClaim) + "|" + fallbackClaimHintIdentity(oldClaim)
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			all = append(all, conflictFallbackClaimHint{
+				Newer: newClaim, Older: oldClaim, Similarity: similarity,
+			})
+		}
+	}
+	if len(all) == 0 {
+		return nil
+	}
+	sort.Slice(all, func(i, j int) bool {
+		if all[i].Similarity != all[j].Similarity {
+			return all[i].Similarity > all[j].Similarity
+		}
+		left := fallbackClaimHintIdentity(all[i].Newer) + "|" + fallbackClaimHintIdentity(all[i].Older)
+		right := fallbackClaimHintIdentity(all[j].Newer) + "|" + fallbackClaimHintIdentity(all[j].Older)
+		return left < right
+	})
+	best := all[0]
+	if !fallbackAnchorValuesDiffer(best.Newer, best.Older) {
+		return nil
+	}
+	for _, competitor := range all[1:] {
+		if competitor.Similarity >= best.Similarity-conflictDocumentFallbackHintMinMargin {
+			return nil
+		}
+	}
+	return []conflictFallbackClaimHint{best}
+}
+
+func fallbackAnchorValuesDiffer(left, right claimEvidence) bool {
+	leftValue := strings.TrimSpace(left.ValueNorm)
+	rightValue := strings.TrimSpace(right.ValueNorm)
+	if leftValue != "" && rightValue != "" {
+		return leftValue != rightValue
+	}
+	return normalizeBatchEvidenceText(left.Value) != normalizeBatchEvidenceText(right.Value)
 }
 
 type conflictFactAnchor struct {

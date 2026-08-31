@@ -214,7 +214,7 @@ func (r *memoryDisputedFactRepo) DeleteByKB(_ context.Context, tenantID uint64, 
 	return nil
 }
 
-func TestHydrateFallbackFactAnchorHintsUsesSingletonDocumentClaims(t *testing.T) {
+func TestHydrateFallbackFactAnchorHintsUsesUniqueDocumentSlot(t *testing.T) {
 	repo := &fallbackHintClaimRepo{claimsByKnowledge: map[string][]*types.Claim{
 		"new-doc": {
 			{
@@ -227,6 +227,10 @@ func TestHydrateFallbackFactAnchorHintsUsesSingletonDocumentClaims(t *testing.T)
 				ID: "old-claim", ClaimKey: "报销申请提交时限", Subject: "报销申请", Predicate: "提交时限",
 				Value: "30 个自然日", ValueNorm: "30|天", ValueKind: types.ClaimValueKindNumber,
 			},
+			{
+				ID: "old-context", ClaimKey: "差旅报销规定适用范围", Subject: "差旅报销规定", Predicate: "适用范围",
+				Value: "全体员工", ValueNorm: "全体员工", ValueKind: types.ClaimValueKindText,
+			},
 		},
 	}}
 	service := &KnowledgeConflictService{claimRepo: repo}
@@ -236,22 +240,22 @@ func TestHydrateFallbackFactAnchorHintsUsesSingletonDocumentClaims(t *testing.T)
 	}}
 	got := service.hydrateFallbackFactAnchorHints(context.Background(), 1, pairs)
 	if len(got[0].FallbackFactAnchorHints) != 1 {
-		t.Fatalf("singleton document fallback hints = %+v, want one", got[0].FallbackFactAnchorHints)
+		t.Fatalf("unique document fallback hints = %+v, want one", got[0].FallbackFactAnchorHints)
 	}
 	anchor := conflictFactAnchorForPair(got[0])
 	if anchor.AnchorKind != types.ConflictFactAnchorFuzzySlot || anchor.ValueA != "45 天" || anchor.ValueB != "30 个自然日" {
-		t.Fatalf("singleton document fallback anchor = %+v", anchor)
+		t.Fatalf("unique document fallback anchor = %+v", anchor)
 	}
 }
 
 func TestHydrateFallbackFactAnchorHintsRejectsAmbiguousDocuments(t *testing.T) {
 	repo := &fallbackHintClaimRepo{claimsByKnowledge: map[string][]*types.Claim{
 		"new-doc": {
-			{ID: "new-1", ClaimKey: "报销单提交时限", Subject: "报销单", Predicate: "提交时限", Value: "45 天"},
-			{ID: "new-2", ClaimKey: "病假提报时限", Subject: "病假", Predicate: "提报时限", Value: "24 小时"},
+			{ID: "new-1", ClaimKey: "差旅报销提交时限", Subject: "差旅报销", Predicate: "提交时限", Value: "45 天"},
 		},
 		"old-doc": {
 			{ID: "old-1", ClaimKey: "报销申请提交时限", Subject: "报销申请", Predicate: "提交时限", Value: "30 个自然日"},
+			{ID: "old-2", ClaimKey: "报销单提交时限", Subject: "报销单", Predicate: "提交时限", Value: "20 天"},
 		},
 	}}
 	service := &KnowledgeConflictService{claimRepo: repo}

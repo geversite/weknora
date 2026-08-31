@@ -57,9 +57,9 @@ const (
 	DisputedFactConflictTypeMixed  = "mixed"
 
 	// ConflictClustererVersion identifies deterministic clustering semantics.
-	// c4-v2 adds a post-verdict, singleton-document fallback for source chunks
-	// that have no directly attached claim row (common with summary children).
-	ConflictClustererVersion = "c4-v2"
+	// c4-v3 extends the post-verdict document fallback to one uniquely best
+	// fuzzy slot pair, while rejecting competing multi-fact interpretations.
+	ConflictClustererVersion = "c4-v3"
 )
 
 // DisputedFactRebuildResult is returned by the C4-Lite rebuild endpoint and
