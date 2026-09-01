@@ -212,7 +212,8 @@ review_units_saved              raw_conflict_count - cluster_count
 - [x] script-exported cluster metrics、count / anchor-kind assertions；
 - [x] C4 Go unit tests 已添加；Python runner 场景校验与 SQLite migration up/down 语法验证已完成；
 - [ ] 多 seed / 真实多文档集合上的 cluster precision/recall 与人工裁决时间测量；
-- [ ] cluster 级 Resolve 传播、wiki dispute block 写回、前端聚合视图。
+- [x] C4.5 `keep_both` / `not_conflict` cluster 级传播（见 [C4.5 报告](冲突检测V2-C4.5-安全裁决传播评估报告.md)）；
+- [ ] `newer_wins` / `older_wins` 的全局胜方传播、wiki dispute block 写回、前端聚合视图。
 
 ---
 
@@ -221,11 +222,10 @@ review_units_saved              raw_conflict_count - cluster_count
 1. `document_singleton` 是特意狭窄的 post-verdict identity bridge；它不能用于多事实文档；
 2. `fuzzy_slot` 是 lexical slot signal，不能替代实体消歧或 NLI；
 3. 一条 legacy raw chunk-pair row 若本身混有多条事实，C4 不能无损拆开；
-4. 当前 Resolve 仍以 raw conflict 为单位，虽然 rebuild 会同步 cluster 状态，但尚未实现一次
-   cluster Resolve 向全部 member 传播；
+4. C4.5 已让 `keep_both` / `not_conflict` 一次传播到全部 pending member；但
+   `newer_wins` / `older_wins` 仍不能根据各 raw pair 的局部 A/B 方向安全传播；
 5. wiki dispute block / agent 写回仍未实现，不能宣称已形成端到端知识治理闭环。
 
-下一项最有研究价值的最小扩展是 **cluster 级裁决传播**：在不做前端和 wiki 写回的前提下，
-让一个 `DisputedFact` 的 `keep_both` / `not_conflict` 等安全裁决在全部 member raw rows 上
-一致落库，并量化“raw row 操作次数 → cluster 操作次数”的减少。`newer_wins` / `older_wins`
-需要先由 C3 的版本与权威元数据定义全局胜方，不能简单按每个 raw pair 的 A/B 方向循环处理。
+下一项最有研究价值的最小扩展是 **C3-Lite 版本与权威元数据**：先以脚本/API 为入口，
+输出 `version_update` 的建议胜方，默认只建议、不自动禁用。C3 明确全局胜方后，才能安全
+扩展 C4.5 的 `newer_wins` / `older_wins` cluster 级裁决。

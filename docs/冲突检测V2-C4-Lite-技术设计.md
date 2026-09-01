@@ -211,7 +211,9 @@ usable claim，但 raw pair 可来自无 claim 的 summary/child，因此要求�
 
 ---
 
-## 8. C4.5：安全 cluster 级裁决传播（实现待运行验证）
+## 8. C4.5：安全 cluster 级裁决传播（已冻结）
+
+真实运行证据见 [C4.5 安全裁决传播评估报告](冲突检测V2-C4.5-安全裁决传播评估报告.md)。
 
 C4-Lite 的 identity 已冻结后，C4.5 增加无 UI 的：
 
