@@ -478,6 +478,59 @@ func TestConflictClusterRebuildAggregatesMembersAndBackfillsLegacy(t *testing.T)
 	}
 }
 
+func TestDisputedFactWinnerProposalSelectsUniqueGlobalMaximum(t *testing.T) {
+	const (
+		tenantID = uint64(9)
+		kbID     = "kb-winner"
+		factKey  = "claim_key:餐补每日标准"
+	)
+	metaV1 := conflictDocumentMetaJSON(types.ConflictDocumentMeta{
+		ParserVersion: types.ConflictVersionSuggestionVersion, KnowledgeID: "doc-v1", Title: "V1",
+		Issuer: "天穹财团", EffectiveDate: "2148-01-01", Version: "1.0",
+	})
+	metaV2 := conflictDocumentMetaJSON(types.ConflictDocumentMeta{
+		ParserVersion: types.ConflictVersionSuggestionVersion, KnowledgeID: "doc-v2", Title: "V2",
+		Issuer: "天穹财团", EffectiveDate: "2148-06-01", Version: "2.0",
+	})
+	metaV3 := conflictDocumentMetaJSON(types.ConflictDocumentMeta{
+		ParserVersion: types.ConflictVersionSuggestionVersion, KnowledgeID: "doc-v3", Title: "V3",
+		Issuer: "天穹财团", EffectiveDate: "2149-01-01", Version: "3.0",
+	})
+	conflicts := &memoryConflictClusterRepo{conflicts: []*types.KnowledgeConflict{
+		{ID: "v2-v1", TenantID: tenantID, KnowledgeBaseID: kbID, KnowledgeIDA: "doc-v2", KnowledgeIDB: "doc-v1", ChunkIDA: "c2", ChunkIDB: "c1", FactKey: factKey, FactAnchorKind: types.ConflictFactAnchorClaimKey, DocMetaA: metaV2, DocMetaB: metaV1, Status: types.ConflictStatusPending},
+		{ID: "v3-v1", TenantID: tenantID, KnowledgeBaseID: kbID, KnowledgeIDA: "doc-v3", KnowledgeIDB: "doc-v1", ChunkIDA: "c3", ChunkIDB: "c1", FactKey: factKey, FactAnchorKind: types.ConflictFactAnchorClaimKey, DocMetaA: metaV3, DocMetaB: metaV1, Status: types.ConflictStatusPending},
+		{ID: "v3-v2", TenantID: tenantID, KnowledgeBaseID: kbID, KnowledgeIDA: "doc-v3", KnowledgeIDB: "doc-v2", ChunkIDA: "c3", ChunkIDB: "c2", FactKey: factKey, FactAnchorKind: types.ConflictFactAnchorClaimKey, DocMetaA: metaV3, DocMetaB: metaV2, Status: types.ConflictStatusPending},
+	}}
+	facts := &memoryDisputedFactRepo{}
+	service := &conflictClusterService{conflictRepo: conflicts, factRepo: facts}
+	result, err := service.Rebuild(context.Background(), tenantID, kbID)
+	if err != nil {
+		t.Fatalf("Rebuild winner proposal: %v", err)
+	}
+	if result.WinnerProposalCount != 1 || len(facts.facts) != 1 {
+		t.Fatalf("winner proposal aggregate = %+v facts=%+v", result, facts.facts)
+	}
+	for _, fact := range facts.facts {
+		if fact.SuggestedWinnerKnowledgeID != "doc-v3" || fact.WinnerProposalConfidence < 0.95 ||
+			fact.WinnerProposalSourceCount != 3 || fact.WinnerProposalVersion != types.DisputedFactWinnerProposalVersion {
+			t.Fatalf("global winner proposal = %+v", fact)
+		}
+	}
+}
+
+func TestDisputedFactWinnerProposalRejectsIssuerMismatch(t *testing.T) {
+	members := []*types.KnowledgeConflict{
+		{
+			KnowledgeIDA: "doc-a", KnowledgeIDB: "doc-b",
+			DocMetaA: conflictDocumentMetaJSON(types.ConflictDocumentMeta{ParserVersion: "c3-v1", KnowledgeID: "doc-a", Issuer: "天穹财团", EffectiveDate: "2149-01-01", Version: "2"}),
+			DocMetaB: conflictDocumentMetaJSON(types.ConflictDocumentMeta{ParserVersion: "c3-v1", KnowledgeID: "doc-b", Issuer: "新弦工业", EffectiveDate: "2148-01-01", Version: "1"}),
+		},
+	}
+	if proposal := suggestDisputedFactWinner(members); proposal.WinnerKnowledgeID != "" {
+		t.Fatalf("issuer mismatch must not yield a global winner: %+v", proposal)
+	}
+}
+
 func TestSafeDisputedFactResolutionAllowsOnlyNoDisableStatuses(t *testing.T) {
 	if !isSafeDisputedFactResolution(types.ConflictStatusResolvedKeepBoth) ||
 		!isSafeDisputedFactResolution(types.ConflictStatusResolvedNotConflict) {

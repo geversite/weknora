@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "name": "c46_cross_issuer_no_proposal",
+  "description": "C3/C4.6 negative global winner proposal regression. Two documents conflict on one exact allowance fact and have comparable dates/versions, but different explicit issuers; the cluster must not propose a winner.",
+  "min_claims_per_document": 1,
+  "documents": [
+    {
+      "id": "c46_owner",
+      "path": "testdata/claims_eval/docs/c4_meal_allowance_a.md",
+      "title": "发布机构：天穹财团；生效日期：2148年1月1日；版本号：V1.0"
+    },
+    {
+      "id": "c46_other",
+      "path": "testdata/claims_eval/docs/c4_meal_allowance_b.md",
+      "title": "发布机构：新弦工业；生效日期：2149年1月1日；版本号：V3.0"
+    }
+  ],
+  "expected_conflict_document_pairs": [
+    {"id": "C46_CROSS_ISSUER", "left": "c46_owner", "right": "c46_other"}
+  ],
+  "expected_disputed_fact_count": 1,
+  "expected_disputed_fact_anchor_kinds": {
+    "claim_key": 1
+  },
+  "expected_disputed_fact_winner_count": 0
+}

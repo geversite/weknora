@@ -246,6 +246,52 @@ version_suggestions.json
 `metrics.json` 会记录 expected / missing / forbidden version suggestions；任何 suggestion
 断言失败均以退出码 `2` 保留 artifact。
 
+### C3/C4.6 DisputedFact 全局 winner proposal
+
+C4.6 不执行 winner resolution，只在一个已聚类的 `DisputedFact` 上提出唯一全局胜方：
+
+```bash
+make experiment-c46
+```
+
+场景使用三份同发布机构、同一餐补事实、严格升序元数据的文档：
+
+```text
+V1.0 / 2148-01-01 / 100 元
+V2.0 / 2148-06-01 / 150 元
+V3.0 / 2149-01-01 / 200 元
+```
+
+预期一个 cluster 和一个 proposal：
+
+```text
+suggested_winner_knowledge_id → c46_v3
+winner_proposal_confidence >= 0.95
+winner_proposal_source_count = 3
+raw member status 仍为 pending
+auto_resolved 仍为 false
+```
+
+导出：
+
+```text
+winner_proposals.json
+```
+
+跨发布机构负例使用：
+
+```bash
+make experiment-c46-negative
+```
+
+它要求 exact conflict / cluster 仍存在，但：
+
+```text
+expected_disputed_fact_winner_count = 0
+```
+
+任何发布机构不一致、metadata 缺失/冲突、不可比较时间区间或并列最大版本都会得到空 proposal。
+
 ### C4-Lite 事实级聚类
 
 后端运行 C4 migration `000088` 后，运行三文档同事实三取值场景：
@@ -365,6 +411,7 @@ experiments/runs/<timestamp>-<scenario>-<variant>-<commit>/
 ├── disputed_facts.json
 ├── cluster_rebuild.json
 ├── cluster_metrics.json
+├── winner_proposals.json
 ├── dead_letters.json
 ├── metrics.json
 └── report.md
@@ -413,6 +460,10 @@ experiments/runs/<timestamp>-<scenario>-<variant>-<commit>/
   ],
   "forbidden_version_suggestion_document_pairs": [
     {"id": "S2", "left": "doc_c", "right": "doc_a"}
+  ],
+  "expected_disputed_fact_winner_count": 1,
+  "expected_disputed_fact_winners": [
+    {"id": "W1", "winner_document": "doc_b", "min_confidence": 0.95}
   ]
 }
 ```
@@ -432,6 +483,10 @@ experiments/runs/<timestamp>-<scenario>-<variant>-<commit>/
 `expected_version_suggestions` 是有方向的 C3 断言：`left` 对应 raw conflict A，`right` 对应 B，
 因此 `resolved_newer_wins` 表示 A 是建议胜方；`forbidden_version_suggestion_document_pairs`
 则按无方向文档对禁止任何 suggestion，用于跨发布机构或不可比较版本的负例。
+
+`expected_disputed_fact_winner_count` / `expected_disputed_fact_winners` 是 C3/C4.6 的 cluster 级
+断言。`winner_document` 不依赖 raw A/B 方向；它必须是该 DisputedFact 全部 source metadata
+中的唯一严格最大版本。proposal 始终无副作用。
 
 `evaluate.py` 的 P/R 是全六文档口径，因此运行器只会在场景覆盖全部 gold 文档时执行它。
 P2/P3/P1-P2 这类部分语料诊断场景会明确跳过全局 P/R，避免未注入的 gold 文档被错误计为漏检。

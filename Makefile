@@ -1,4 +1,4 @@
-.PHONY: help build run test clean docker-build-app docker-build-docreader docker-build-frontend docker-build-all docker-run migrate-up migrate-down docker-restart docker-stop start-all stop-all start-ollama stop-ollama build-images build-images-app build-images-docreader build-images-frontend clean-images check-env list-containers pull-images show-platform dev-start dev-stop dev-restart dev-logs dev-status dev-app dev-frontend docs install-swagger build-lite run-lite package-lite experiment-check experiment-c1 experiment-c2-rules experiment-c2-batch experiment-c2-compare experiment-c3 experiment-c4 experiment-c4-fuzzy experiment-c4-resolve experiment-p2 experiment-p3 experiment-p12 experiment-v1 experiment-audit experiment-audit-summary experiment-audit-metrics experiment-gold-v2 experiment-gold-v2-review experiment-gold-v2-scope-review experiment-gold-v2-apply-recommendations experiment-gold-v2-finalize experiment-dual-scope-metrics
+.PHONY: help build run test clean docker-build-app docker-build-docreader docker-build-frontend docker-build-all docker-run migrate-up migrate-down docker-restart docker-stop start-all stop-all start-ollama stop-ollama build-images build-images-app build-images-docreader build-images-frontend clean-images check-env list-containers pull-images show-platform dev-start dev-stop dev-restart dev-logs dev-status dev-app dev-frontend docs install-swagger build-lite run-lite package-lite experiment-check experiment-c1 experiment-c2-rules experiment-c2-batch experiment-c2-compare experiment-c3 experiment-c46 experiment-c46-negative experiment-c4 experiment-c4-fuzzy experiment-c4-resolve experiment-p2 experiment-p3 experiment-p12 experiment-v1 experiment-audit experiment-audit-summary experiment-audit-metrics experiment-gold-v2 experiment-gold-v2-review experiment-gold-v2-scope-review experiment-gold-v2-apply-recommendations experiment-gold-v2-finalize experiment-dual-scope-metrics
 
 # Show help
 help:
@@ -65,7 +65,9 @@ help:
 	@echo "  experiment-c2-batch 运行 C2-B 规则层 + 批量 LLM 实验"
 	@echo "  experiment-c2-compare 对比显式指定的 V1/C1/C2 运行产物（RUNS=...）"
 	@echo "  experiment-c3     运行 C3-Lite 版本/发布机构建议实验"
-	@echo "  experiment-c4     运行 C4-Lite 三值同事实聚类实验"
+	@echo "  experiment-c46    运行 C3/C4.6 三来源全局胜方 proposal 实验"
+	@echo "  experiment-c46-negative 运行 C3/C4.6 跨发布机构无 winner proposal 回归"
+	@echo "  experiment-c4     运行 C4-Lite 三值同事实聚类实验"} જઈന്തassistant to=functions.edit_file  菲律宾申博 天天种彩票 天天中彩票软件  天天乐购彩票{
 	@echo "  experiment-c4-fuzzy 运行 C4-Lite schema-drift fallback 聚类实验"
 	@echo "  experiment-c4-resolve 对一个 C4 cluster 执行安全传播裁决（RUN=...）"
 	@echo "  experiment-p2     运行 P2 claim→detect 时序隔离实验"
@@ -385,6 +387,14 @@ experiment-c2-compare:
 experiment-c3:
 	python3 scripts/experiments/run_claims_eval.py \
 		--scenario scripts/experiments/scenarios/c3_version_suggestion.json --variant c2-rules
+
+experiment-c46:
+	python3 scripts/experiments/run_claims_eval.py \
+		--scenario scripts/experiments/scenarios/c46_global_winner_triplet.json --variant c2-rules
+
+experiment-c46-negative:
+	python3 scripts/experiments/run_claims_eval.py \
+		--scenario scripts/experiments/scenarios/c46_cross_issuer_no_proposal.json --variant c2-rules
 
 experiment-c4:
 	python3 scripts/experiments/run_claims_eval.py \

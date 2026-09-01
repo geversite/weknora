@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -210,6 +211,9 @@ func (s *conflictClusterService) rebuildLocked(
 		}
 		result.DisputedFactCount++
 		result.AnchorKinds[stored.AnchorKind]++
+		if stored.SuggestedWinnerKnowledgeID != "" {
+			result.WinnerProposalCount++
+		}
 		for _, conflict := range members {
 			result.AssignedConflictCount++
 			if conflict.FactAnchorKind == types.ConflictFactAnchorChunkPair {
@@ -617,7 +621,146 @@ func aggregateDisputedFact(
 	} else {
 		fact.Status = types.DisputedFactStatusResolved
 	}
+	proposal := suggestDisputedFactWinner(members)
+	fact.SuggestedWinnerKnowledgeID = proposal.WinnerKnowledgeID
+	fact.WinnerProposalReason = proposal.Reason
+	fact.WinnerProposalConfidence = proposal.Confidence
+	fact.WinnerProposalVersion = proposal.Version
+	fact.WinnerProposalSourceCount = proposal.SourceCount
 	return fact
+}
+
+type disputedFactWinnerProposal struct {
+	WinnerKnowledgeID string
+	Reason            string
+	Confidence        float64
+	Version           string
+	SourceCount       int
+}
+
+type conflictWinnerSource struct {
+	KnowledgeID string
+	Meta        types.ConflictDocumentMeta
+}
+
+// suggestDisputedFactWinner computes a unique global maximum source across
+// all member metadata. It is a proposal only: no raw conflict status, chunk,
+// or C4.5 resolution changes here. Any missing issuer, metadata disagreement,
+// incomparable pair, or non-unique maximum produces no proposal.
+func suggestDisputedFactWinner(members []*types.KnowledgeConflict) disputedFactWinnerProposal {
+	sources := make(map[string]conflictWinnerSource)
+	for _, member := range members {
+		if member == nil || !addConflictWinnerSource(sources, member.KnowledgeIDA, member.DocMetaA) ||
+			!addConflictWinnerSource(sources, member.KnowledgeIDB, member.DocMetaB) {
+			return disputedFactWinnerProposal{}
+		}
+	}
+	if len(sources) < 2 {
+		return disputedFactWinnerProposal{}
+	}
+
+	ordered := make([]conflictWinnerSource, 0, len(sources))
+	issuer := ""
+	for _, source := range sources {
+		normalizedIssuer := normalizeConflictIssuer(source.Meta.Issuer)
+		if normalizedIssuer == "" {
+			return disputedFactWinnerProposal{}
+		}
+		if issuer == "" {
+			issuer = normalizedIssuer
+		} else if issuer != normalizedIssuer {
+			return disputedFactWinnerProposal{}
+		}
+		ordered = append(ordered, source)
+	}
+	sort.Slice(ordered, func(i, j int) bool { return ordered[i].KnowledgeID < ordered[j].KnowledgeID })
+
+	winners := make([]struct {
+		source     conflictWinnerSource
+		confidence float64
+	}, 0, 1)
+	for index, candidate := range ordered {
+		valid := true
+		confidence := 1.0
+		for otherIndex, other := range ordered {
+			if index == otherIndex {
+				continue
+			}
+			direction, pairConfidence, ok := compareConflictDocumentRecency(candidate.Meta, other.Meta)
+			if !ok || direction <= 0 {
+				valid = false
+				break
+			}
+			if pairConfidence < confidence {
+				confidence = pairConfidence
+			}
+		}
+		if valid {
+			winners = append(winners, struct {
+				source     conflictWinnerSource
+				confidence float64
+			}{source: candidate, confidence: confidence})
+		}
+	}
+	if len(winners) != 1 {
+		return disputedFactWinnerProposal{}
+	}
+	winner := winners[0]
+	meta := winner.source.Meta
+	display := meta.Title
+	if display == "" {
+		display = winner.source.KnowledgeID
+	}
+	reason := fmt.Sprintf(
+		"[c3c4:%s] 同发布机构“%s”；在 %d 个来源中，%s 是对其余每个来源均严格较新的唯一最大版本（生效日期=%s，版本=%s）。仅 proposal，不自动裁决。",
+		types.DisputedFactWinnerProposalVersion, meta.Issuer, len(ordered), display, meta.EffectiveDate, meta.Version,
+	)
+	return disputedFactWinnerProposal{
+		WinnerKnowledgeID: winner.source.KnowledgeID,
+		Reason:            reason,
+		Confidence:        winner.confidence,
+		Version:           types.DisputedFactWinnerProposalVersion,
+		SourceCount:       len(ordered),
+	}
+}
+
+func addConflictWinnerSource(
+	sources map[string]conflictWinnerSource,
+	knowledgeID string,
+	raw types.JSON,
+) bool {
+	knowledgeID = strings.TrimSpace(knowledgeID)
+	if knowledgeID == "" {
+		return false
+	}
+	meta, ok := conflictDocumentMetaFromJSON(raw)
+	if !ok {
+		return false
+	}
+	if meta.KnowledgeID != "" && meta.KnowledgeID != knowledgeID {
+		return false
+	}
+	if existing, found := sources[knowledgeID]; found {
+		return conflictWinnerMetaEquivalent(existing.Meta, meta)
+	}
+	sources[knowledgeID] = conflictWinnerSource{KnowledgeID: knowledgeID, Meta: meta}
+	return true
+}
+
+func conflictDocumentMetaFromJSON(raw types.JSON) (types.ConflictDocumentMeta, bool) {
+	if len(raw) == 0 {
+		return types.ConflictDocumentMeta{}, false
+	}
+	var meta types.ConflictDocumentMeta
+	if err := json.Unmarshal(raw, &meta); err != nil || meta.ParserVersion == "" {
+		return types.ConflictDocumentMeta{}, false
+	}
+	return meta, true
+}
+
+func conflictWinnerMetaEquivalent(left, right types.ConflictDocumentMeta) bool {
+	return normalizeConflictIssuer(left.Issuer) == normalizeConflictIssuer(right.Issuer) &&
+		left.EffectiveDate == right.EffectiveDate && left.Version == right.Version
 }
 
 func conflictSourceRefs(conflict *types.KnowledgeConflict) []string {

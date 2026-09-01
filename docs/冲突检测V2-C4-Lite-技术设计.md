@@ -7,7 +7,8 @@
 >
 > 依赖：C1 claims 与 C2-Lite 最终 raw `knowledge_conflicts`。
 >
-> Clusterer version：`c4-v4`；迁移：PostgreSQL `000088` / SQLite `000009`。
+> C4-Lite core frozen version：`c4-v5`；C3/C4.6 proposal extension：`c4-v6`。
+> 基础聚类迁移：PostgreSQL `000088` / SQLite `000009`；proposal 扩展迁移：`000091` / SQLite `000012`。
 
 ---
 

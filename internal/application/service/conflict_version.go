@@ -105,33 +105,51 @@ func extractConflictDocumentMeta(
 		meta.Version = version
 		meta.VersionEvidence = meta.Title
 	}
-
+	// A manually supplied document title may deliberately carry explicit
+	// metadata segments ("发布机构：…；生效日期：…；版本号：…"). Parse only
+	// labeled segments, never arbitrary title prose.
+	for _, segment := range conflictTitleMetadataSegments(meta.Title) {
+		applyConflictDocumentMetadataLine(&meta, segment)
+	}
 	for _, line := range conflictMetadataHeaderLines(content) {
-		label, value, ok := splitConflictMetadataLine(line)
-		if !ok {
-			continue
-		}
-		normalizedLabel := normalizeConflictMetadataLabel(label)
-		if meta.Issuer == "" && isConflictIssuerLabel(normalizedLabel) {
-			meta.Issuer = strings.TrimSpace(value)
-			meta.IssuerEvidence = strings.TrimSpace(line)
-		}
-		if isConflictEffectiveDateLabel(normalizedLabel) {
-			if date, precision, ok := parseConflictDate(value); ok {
-				// Explicit header evidence overrides a title edition date.
-				meta.EffectiveDate = date
-				meta.EffectiveDatePrecision = precision
-				meta.EffectiveDateEvidence = strings.TrimSpace(line)
-			}
-		}
-		if meta.Version == "" && isConflictVersionLabel(normalizedLabel) {
-			if version, ok := parseConflictVersionMarker(value, true); ok {
-				meta.Version = version
-				meta.VersionEvidence = strings.TrimSpace(line)
-			}
-		}
+		applyConflictDocumentMetadataLine(&meta, line)
 	}
 	return meta
+}
+
+func conflictTitleMetadataSegments(title string) []string {
+	return strings.FieldsFunc(title, func(r rune) bool {
+		return r == '；' || r == ';' || r == '|'
+	})
+}
+
+func applyConflictDocumentMetadataLine(meta *types.ConflictDocumentMeta, line string) {
+	if meta == nil {
+		return
+	}
+	label, value, ok := splitConflictMetadataLine(line)
+	if !ok {
+		return
+	}
+	normalizedLabel := normalizeConflictMetadataLabel(label)
+	if meta.Issuer == "" && isConflictIssuerLabel(normalizedLabel) {
+		meta.Issuer = strings.TrimSpace(value)
+		meta.IssuerEvidence = strings.TrimSpace(line)
+	}
+	if isConflictEffectiveDateLabel(normalizedLabel) {
+		if date, precision, ok := parseConflictDate(value); ok {
+			// Explicit labeled evidence overrides a title edition date.
+			meta.EffectiveDate = date
+			meta.EffectiveDatePrecision = precision
+			meta.EffectiveDateEvidence = strings.TrimSpace(line)
+		}
+	}
+	if meta.Version == "" && isConflictVersionLabel(normalizedLabel) {
+		if version, ok := parseConflictVersionMarker(value, true); ok {
+			meta.Version = version
+			meta.VersionEvidence = strings.TrimSpace(line)
+		}
+	}
 }
 
 func conflictMetadataHeaderLines(content string) []string {
@@ -329,6 +347,29 @@ func suggestConflictVersionResolution(
 		Reason:     reason + " 建议以文档 B 为较新版本（仅建议，不自动裁决）。",
 		Confidence: confidence,
 	}
+}
+
+// compareConflictDocumentRecency is shared by C3's pair-level suggestion and
+// C3/C4.6's global winner proposal. It returns a direction only when every
+// available metadata signal agrees; +1 means A is newer, -1 means B is newer.
+func compareConflictDocumentRecency(
+	metaA, metaB types.ConflictDocumentMeta,
+) (direction int, confidence float64, ok bool) {
+	dateDirection, dateConfidence, hasDate := compareConflictEffectiveDates(metaA, metaB)
+	versionDirection, hasVersion := compareConflictVersions(metaA.Version, metaB.Version)
+	if hasDate && hasVersion && dateDirection != versionDirection {
+		return 0, 0, false
+	}
+	if hasDate {
+		if hasVersion {
+			return dateDirection, min(0.99, dateConfidence+0.03), true
+		}
+		return dateDirection, dateConfidence, true
+	}
+	if hasVersion {
+		return versionDirection, 0.90, true
+	}
+	return 0, 0, false
 }
 
 func normalizeConflictIssuer(value string) string {

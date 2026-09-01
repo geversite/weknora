@@ -27,6 +27,14 @@ type DisputedFact struct {
 	ConflictType string `json:"conflict_type" gorm:"type:varchar(32)"`
 	Status       string `json:"status" gorm:"type:varchar(20);index"`
 
+	// C3/C4.6 computes an advisory unique winner across all source metadata
+	// in this cluster. It is never applied automatically in this milestone.
+	SuggestedWinnerKnowledgeID string  `json:"suggested_winner_knowledge_id" gorm:"type:varchar(36);index"`
+	WinnerProposalReason       string  `json:"winner_proposal_reason" gorm:"type:text"`
+	WinnerProposalConfidence   float64 `json:"winner_proposal_confidence"`
+	WinnerProposalVersion      string  `json:"winner_proposal_version" gorm:"type:varchar(32)"`
+	WinnerProposalSourceCount  int     `json:"winner_proposal_source_count"`
+
 	ConflictCount      int         `json:"conflict_count"`
 	PendingConflictCount int       `json:"pending_conflict_count"`
 	SourceCount        int         `json:"source_count"`
@@ -61,9 +69,12 @@ const (
 	DisputedFactConflictTypeMixed  = "mixed"
 
 	// ConflictClustererVersion identifies deterministic clustering semantics.
-	// c4-v5 adds an explicit document_singleton anchor for a final fallback
-	// conflict whose two documents each have exactly one usable claim.
-	ConflictClustererVersion = "c4-v5"
+	// c4-v6 adds advisory global winner proposal aggregation over C3 metadata.
+	ConflictClustererVersion = "c4-v6"
+
+	// DisputedFactWinnerProposalVersion identifies C3/C4.6's unique-max source
+	// proposal semantics. It is distinct from the per-raw-conflict C3 parser.
+	DisputedFactWinnerProposalVersion = "c3-c4-v1"
 )
 
 // DisputedFactRebuildResult is returned by the C4-Lite rebuild endpoint and
@@ -76,6 +87,7 @@ type DisputedFactRebuildResult struct {
 	DisputedFactCount        int            `json:"disputed_fact_count"`
 	AssignedConflictCount    int            `json:"assigned_conflict_count"`
 	UnanchoredConflictCount  int            `json:"unanchored_conflict_count"`
+	WinnerProposalCount      int            `json:"winner_proposal_count"`
 	AnchorKinds              map[string]int `json:"anchor_kinds"`
 }
 

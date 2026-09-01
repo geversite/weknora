@@ -24,6 +24,18 @@ func TestExtractConflictDocumentMetaUsesExplicitHeaderEvidence(t *testing.T) {
 	}
 }
 
+func TestExtractConflictDocumentMetaReadsExplicitTitleMetadataSegments(t *testing.T) {
+	meta := extractConflictDocumentMeta(
+		nil,
+		"doc",
+		"发布机构：天穹财团；生效日期：2148年6月1日；版本号：V2.0",
+		"# 正文不含 metadata",
+	)
+	if meta.Issuer != "天穹财团" || meta.EffectiveDate != "2148-06-01" || meta.Version != "2.0" {
+		t.Fatalf("title metadata segments = %+v", meta)
+	}
+}
+
 func TestExtractConflictDocumentMetaPrefersManualSourceContent(t *testing.T) {
 	knowledge := &types.Knowledge{ID: "manual-doc", Title: "manual title"}
 	if err := knowledge.SetManualMetadata(types.NewManualKnowledgeMetadata(

@@ -305,6 +305,42 @@ def validate_version_suggestion_assertions(
     return expected, forbidden
 
 
+def validate_disputed_fact_winner_assertions(
+    scenario: dict[str, Any], document_ids: set[str],
+) -> tuple[int | None, list[dict[str, Any]]]:
+    expected_count = scenario.get("expected_disputed_fact_winner_count")
+    if expected_count is not None and (
+        isinstance(expected_count, bool) or not isinstance(expected_count, int) or expected_count < 0
+    ):
+        raise ExperimentError("expected_disputed_fact_winner_count 必须是非负整数")
+
+    expected = scenario.get("expected_disputed_fact_winners", [])
+    if not isinstance(expected, list):
+        raise ExperimentError("expected_disputed_fact_winners 必须是数组")
+    seen_documents: set[str] = set()
+    for item in expected:
+        if not isinstance(item, dict) or not item.get("winner_document"):
+            raise ExperimentError(f"expected_disputed_fact_winners 每项必须包含 winner_document: {item}")
+        winner = str(item["winner_document"])
+        if winner not in document_ids:
+            raise ExperimentError(f"expected_disputed_fact_winners 引用了场景外文档: {winner}")
+        if winner in seen_documents:
+            raise ExperimentError(f"expected_disputed_fact_winners 存在重复 winner_document: {winner}")
+        seen_documents.add(winner)
+        confidence = item.get("min_confidence", 0)
+        if isinstance(confidence, bool):
+            raise ExperimentError("expected_disputed_fact_winners.min_confidence 必须是 0 到 1 之间的数")
+        try:
+            value = float(confidence)
+        except (TypeError, ValueError) as exc:
+            raise ExperimentError("expected_disputed_fact_winners.min_confidence 必须是数") from exc
+        if value < 0 or value > 1:
+            raise ExperimentError("expected_disputed_fact_winners.min_confidence 必须在 0 到 1 之间")
+    if expected_count is not None and len(expected) > expected_count:
+        raise ExperimentError("expected_disputed_fact_winners 数量不能大于 expected_disputed_fact_winner_count")
+    return expected_count, expected
+
+
 def load_scenario(path: Path) -> dict[str, Any]:
     scenario = read_json(path)
     if not scenario.get("name"):
@@ -362,12 +398,17 @@ def load_scenario(path: Path) -> dict[str, Any]:
     expected_suggestions, forbidden_suggestion_pairs = validate_version_suggestion_assertions(
         scenario, document_ids,
     )
+    expected_winner_count, expected_winners = validate_disputed_fact_winner_assertions(
+        scenario, document_ids,
+    )
 
     # Normalize absent optional lists so downstream artifact schema is stable.
     scenario["expected_conflict_document_pairs"] = expected
     scenario["forbidden_conflict_document_pairs"] = forbidden
     scenario["expected_version_suggestions"] = expected_suggestions
     scenario["forbidden_version_suggestion_document_pairs"] = forbidden_suggestion_pairs
+    scenario["expected_disputed_fact_winner_count"] = expected_winner_count
+    scenario["expected_disputed_fact_winners"] = expected_winners
     return scenario
 
 
@@ -566,6 +607,8 @@ def query_disputed_facts(db: PostgresExporter, kb_id: str) -> list[dict[str, str
         )
     return db.query(
         "SELECT id, tenant_id, knowledge_base_id, clusterer_version, fact_key, anchor_kind, claim_key, subject, predicate, "
+        "suggested_winner_knowledge_id, winner_proposal_reason, winner_proposal_confidence, winner_proposal_version, "
+        "winner_proposal_source_count, "
         "conflict_type, status, conflict_count, pending_conflict_count, source_count, candidate_value_count, "
         "COALESCE(candidate_values::text, '[]') AS candidate_values, "
         "COALESCE(source_refs::text, '[]') AS source_refs, created_at, updated_at "
@@ -581,6 +624,8 @@ def aggregate_disputed_facts(
     statuses: dict[str, int] = {}
     anchor_kinds: dict[str, int] = {}
     clusterer_versions: dict[str, int] = {}
+    winner_proposal_versions: dict[str, int] = {}
+    winner_proposal_count = 0
     clustered_conflicts = 0
     pending_conflicts = 0
     for row in rows:
@@ -590,6 +635,11 @@ def aggregate_disputed_facts(
         statuses[status] = statuses.get(status, 0) + 1
         anchor_kinds[kind] = anchor_kinds.get(kind, 0) + 1
         clusterer_versions[version] = clusterer_versions.get(version, 0) + 1
+        winner_id = row.get("suggested_winner_knowledge_id", "") or ""
+        if winner_id:
+            winner_proposal_count += 1
+            winner_version = row.get("winner_proposal_version", "") or "unknown"
+            winner_proposal_versions[winner_version] = winner_proposal_versions.get(winner_version, 0) + 1
         clustered_conflicts += as_int(row.get("conflict_count"))
         pending_conflicts += as_int(row.get("pending_conflict_count"))
     cluster_count = len(rows)
@@ -603,8 +653,39 @@ def aggregate_disputed_facts(
         "statuses": statuses,
         "anchor_kinds": anchor_kinds,
         "clusterer_versions": clusterer_versions,
+        "winner_proposal_count": winner_proposal_count,
+        "winner_proposal_versions": winner_proposal_versions,
         "rebuild": rebuild,
     }
+
+
+def observed_disputed_fact_winners(
+    facts: list[dict[str, str]], knowledge_to_doc: dict[str, str],
+) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for fact in facts:
+        winner_id = str(fact.get("suggested_winner_knowledge_id", "") or "")
+        if not winner_id:
+            continue
+        out.append({
+            "disputed_fact_id": fact.get("id", ""),
+            "winner_knowledge_id": winner_id,
+            "winner_document": knowledge_to_doc.get(winner_id, winner_id),
+            "confidence": suggestion_confidence(fact.get("winner_proposal_confidence")),
+            "version": fact.get("winner_proposal_version", ""),
+            "reason": fact.get("winner_proposal_reason", ""),
+            "source_count": as_int(fact.get("winner_proposal_source_count")),
+            "fact_key": fact.get("fact_key", ""),
+        })
+    return out
+
+
+def has_disputed_fact_winner(observed: list[dict[str, Any]], expected: dict[str, Any]) -> bool:
+    return any(
+        str(item.get("winner_document", "")) == str(expected["winner_document"])
+        and suggestion_confidence(item.get("confidence")) >= float(expected.get("min_confidence", 0))
+        for item in observed
+    )
 
 
 def query_conflict_detection_runs(db: PostgresExporter, kb_id: str) -> list[dict[str, str]]:
@@ -910,6 +991,10 @@ def write_report(
     expected_version_suggestions: list[dict[str, Any]],
     missing_version_suggestions: list[dict[str, Any]],
     forbidden_version_suggestions: list[dict[str, Any]],
+    winner_proposals: list[dict[str, Any]],
+    expected_winner_count: int | None,
+    expected_winners: list[dict[str, Any]],
+    missing_winner_proposals: list[dict[str, Any]],
 ) -> None:
     lines = [
         f"# Conflict experiment: {manifest['run_id']}",
@@ -1006,6 +1091,7 @@ def write_report(
             f"- raw conflicts / disputed fact：`{ratio_text}`",
             f"- review units saved（raw - cluster）：`{cluster_metrics.get('review_units_saved', 0)}`",
             f"- clusterer versions：`{cluster_metrics.get('clusterer_versions', {})}`",
+            f"- winner proposals：`{cluster_metrics.get('winner_proposal_count', 0)}` {cluster_metrics.get('winner_proposal_versions', {})}",
             f"- anchor kinds：`{cluster_metrics.get('anchor_kinds', {})}`",
             f"- statuses：`{cluster_metrics.get('statuses', {})}`",
         ]
@@ -1014,7 +1100,8 @@ def write_report(
             lines.append(
                 "- rebuild："
                 f"assigned=`{rebuild.get('assigned_conflict_count', 0)}`，"
-                f"unanchored=`{rebuild.get('unanchored_conflict_count', 0)}`"
+                f"unanchored=`{rebuild.get('unanchored_conflict_count', 0)}`，"
+                f"winner_proposals=`{rebuild.get('winner_proposal_count', 0)}`"
             )
         expected_fact_count = cluster_metrics.get("expected_disputed_fact_count")
         if expected_fact_count is not None:
@@ -1049,6 +1136,27 @@ def write_report(
             lines.append(
                 f"- forbidden version suggestions observed：`{len(forbidden_version_suggestions)}`"
             )
+
+    if winner_proposals or expected_winner_count is not None or expected_winners:
+        lines += ["", "## C3/C4.6 全局胜方 Proposal", ""]
+        if expected_winner_count is not None:
+            lines.append(
+                f"- expected / observed proposals：`{expected_winner_count}` / `{len(winner_proposals)}`；"
+                f"match=`{len(winner_proposals) == expected_winner_count}`"
+            )
+        if winner_proposals:
+            lines += [
+                "", "| disputed fact | winner document | confidence | source count | proposal version |",
+                "|---|---|---:|---:|---|",
+            ]
+            for proposal in winner_proposals:
+                lines.append(
+                    f"| `{proposal.get('disputed_fact_id', '')}` | {proposal.get('winner_document', '')} | "
+                    f"{suggestion_confidence(proposal.get('confidence')):.3f} | {proposal.get('source_count', 0)} | "
+                    f"{proposal.get('version', '')} |"
+                )
+        if expected_winners:
+            lines.append(f"- missing expected winner proposals：`{len(missing_winner_proposals)}`")
 
     if evaluator is not None:
         lines += ["", "## 抽取质量评估", ""]
@@ -1101,11 +1209,16 @@ def check_environment(client: APIClient, check_db: bool) -> int:
                 raise ExperimentError(
                     "缺少 C3 conflict version suggestion 列；请重启包含 migration 000090 的后端。"
                 )
+            if not disputed_fact_winner_proposals_ready(db):
+                raise ExperimentError(
+                    "缺少 C3/C4.6 winner proposal 列；请重启包含 migration 000091 的后端。"
+                )
             print("[check] PostgreSQL export: OK", db.describe_mode())
             print("[check] C2 conflict_detection_runs: OK")
             print("[check] C4 disputed_facts: OK")
             print("[check] C4.5 conflict status width: OK")
             print("[check] C3 conflict version suggestions: OK")
+            print("[check] C3/C4.6 winner proposals: OK")
         except ExperimentError as exc:
             print("[check] PostgreSQL export: FAIL", exc, file=sys.stderr)
             return 1
@@ -1191,6 +1304,8 @@ def run_experiment(args: argparse.Namespace) -> int:
             raise ExperimentError("knowledge_conflicts.status 宽度不足；请重启包含 C4.5 migration 000089 的后端。")
         if not conflict_version_suggestions_ready(db):
             raise ExperimentError("缺少 C3 conflict version suggestion 列；请重启包含 migration 000090 的后端。")
+        if not disputed_fact_winner_proposals_ready(db):
+            raise ExperimentError("缺少 C3/C4.6 winner proposal 列；请重启包含 migration 000091 的后端。")
 
         template = client.get(f"/knowledge-bases/{args.template_kb_id}")
         if not isinstance(template, dict):
@@ -1291,6 +1406,7 @@ def run_experiment(args: argparse.Namespace) -> int:
         observed_pairs = observed_conflict_pairs(conflicts, knowledge_to_doc)
         disputed_facts = query_disputed_facts(db, kb_id)
         cluster_metrics = aggregate_disputed_facts(disputed_facts, len(conflicts), cluster_rebuild)
+        winner_proposals = observed_disputed_fact_winners(disputed_facts, knowledge_to_doc)
         cascade_metrics = aggregate_conflict_detection_runs(detection_runs)
         claims = query_claims(db, kb_id)
         dead_letters = query_dead_letters(db, manifest["knowledge_ids"].values())
@@ -1300,7 +1416,7 @@ def run_experiment(args: argparse.Namespace) -> int:
         json_dump(output_dir / "cascade_metrics.json", cascade_metrics)
         json_dump(output_dir / "disputed_facts.json", disputed_facts)
         json_dump(output_dir / "cluster_rebuild.json", cluster_rebuild)
-        json_dump(output_dir / "cluster_metrics.json", cluster_metrics)
+        json_dump(output_dir / "winner_proposals.json", winner_proposals)
         json_dump(output_dir / "dead_letters.json", dead_letters)
         json_dump(output_dir / "conflict_document_pairs.json", observed_pairs)
 
@@ -1341,6 +1457,16 @@ def run_experiment(args: argparse.Namespace) -> int:
             version_suggestions, forbidden_version_suggestion_pairs,
         )
         version_suggestion_metrics = aggregate_version_suggestions(version_suggestions)
+        expected_winner_count = scenario.get("expected_disputed_fact_winner_count")
+        expected_winners = scenario.get("expected_disputed_fact_winners", [])
+        missing_winner_proposals = [
+            item for item in expected_winners
+            if not has_disputed_fact_winner(winner_proposals, item)
+        ]
+        winner_count_matches = (
+            expected_winner_count is None
+            or len(winner_proposals) == expected_winner_count
+        )
         expected_disputed_fact_count = scenario.get("expected_disputed_fact_count")
         disputed_fact_count_matches = (
             expected_disputed_fact_count is None
@@ -1355,6 +1481,8 @@ def run_experiment(args: argparse.Namespace) -> int:
         cluster_metrics["disputed_fact_count_matches"] = disputed_fact_count_matches
         cluster_metrics["expected_anchor_kinds"] = expected_anchor_kinds
         cluster_metrics["anchor_kinds_match"] = disputed_fact_anchor_kinds_match
+        cluster_metrics["expected_winner_count"] = expected_winner_count
+        cluster_metrics["winner_count_matches"] = winner_count_matches
         metrics = {
             "claim_count_total": len(claims),
             "claim_counts_by_document": claim_counts,
@@ -1372,6 +1500,12 @@ def run_experiment(args: argparse.Namespace) -> int:
             "missing_expected_version_suggestions": missing_version_suggestions,
             "forbidden_version_suggestion_document_pairs": forbidden_version_suggestion_pairs,
             "observed_forbidden_version_suggestions": forbidden_version_suggestions_observed,
+            "winner_proposals": winner_proposals,
+            "expected_disputed_fact_winner_count": expected_winner_count,
+            "observed_disputed_fact_winner_count": len(winner_proposals),
+            "disputed_fact_winner_count_matches": winner_count_matches,
+            "expected_disputed_fact_winners": expected_winners,
+            "missing_expected_disputed_fact_winners": missing_winner_proposals,
             "expected_conflict_document_pairs": expected_pairs,
             "missing_expected_conflict_document_pairs": missing_pairs,
             "forbidden_conflict_document_pairs": forbidden_pairs,
@@ -1379,6 +1513,7 @@ def run_experiment(args: argparse.Namespace) -> int:
             "evaluator_scope": evaluator_scope,
             "evaluator": evaluator_result,
         }
+        json_dump(output_dir / "cluster_metrics.json", cluster_metrics)
         json_dump(output_dir / "version_suggestions.json", version_suggestions)
         json_dump(output_dir / "metrics.json", metrics)
 
@@ -1390,6 +1525,8 @@ def run_experiment(args: argparse.Namespace) -> int:
             manifest["status"] = "completed_with_missing_version_suggestions"
         elif forbidden_version_suggestions_observed:
             manifest["status"] = "completed_with_forbidden_version_suggestions"
+        elif missing_winner_proposals or not winner_count_matches:
+            manifest["status"] = "completed_with_winner_proposal_failure"
         elif not disputed_fact_count_matches or not disputed_fact_anchor_kinds_match:
             manifest["status"] = "completed_with_cluster_expectation_failure"
         else:
@@ -1400,7 +1537,8 @@ def run_experiment(args: argparse.Namespace) -> int:
             output_dir / "report.md", manifest, claim_counts, expected_pairs, forbidden_pairs,
             observed_pairs, observed_forbidden_pairs, evaluator_result, cascade_metrics, cluster_metrics,
             version_suggestion_metrics, expected_version_suggestions, missing_version_suggestions,
-            forbidden_version_suggestions_observed,
+            forbidden_version_suggestions_observed, winner_proposals, expected_winner_count,
+            expected_winners, missing_winner_proposals,
         )
 
         print(f"实验完成: {output_dir}")
@@ -1428,6 +1566,8 @@ def run_experiment(args: argparse.Namespace) -> int:
                 f"{version_suggestion_metrics['suggestion_count']} "
                 f"{version_suggestion_metrics['resolutions']}"
             )
+        if winner_proposals:
+            print(f"  C3/C4.6 winner proposals: {len(winner_proposals)}")
         if missing_pairs:
             print("  缺失预期 conflict 文档对:", ", ".join(str(item.get("id", "?")) for item in missing_pairs))
         if observed_forbidden_pairs:
@@ -1457,6 +1597,16 @@ def run_experiment(args: argparse.Namespace) -> int:
                 "  观察到不应出现的 version suggestions:",
                 ", ".join(left + "↔" + right for left, right in unexpected_suggestion_docs),
             )
+        if missing_winner_proposals:
+            print(
+                "  缺失预期 disputed-fact winner proposals:",
+                ", ".join(str(item.get("id", item.get("winner_document", "?"))) for item in missing_winner_proposals),
+            )
+        if not winner_count_matches:
+            print(
+                "  disputed-fact winner proposal 数量不符合场景断言: "
+                f"expected={expected_winner_count} observed={len(winner_proposals)}"
+            )
         if not disputed_fact_count_matches:
             print(
                 "  disputed fact 数量不符合场景断言: "
@@ -1481,6 +1631,8 @@ def run_experiment(args: argparse.Namespace) -> int:
             or observed_forbidden_pairs
             or missing_version_suggestions
             or forbidden_version_suggestions_observed
+            or missing_winner_proposals
+            or not winner_count_matches
             or not disputed_fact_count_matches
             or not disputed_fact_anchor_kinds_match
             or (evaluator_result and evaluator_result["exit_code"] != 0)

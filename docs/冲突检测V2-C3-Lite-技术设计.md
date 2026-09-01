@@ -193,7 +193,36 @@ C3-Lite 不会自动开放 cluster-level `newer_wins`。它先提供可审计、
 
 ---
 
-## 7. 测试覆盖
+## 7. C3/C4.6 全局 winner proposal（实现待运行验证）
+
+C4.6 读取同一 `DisputedFact` 的全部 member `doc_meta_a/b`，而不是直接把每条 raw
+`SuggestedResolution` 当作全局结论。它要求：
+
+```text
+所有来源均有 metadata snapshot
+所有 issuer 规范化后相同
+候选 winner 对其余每个来源都严格较新
+每一对日期 / version 信号可比较且方向一致
+唯一最大来源存在
+```
+
+通过时写入 `disputed_facts`：
+
+```text
+suggested_winner_knowledge_id
+winner_proposal_reason
+winner_proposal_confidence
+winner_proposal_version = c3-c4-v1
+winner_proposal_source_count
+```
+
+它始终是 proposal：raw member status、`AutoResolved`、chunk enable state 均不改变。任何
+issuer 不一致、缺 metadata、日期/version 方向冲突、不可比较或并列最大值都会保留空 proposal。
+
+`make experiment-c46` 用 V1/V2/V3 同 issuer 三来源 triplet 验证 `c46_v3` 是唯一全局最大来源；
+`make experiment-c46-negative` 用跨 issuer exact conflict 验证 proposal 数量为零。
+
+## 8. 测试覆盖
 
 `internal/application/service/conflict_version_test.go` 覆盖：
 

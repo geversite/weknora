@@ -46,3 +46,6 @@ ClaimExtractService 后，应以本套件复跑并归档结果。
 - `c3_meal_allowance_v1/v2/other_issuer.md` 不属于 gold；它们由
   `scripts/experiments/scenarios/c3_version_suggestion.json` 使用，验证 C3 从显式
   发布机构/生效日期/版本号给出建议胜方，且不对跨机构来源建议胜方。
+- `c46_global_winner_triplet.json` 复用 C4 的 100/150/200 元正文，并通过实验注入标题
+  携带显式 issuer/date/version metadata，验证多来源 cluster 的唯一全局 winner proposal；
+  `c46_cross_issuer_no_proposal.json` 使用同一正文验证跨 issuer 必须没有 proposal。
