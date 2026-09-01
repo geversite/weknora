@@ -600,6 +600,29 @@ def conflict_version_suggestions_ready(db: PostgresExporter) -> bool:
     return {row.get("column_name", "") for row in rows} == required
 
 
+def disputed_fact_winner_proposals_ready(db: PostgresExporter) -> bool:
+    """Return whether migration 000091 has added every C3/C4.6 proposal field.
+
+    The experiment runner reads these fields from PostgreSQL after a cluster
+    rebuild. Checking the complete set before an HTTP experiment makes an old
+    backend/schema failure explicit instead of producing a later SQL error.
+    """
+    required = {
+        "suggested_winner_knowledge_id",
+        "winner_proposal_reason",
+        "winner_proposal_confidence",
+        "winner_proposal_version",
+        "winner_proposal_source_count",
+    }
+    rows = db.query(
+        "SELECT column_name FROM information_schema.columns "
+        "WHERE table_schema = 'public' AND table_name = 'disputed_facts' "
+        "AND column_name IN ('suggested_winner_knowledge_id', 'winner_proposal_reason', "
+        "'winner_proposal_confidence', 'winner_proposal_version', 'winner_proposal_source_count')"
+    )
+    return {row.get("column_name", "") for row in rows} == required
+
+
 def query_disputed_facts(db: PostgresExporter, kb_id: str) -> list[dict[str, str]]:
     if not disputed_facts_table_exists(db):
         raise ExperimentError(
