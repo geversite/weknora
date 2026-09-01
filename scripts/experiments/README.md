@@ -85,7 +85,7 @@ python3 scripts/experiments/run_claims_eval.py --check --check-db
 1. `GET /health` 返回 `{"status":"ok"}`；
 2. API key 是否存在（不会输出其值）；
 3. Docker/psql 是否能执行只读 `SELECT 1`；
-4. C2 的 `conflict_detection_runs` 与 C4 的 `disputed_facts` 表已由 migration 创建。
+4. C2 的 `conflict_detection_runs`、C4 的 `disputed_facts`、C4.5 status 宽度和 C3 suggestion 列均已由 migration 创建。
 
 ## 运行场景
 
@@ -210,6 +210,42 @@ experiments/comparisons/<timestamp>-conflict-ablation/
 报告将检测完整性（预期对、禁止对、死信、task failed）与 volatile 的 claim-extractor P/R
 门槛分开呈现；它是可重现 artifact 汇总，不把独立生产模型运行误称为严格因果实验。
 
+### C3-Lite 版本与发布机构建议
+
+后端运行 PostgreSQL migration `000090` 后：
+
+```bash
+make experiment-c3
+```
+
+该场景注入：
+
+```text
+天穹财团 V1.0，生效日期 2148-01-01，餐补 100 元
+天穹财团 V2.0，生效日期 2148-06-01，餐补 150 元
+新弦工业 V3.0，生效日期 2149-01-01，餐补 200 元
+```
+
+预期：同发布机构的 V2 ↔ V1 raw conflict 出现 advisory：
+
+```text
+suggested_resolution = resolved_newer_wins
+confidence >= 0.95
+```
+
+跨发布机构的冲突仍可被检出，但**不得**出现 winner suggestion。C3-Lite 只从 title/header
+中的显式发布机构、生效日期、版本号解析 metadata；不从正文任意事实日期猜文档版本，也不
+自动更新 status 或禁用 chunk。
+
+每个 run 新增导出：
+
+```text
+version_suggestions.json
+```
+
+`metrics.json` 会记录 expected / missing / forbidden version suggestions；任何 suggestion
+断言失败均以退出码 `2` 保留 artifact。
+
 ### C4-Lite 事实级聚类
 
 后端运行 C4 migration `000088` 后，运行三文档同事实三取值场景：
@@ -325,6 +361,7 @@ experiments/runs/<timestamp>-<scenario>-<variant>-<commit>/
 ├── evaluator_output.txt
 ├── conflicts.json
 ├── conflict_document_pairs.json
+├── version_suggestions.json
 ├── disputed_facts.json
 ├── cluster_rebuild.json
 ├── cluster_metrics.json
@@ -338,8 +375,8 @@ experiments/runs/<timestamp>-<scenario>-<variant>-<commit>/
 
 退出码：
 
-- `0`：预期文档对出现、所有 `forbidden_conflict_document_pairs` 均未出现、`expected_disputed_fact_count`（若配置）匹配，且（若场景带完整 gold）`evaluate.py` 通过门槛；
-- `2`：服务链路完成并导出了证据，但缺少预期冲突对、出现禁止的冲突文档对、聚类数量断言失败，或抽取 P/R 未达门槛；
+- `0`：预期文档对出现、所有 `forbidden_conflict_document_pairs` 均未出现、C3 version suggestion 断言（若配置）通过、`expected_disputed_fact_count`（若配置）匹配，且（若场景带完整 gold）`evaluate.py` 通过门槛；
+- `2`：服务链路完成并导出了证据，但缺少预期冲突对、出现禁止的冲突文档对、C3 suggestion 断言失败、聚类数量断言失败，或抽取 P/R 未达门槛；
 - `1`：环境、API、任务或数据库导出失败；
 - `130`：用户中断。
 
@@ -370,7 +407,13 @@ experiments/runs/<timestamp>-<scenario>-<variant>-<commit>/
   "expected_disputed_fact_count": 1,
   "expected_disputed_fact_anchor_kinds": {
     "claim_key": 1
-  }
+  },
+  "expected_version_suggestions": [
+    {"id": "S1", "left": "doc_b", "right": "doc_a", "resolution": "resolved_newer_wins", "min_confidence": 0.95}
+  ],
+  "forbidden_version_suggestion_document_pairs": [
+    {"id": "S2", "left": "doc_c", "right": "doc_a"}
+  ]
 }
 ```
 
@@ -385,6 +428,10 @@ experiments/runs/<timestamp>-<scenario>-<variant>-<commit>/
 数量稳定的隔离场景；全量 `c1_full` 因 extractor 与 raw chunk-pair 输出有模型波动，不配置该断言。
 `expected_disputed_fact_anchor_kinds` 可进一步断言 cluster 使用 `claim_key`、`fuzzy_slot`、
 `document_singleton` 或 `chunk_pair` 的数量；它用于验证 C4 的 anchor 路径，而不是推断 LLM 裁决正确性。
+
+`expected_version_suggestions` 是有方向的 C3 断言：`left` 对应 raw conflict A，`right` 对应 B，
+因此 `resolved_newer_wins` 表示 A 是建议胜方；`forbidden_version_suggestion_document_pairs`
+则按无方向文档对禁止任何 suggestion，用于跨发布机构或不可比较版本的负例。
 
 `evaluate.py` 的 P/R 是全六文档口径，因此运行器只会在场景覆盖全部 gold 文档时执行它。
 P2/P3/P1-P2 这类部分语料诊断场景会明确跳过全局 P/R，避免未注入的 gold 文档被错误计为漏检。

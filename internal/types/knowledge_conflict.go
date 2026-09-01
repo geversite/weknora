@@ -31,6 +31,17 @@ type KnowledgeConflict struct {
 	FactValueA     string `json:"fact_value_a" gorm:"type:text"`
 	FactValueB     string `json:"fact_value_b" gorm:"type:text"`
 
+	// C3-Lite version metadata is captured at detection time from document
+	// title/header evidence. Suggestions are advisory only; AutoResolved stays
+	// false until a later C3 authority policy explicitly enables side effects.
+	DocMetaA                 JSON    `json:"doc_meta_a" gorm:"type:json"`
+	DocMetaB                 JSON    `json:"doc_meta_b" gorm:"type:json"`
+	SuggestedResolution      string  `json:"suggested_resolution" gorm:"type:varchar(32)"`
+	SuggestionReason         string  `json:"suggestion_reason" gorm:"type:text"`
+	SuggestionConfidence     float64 `json:"suggestion_confidence"`
+	SuggestionVersion        string  `json:"suggestion_version" gorm:"type:varchar(32)"`
+	AutoResolved             bool    `json:"auto_resolved"`
+
 	// ContentA / ContentB are snapshots of the conflicting chunks taken at
 	// detection time. They remain stable even if the source chunk is later
 	// edited (adjudication targets the concrete contradiction found).

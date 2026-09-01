@@ -244,16 +244,29 @@ func (s *KnowledgeConflictService) Handle(ctx context.Context, task *asynq.Task)
 	// fallbacks are hydrated here solely to derive a conservative fact anchor.
 	adjudicated = s.hydrateFallbackClaimEvidence(detectCtx, adjudicated)
 	adjudicated = s.hydrateFallbackFactAnchorHints(detectCtx, payload.TenantID, adjudicated)
+	versionMetadata := newConflictVersionMetadataResolver(detectCtx, s.knowledgeSvc)
 
 	conflicts := make([]*types.KnowledgeConflict, 0, len(adjudicated))
 	for _, p := range adjudicated {
 		anchor := conflictFactAnchorForPair(p)
+		metaA := versionMetadata.metadataFor(p.NewChunk.KnowledgeID, p.NewTitle, p.NewChunk.Content)
+		metaB := versionMetadata.metadataFor(p.ExistingChunk.KnowledgeID, p.ExistingTitle, p.ExistingChunk.Content)
+		suggestion := types.ConflictVersionSuggestion{}
+		if conflictAnchorSupportsVersionSuggestion(anchor) {
+			suggestion = suggestConflictVersionResolution(metaA, metaB)
+		}
 		reason := p.Reason
 		if p.ExistWikiSlug != "" {
 			// C1 transitional wiki marker: the counterpart is a wiki page
 			// (KnowledgeIDB stays empty; ChunkIDB carries the page ID). The
 			// C4 migration replaces this with first-class wiki columns.
 			reason = "[wiki:" + p.ExistWikiSlug + "] " + reason
+		}
+		if suggestion.Resolution != "" {
+			logger.GetLogger(ctx).Infof(
+				"[ConflictVersion] Suggested %s for fact_key=%q (confidence=%.2f)",
+				suggestion.Resolution, anchor.FactKey, suggestion.Confidence,
+			)
 		}
 		conflicts = append(conflicts, &types.KnowledgeConflict{
 			ID:              uuid.New().String(),
@@ -266,11 +279,18 @@ func (s *KnowledgeConflictService) Handle(ctx context.Context, task *asynq.Task)
 			FactKey:         anchor.FactKey,
 			FactAnchorKind:  anchor.AnchorKind,
 			ClaimKey:        anchor.ClaimKey,
-			FactSubject:     anchor.Subject,
-			FactPredicate:   anchor.Predicate,
-			FactValueA:      anchor.ValueA,
-			FactValueB:      anchor.ValueB,
-			ContentA:        conflictTruncateRunes(p.NewChunk.Content, conflictContentMaxRunes),
+			FactSubject:          anchor.Subject,
+			FactPredicate:        anchor.Predicate,
+			FactValueA:           anchor.ValueA,
+			FactValueB:           anchor.ValueB,
+			DocMetaA:              conflictDocumentMetaJSON(metaA),
+			DocMetaB:              conflictDocumentMetaJSON(metaB),
+			SuggestedResolution:   suggestion.Resolution,
+			SuggestionReason:      conflictTruncateRunes(suggestion.Reason, conflictReasonMaxRunes),
+			SuggestionConfidence:  suggestion.Confidence,
+			SuggestionVersion:     types.ConflictVersionSuggestionVersion,
+			AutoResolved:          false,
+			ContentA:              conflictTruncateRunes(p.NewChunk.Content, conflictContentMaxRunes),
 			ContentB:        conflictTruncateRunes(p.ExistingChunk.Content, conflictContentMaxRunes),
 			ConflictType:    p.ConflictType,
 			LLMReason:       conflictTruncateRunes(reason, conflictReasonMaxRunes),

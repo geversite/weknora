@@ -260,6 +260,51 @@ def validate_scenario_document_pairs(
     return pairs
 
 
+def validate_version_suggestion_assertions(
+    scenario: dict[str, Any], document_ids: set[str],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    expected = scenario.get("expected_version_suggestions", [])
+    if not isinstance(expected, list):
+        raise ExperimentError("expected_version_suggestions 必须是数组")
+    allowed_resolutions = {"resolved_newer_wins", "resolved_older_wins"}
+    seen: set[tuple[str, str]] = set()
+    for item in expected:
+        if not isinstance(item, dict) or not item.get("left") or not item.get("right") or not item.get("resolution"):
+            raise ExperimentError(f"expected_version_suggestions 每项必须包含 left/right/resolution: {item}")
+        left, right = str(item["left"]), str(item["right"])
+        if left == right or left not in document_ids or right not in document_ids:
+            raise ExperimentError(f"expected_version_suggestions 引用了无效文档对: {left} ↔ {right}")
+        if str(item["resolution"]) not in allowed_resolutions:
+            raise ExperimentError(f"expected_version_suggestions 的 resolution 非法: {item}")
+        key = document_pair_key(left, right)
+        if key in seen:
+            raise ExperimentError(f"expected_version_suggestions 存在重复文档对: {left} ↔ {right}")
+        seen.add(key)
+        confidence = item.get("min_confidence", 0)
+        if isinstance(confidence, bool):
+            raise ExperimentError("expected_version_suggestions.min_confidence 必须是 0 到 1 之间的数")
+        try:
+            value = float(confidence)
+        except (TypeError, ValueError) as exc:
+            raise ExperimentError("expected_version_suggestions.min_confidence 必须是数") from exc
+        if value < 0 or value > 1:
+            raise ExperimentError("expected_version_suggestions.min_confidence 必须在 0 到 1 之间")
+
+    forbidden = validate_scenario_document_pairs(
+        scenario, "forbidden_version_suggestion_document_pairs", document_ids,
+    )
+    overlap = seen & {
+        document_pair_key(str(item["left"]), str(item["right"]))
+        for item in forbidden
+    }
+    if overlap:
+        left, right = sorted(overlap)[0]
+        raise ExperimentError(
+            "同一文档对不能同时要求和禁止 version suggestion: " + left + " ↔ " + right,
+        )
+    return expected, forbidden
+
+
 def load_scenario(path: Path) -> dict[str, Any]:
     scenario = read_json(path)
     if not scenario.get("name"):
@@ -314,9 +359,15 @@ def load_scenario(path: Path) -> dict[str, Any]:
                     "expected_disputed_fact_anchor_kinds 只能包含 claim_key/fuzzy_slot/document_singleton/chunk_pair 的非负整数计数"
                 )
 
+    expected_suggestions, forbidden_suggestion_pairs = validate_version_suggestion_assertions(
+        scenario, document_ids,
+    )
+
     # Normalize absent optional lists so downstream artifact schema is stable.
     scenario["expected_conflict_document_pairs"] = expected
     scenario["forbidden_conflict_document_pairs"] = forbidden
+    scenario["expected_version_suggestions"] = expected_suggestions
+    scenario["forbidden_version_suggestion_document_pairs"] = forbidden_suggestion_pairs
     return scenario
 
 
@@ -459,6 +510,9 @@ def query_conflicts(db: PostgresExporter, kb_id: str) -> list[dict[str, str]]:
         "SELECT c.id, c.knowledge_id_a, c.knowledge_id_b, c.chunk_id_a, c.chunk_id_b, "
         "c.cluster_id, c.fact_key, c.fact_anchor_kind, c.claim_key, c.fact_subject, c.fact_predicate, "
         "c.fact_value_a, c.fact_value_b, "
+        "COALESCE(c.doc_meta_a::text, '{}') AS doc_meta_a, "
+        "COALESCE(c.doc_meta_b::text, '{}') AS doc_meta_b, "
+        "c.suggested_resolution, c.suggestion_reason, c.suggestion_confidence, c.suggestion_version, c.auto_resolved, "
         "c.content_a, c.content_b, c.conflict_type, c.llm_reason, c.status, c.detected_by, "
         "c.created_at, c.updated_at, "
         "COALESCE(ka.title, '') AS title_a, COALESCE(kb.title, '') AS title_b "
@@ -489,6 +543,20 @@ def conflict_status_width_is_sufficient(db: PostgresExporter) -> bool:
     # C4.5's resolved_not_conflict is 21 ASCII characters. PostgreSQL's
     # original 000081 VARCHAR(20) schema must be widened by migration 000089.
     return bool(rows and as_int(rows[0].get("width")) >= len("resolved_not_conflict"))
+
+
+def conflict_version_suggestions_ready(db: PostgresExporter) -> bool:
+    required = {
+        "doc_meta_a", "doc_meta_b", "suggested_resolution", "suggestion_reason",
+        "suggestion_confidence", "suggestion_version", "auto_resolved",
+    }
+    rows = db.query(
+        "SELECT column_name FROM information_schema.columns "
+        "WHERE table_schema = 'public' AND table_name = 'knowledge_conflicts' "
+        "AND column_name IN ('doc_meta_a', 'doc_meta_b', 'suggested_resolution', 'suggestion_reason', "
+        "'suggestion_confidence', 'suggestion_version', 'auto_resolved')"
+    )
+    return {row.get("column_name", "") for row in rows} == required
 
 
 def query_disputed_facts(db: PostgresExporter, kb_id: str) -> list[dict[str, str]]:
@@ -633,6 +701,11 @@ def observed_conflict_pairs(
             "cluster_id": conflict.get("cluster_id", ""),
             "fact_key": conflict.get("fact_key", ""),
             "fact_anchor_kind": conflict.get("fact_anchor_kind", ""),
+            "suggested_resolution": conflict.get("suggested_resolution", ""),
+            "suggestion_confidence": conflict.get("suggestion_confidence", ""),
+            "suggestion_reason": conflict.get("suggestion_reason", ""),
+            "suggestion_version": conflict.get("suggestion_version", ""),
+            "auto_resolved": conflict.get("auto_resolved", ""),
             "reason": conflict.get("llm_reason", ""),
         })
     return rows
@@ -664,6 +737,58 @@ def observed_forbidden_conflict_pairs(
             str(pair.get("left_document", "")), str(pair.get("right_document", "")),
         ) in forbidden_keys
     ]
+
+
+def suggestion_confidence(value: Any) -> float:
+    try:
+        return float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def observed_version_suggestions(observed_pairs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [pair for pair in observed_pairs if str(pair.get("suggested_resolution", "")).strip()]
+
+
+def has_version_suggestion(observed: list[dict[str, Any]], expected: dict[str, Any]) -> bool:
+    minimum = float(expected.get("min_confidence", 0))
+    return any(
+        str(pair.get("left_document", "")) == str(expected["left"])
+        and str(pair.get("right_document", "")) == str(expected["right"])
+        and str(pair.get("suggested_resolution", "")) == str(expected["resolution"])
+        and suggestion_confidence(pair.get("suggestion_confidence")) >= minimum
+        for pair in observed
+    )
+
+
+def observed_forbidden_version_suggestions(
+    observed: list[dict[str, Any]], forbidden_pairs: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    forbidden_keys = {
+        document_pair_key(str(item["left"]), str(item["right"]))
+        for item in forbidden_pairs
+    }
+    return [
+        pair for pair in observed
+        if document_pair_key(
+            str(pair.get("left_document", "")), str(pair.get("right_document", "")),
+        ) in forbidden_keys
+    ]
+
+
+def aggregate_version_suggestions(observed: list[dict[str, Any]]) -> dict[str, Any]:
+    resolutions: dict[str, int] = {}
+    versions: dict[str, int] = {}
+    for pair in observed:
+        resolution = str(pair.get("suggested_resolution", "")) or "unknown"
+        version = str(pair.get("suggestion_version", "")) or "unknown"
+        resolutions[resolution] = resolutions.get(resolution, 0) + 1
+        versions[version] = versions.get(version, 0) + 1
+    return {
+        "suggestion_count": len(observed),
+        "resolutions": resolutions,
+        "versions": versions,
+    }
 
 
 def wait_for_expected_pairs(
@@ -781,6 +906,10 @@ def write_report(
     evaluator: dict[str, Any] | None,
     cascade_metrics: dict[str, Any] | None,
     cluster_metrics: dict[str, Any] | None,
+    version_suggestion_metrics: dict[str, Any] | None,
+    expected_version_suggestions: list[dict[str, Any]],
+    missing_version_suggestions: list[dict[str, Any]],
+    forbidden_version_suggestions: list[dict[str, Any]],
 ) -> None:
     lines = [
         f"# Conflict experiment: {manifest['run_id']}",
@@ -900,6 +1029,27 @@ def write_report(
                 f"`{expected_anchor_kinds}`；match=`{cluster_metrics.get('anchor_kinds_match', False)}`"
             )
 
+    if version_suggestion_metrics is not None:
+        lines += [
+            "", "## C3 版本与权威元数据建议", "",
+            f"- suggestions：`{version_suggestion_metrics.get('suggestion_count', 0)}`",
+            f"- resolutions：`{version_suggestion_metrics.get('resolutions', {})}`",
+            f"- parser versions：`{version_suggestion_metrics.get('versions', {})}`",
+        ]
+        if expected_version_suggestions:
+            lines += ["", "| 标识 | 文档 A → B | 期望建议 | 结果 |", "|---|---|---|---|"]
+            for expected in expected_version_suggestions:
+                matched = expected not in missing_version_suggestions
+                minimum = expected.get("min_confidence", 0)
+                lines.append(
+                    f"| {expected.get('id', '')} | {expected['left']} → {expected['right']} | "
+                    f"{expected['resolution']} (≥{minimum}) | {'✅' if matched else '❌'} |"
+                )
+        if forbidden_version_suggestions:
+            lines.append(
+                f"- forbidden version suggestions observed：`{len(forbidden_version_suggestions)}`"
+            )
+
     if evaluator is not None:
         lines += ["", "## 抽取质量评估", ""]
         lines.append(f"- evaluate.py exit code：`{evaluator['exit_code']}`")
@@ -947,10 +1097,15 @@ def check_environment(client: APIClient, check_db: bool) -> int:
                 raise ExperimentError(
                     "knowledge_conflicts.status 宽度不足；请重启包含 C4.5 migration 000089 的后端。"
                 )
+            if not conflict_version_suggestions_ready(db):
+                raise ExperimentError(
+                    "缺少 C3 conflict version suggestion 列；请重启包含 migration 000090 的后端。"
+                )
             print("[check] PostgreSQL export: OK", db.describe_mode())
             print("[check] C2 conflict_detection_runs: OK")
             print("[check] C4 disputed_facts: OK")
             print("[check] C4.5 conflict status width: OK")
+            print("[check] C3 conflict version suggestions: OK")
         except ExperimentError as exc:
             print("[check] PostgreSQL export: FAIL", exc, file=sys.stderr)
             return 1
@@ -1028,6 +1183,14 @@ def run_experiment(args: argparse.Namespace) -> int:
         if health.get("status") != "ok":
             raise ExperimentError(f"WeKnora /health 非 OK: {health}")
         db.check()
+        if not conflict_detection_runs_table_exists(db):
+            raise ExperimentError("缺少 conflict_detection_runs；请重启包含 C2 migration 000086 的后端。")
+        if not disputed_facts_table_exists(db):
+            raise ExperimentError("缺少 disputed_facts；请重启包含 C4 migration 000088 的后端。")
+        if not conflict_status_width_is_sufficient(db):
+            raise ExperimentError("knowledge_conflicts.status 宽度不足；请重启包含 C4.5 migration 000089 的后端。")
+        if not conflict_version_suggestions_ready(db):
+            raise ExperimentError("缺少 C3 conflict version suggestion 列；请重启包含 migration 000090 的后端。")
 
         template = client.get(f"/knowledge-bases/{args.template_kb_id}")
         if not isinstance(template, dict):
@@ -1167,6 +1330,17 @@ def run_experiment(args: argparse.Namespace) -> int:
             if not has_document_pair(observed_pairs, str(item["left"]), str(item["right"]))
         ]
         observed_forbidden_pairs = observed_forbidden_conflict_pairs(observed_pairs, forbidden_pairs)
+        expected_version_suggestions = scenario.get("expected_version_suggestions", [])
+        forbidden_version_suggestion_pairs = scenario.get("forbidden_version_suggestion_document_pairs", [])
+        version_suggestions = observed_version_suggestions(observed_pairs)
+        missing_version_suggestions = [
+            item for item in expected_version_suggestions
+            if not has_version_suggestion(version_suggestions, item)
+        ]
+        forbidden_version_suggestions_observed = observed_forbidden_version_suggestions(
+            version_suggestions, forbidden_version_suggestion_pairs,
+        )
+        version_suggestion_metrics = aggregate_version_suggestions(version_suggestions)
         expected_disputed_fact_count = scenario.get("expected_disputed_fact_count")
         disputed_fact_count_matches = (
             expected_disputed_fact_count is None
@@ -1193,6 +1367,11 @@ def run_experiment(args: argparse.Namespace) -> int:
             "disputed_fact_count_matches": disputed_fact_count_matches,
             "expected_disputed_fact_anchor_kinds": expected_anchor_kinds,
             "disputed_fact_anchor_kinds_match": disputed_fact_anchor_kinds_match,
+            "version_suggestions": version_suggestion_metrics,
+            "expected_version_suggestions": expected_version_suggestions,
+            "missing_expected_version_suggestions": missing_version_suggestions,
+            "forbidden_version_suggestion_document_pairs": forbidden_version_suggestion_pairs,
+            "observed_forbidden_version_suggestions": forbidden_version_suggestions_observed,
             "expected_conflict_document_pairs": expected_pairs,
             "missing_expected_conflict_document_pairs": missing_pairs,
             "forbidden_conflict_document_pairs": forbidden_pairs,
@@ -1200,12 +1379,17 @@ def run_experiment(args: argparse.Namespace) -> int:
             "evaluator_scope": evaluator_scope,
             "evaluator": evaluator_result,
         }
+        json_dump(output_dir / "version_suggestions.json", version_suggestions)
         json_dump(output_dir / "metrics.json", metrics)
 
         if missing_pairs:
             manifest["status"] = "completed_with_missing_expectations"
         elif observed_forbidden_pairs:
             manifest["status"] = "completed_with_forbidden_conflicts"
+        elif missing_version_suggestions:
+            manifest["status"] = "completed_with_missing_version_suggestions"
+        elif forbidden_version_suggestions_observed:
+            manifest["status"] = "completed_with_forbidden_version_suggestions"
         elif not disputed_fact_count_matches or not disputed_fact_anchor_kinds_match:
             manifest["status"] = "completed_with_cluster_expectation_failure"
         else:
@@ -1215,6 +1399,8 @@ def run_experiment(args: argparse.Namespace) -> int:
         write_report(
             output_dir / "report.md", manifest, claim_counts, expected_pairs, forbidden_pairs,
             observed_pairs, observed_forbidden_pairs, evaluator_result, cascade_metrics, cluster_metrics,
+            version_suggestion_metrics, expected_version_suggestions, missing_version_suggestions,
+            forbidden_version_suggestions_observed,
         )
 
         print(f"实验完成: {output_dir}")
@@ -1236,6 +1422,12 @@ def run_experiment(args: argparse.Namespace) -> int:
             f"LLM(batch/single)={cascade_totals['llm_batch_call_count']}/"
             f"{cascade_totals['llm_single_call_count']}"
         )
+        if version_suggestion_metrics["suggestion_count"]:
+            print(
+                "  C3 suggestions: "
+                f"{version_suggestion_metrics['suggestion_count']} "
+                f"{version_suggestion_metrics['resolutions']}"
+            )
         if missing_pairs:
             print("  缺失预期 conflict 文档对:", ", ".join(str(item.get("id", "?")) for item in missing_pairs))
         if observed_forbidden_pairs:
@@ -1248,6 +1440,22 @@ def run_experiment(args: argparse.Namespace) -> int:
             print(
                 "  观察到不应出现的 conflict 文档对:",
                 ", ".join(left + "↔" + right for left, right in unexpected_docs),
+            )
+        if missing_version_suggestions:
+            print(
+                "  缺失预期 version suggestions:",
+                ", ".join(str(item.get("id", "?")) for item in missing_version_suggestions),
+            )
+        if forbidden_version_suggestions_observed:
+            unexpected_suggestion_docs = sorted({
+                document_pair_key(
+                    str(pair.get("left_document", "")), str(pair.get("right_document", "")),
+                )
+                for pair in forbidden_version_suggestions_observed
+            })
+            print(
+                "  观察到不应出现的 version suggestions:",
+                ", ".join(left + "↔" + right for left, right in unexpected_suggestion_docs),
             )
         if not disputed_fact_count_matches:
             print(
@@ -1271,6 +1479,8 @@ def run_experiment(args: argparse.Namespace) -> int:
         if (
             missing_pairs
             or observed_forbidden_pairs
+            or missing_version_suggestions
+            or forbidden_version_suggestions_observed
             or not disputed_fact_count_matches
             or not disputed_fact_anchor_kinds_match
             or (evaluator_result and evaluator_result["exit_code"] != 0)

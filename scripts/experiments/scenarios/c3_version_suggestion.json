@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "name": "c3_version_suggestion",
+  "description": "C3-Lite deterministic title/header metadata regression. Same issuer V1/V2 documents conflict on one allowance fact and must receive an advisory newer-wins suggestion; a later document from another issuer must not receive an authority suggestion.",
+  "min_claims_per_document": 1,
+  "documents": [
+    {
+      "id": "c3_v1",
+      "path": "testdata/claims_eval/docs/c3_meal_allowance_v1.md",
+      "title": "c3_meal_allowance_v1"
+    },
+    {
+      "id": "c3_v2",
+      "path": "testdata/claims_eval/docs/c3_meal_allowance_v2.md",
+      "title": "c3_meal_allowance_v2"
+    },
+    {
+      "id": "c3_other",
+      "path": "testdata/claims_eval/docs/c3_meal_allowance_other_issuer.md",
+      "title": "c3_meal_allowance_other_issuer"
+    }
+  ],
+  "expected_conflict_document_pairs": [
+    {"id": "C3_V2_V1", "left": "c3_v2", "right": "c3_v1"},
+    {"id": "C3_OTHER_V1", "left": "c3_other", "right": "c3_v1"},
+    {"id": "C3_OTHER_V2", "left": "c3_other", "right": "c3_v2"}
+  ],
+  "expected_version_suggestions": [
+    {
+      "id": "C3_SUGGEST_V2_WINS",
+      "left": "c3_v2",
+      "right": "c3_v1",
+      "resolution": "resolved_newer_wins",
+      "min_confidence": 0.95
+    }
+  ],
+  "forbidden_version_suggestion_document_pairs": [
+    {"id": "C3_NO_CROSS_ISSUER_V1", "left": "c3_other", "right": "c3_v1"},
+    {"id": "C3_NO_CROSS_ISSUER_V2", "left": "c3_other", "right": "c3_v2"}
+  ]
+}

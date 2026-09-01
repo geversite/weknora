@@ -43,3 +43,6 @@ ClaimExtractService 后，应以本套件复跑并归档结果。
 - `c4_meal_allowance_a/b/c.md` 不属于六文档 claim P/R gold；它们仅由
   `scripts/experiments/scenarios/c4_cluster_triplet.json` 使用，验证三条 raw conflict
   是否聚合为一条 `DisputedFact`。
+- `c3_meal_allowance_v1/v2/other_issuer.md` 不属于 gold；它们由
+  `scripts/experiments/scenarios/c3_version_suggestion.json` 使用，验证 C3 从显式
+  发布机构/生效日期/版本号给出建议胜方，且不对跨机构来源建议胜方。
