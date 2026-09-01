@@ -38,7 +38,8 @@ type KnowledgeConflict struct {
 	ContentB       string     `json:"content_b" gorm:"type:text"`
 	ConflictType   string     `json:"conflict_type" gorm:"type:varchar(32);default:'fact_contradiction'"`
 	LLMReason      string     `json:"llm_reason" gorm:"type:text"`
-	Status         string     `json:"status" gorm:"type:varchar(20);default:'pending';index"`
+	// VARCHAR(32) is required because resolved_not_conflict is 21 characters.
+	Status         string     `json:"status" gorm:"type:varchar(32);default:'pending';index"`
 	ResolvedBy     string     `json:"resolved_by" gorm:"type:varchar(64)"`
 	ResolvedAt     *time.Time `json:"resolved_at"`
 	ResolutionNote string     `json:"resolution_note" gorm:"type:text"`

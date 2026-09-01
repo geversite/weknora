@@ -263,6 +263,10 @@ cluster_metrics.json
 
 ### C4.5 安全 cluster 级裁决传播
 
+C4.5 需要 PostgreSQL migration `000089_conflict_status_width`：旧 M3 的
+`knowledge_conflicts.status VARCHAR(20)` 放不下 21 字符的 `resolved_not_conflict`；SQLite 的
+`TEXT` 无宽度限制，对应版本标记为 SQLite migration `000010`。
+
 C4.5 把一次**无副作用**裁决传播到一个 `DisputedFact` 的全部 pending raw members：
 
 ```bash

@@ -480,6 +480,17 @@ def disputed_facts_table_exists(db: PostgresExporter) -> bool:
     return bool(rows and rows[0].get("table_name"))
 
 
+def conflict_status_width_is_sufficient(db: PostgresExporter) -> bool:
+    rows = db.query(
+        "SELECT character_maximum_length AS width "
+        "FROM information_schema.columns "
+        "WHERE table_schema = 'public' AND table_name = 'knowledge_conflicts' AND column_name = 'status'"
+    )
+    # C4.5's resolved_not_conflict is 21 ASCII characters. PostgreSQL's
+    # original 000081 VARCHAR(20) schema must be widened by migration 000089.
+    return bool(rows and as_int(rows[0].get("width")) >= len("resolved_not_conflict"))
+
+
 def query_disputed_facts(db: PostgresExporter, kb_id: str) -> list[dict[str, str]]:
     if not disputed_facts_table_exists(db):
         raise ExperimentError(
@@ -932,9 +943,14 @@ def check_environment(client: APIClient, check_db: bool) -> int:
                 raise ExperimentError(
                     "缺少 disputed_facts；请重启包含 C4 migration 000088 的后端。"
                 )
+            if not conflict_status_width_is_sufficient(db):
+                raise ExperimentError(
+                    "knowledge_conflicts.status 宽度不足；请重启包含 C4.5 migration 000089 的后端。"
+                )
             print("[check] PostgreSQL export: OK", db.describe_mode())
             print("[check] C2 conflict_detection_runs: OK")
             print("[check] C4 disputed_facts: OK")
+            print("[check] C4.5 conflict status width: OK")
         except ExperimentError as exc:
             print("[check] PostgreSQL export: FAIL", exc, file=sys.stderr)
             return 1

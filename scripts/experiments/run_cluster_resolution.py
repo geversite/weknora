@@ -25,7 +25,14 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from run_claims_eval import APIClient, ExperimentError, PostgresExporter, json_dump, sql_literal
+from run_claims_eval import (
+    APIClient,
+    ExperimentError,
+    PostgresExporter,
+    conflict_status_width_is_sufficient,
+    json_dump,
+    sql_literal,
+)
 
 
 SAFE_RESOLUTIONS = {
@@ -106,6 +113,10 @@ def run_resolution(args: argparse.Namespace) -> int:
     client = APIClient(args.base_url, os.environ.get("WEKNORA_API_KEY"))
     db = PostgresExporter()
     db.check()
+    if not conflict_status_width_is_sufficient(db):
+        raise ExperimentError(
+            "knowledge_conflicts.status 宽度不足；请重启包含 C4.5 migration 000089 的后端。"
+        )
     before = query_members(db, kb_id, cluster_id)
     pending_before = [row for row in before if row.get("status") == "pending"]
     if not pending_before:

@@ -219,6 +219,11 @@ C4-Lite 的 identity 已冻结后，C4.5 增加无 UI 的：
 POST /api/v1/knowledge-bases/:id/conflicts/clusters/resolve
 ```
 
+PostgreSQL migration `000089_conflict_status_width` 将旧 M3 的
+`knowledge_conflicts.status VARCHAR(20)` 扩展为 `VARCHAR(32)`，因为
+`resolved_not_conflict` 有 21 个字符。SQLite 的 `TEXT` 无宽度限制，对应版本标记为
+SQLite migration `000010`。
+
 请求：
 
 ```json
