@@ -4,11 +4,13 @@
 >
 > 状态：**C4-Lite 研究原型已冻结**。真实运行证据见
 > [C4-Lite 生产运行评估报告](冲突检测V2-C4-Lite-生产运行评估报告.md)。
+> C3/C4.6 的多来源全局 winner proposal 亦已完成真实服务验证，见
+> [C4.6 全局胜方 Proposal 评估报告](冲突检测V2-C4.6-全局胜方Proposal评估报告.md)。
 >
 > 依赖：C1 claims 与 C2-Lite 最终 raw `knowledge_conflicts`。
 >
 > C4-Lite core frozen version：`c4-v5`；C3/C4.6 proposal extension：`c4-v6`。
-> 基础聚类迁移：PostgreSQL `000088` / SQLite `000009`；proposal 扩展迁移：`000091` / SQLite `000012`。
+> 基础聚类迁移：PostgreSQL `000088` / SQLite `000009`；proposal 扩展迁移：PostgreSQL `000091` / SQLite `000012`。
 
 ---
 
@@ -40,7 +42,8 @@ C ↔ B
 
 本实现刻意不做：
 
-- cluster 级 Resolve 及向全部 member conflict 传播裁决；
+- 基于 C4.6 winner proposal 的 cluster 级 `newer_wins` / `older_wins` 采纳与传播；
+  （C4.5 已冻结 `keep_both` / `not_conflict` 的安全传播。）
 - wiki dispute block 自动写回；
 - ConflictQueue 前端两级视图；
 - agent 正文叙事整合；
@@ -85,11 +88,15 @@ conflict_type / status
 conflict_count / pending_conflict_count
 source_count / source_refs
 candidate_value_count / candidate_values
+suggested_winner_knowledge_id / winner_proposal_reason
+winner_proposal_confidence / winner_proposal_version / winner_proposal_source_count
 created_at / updated_at
 ```
 
 `candidate_values` 与 `source_refs` 是从 member conflicts 确定性去重、排序后的摘要。它们
 可支撑无 UI 的审计导出与以后 cluster 级 Resolve，而不是替代原始 A/B content snapshots。
+C4.6 新增的 winner 字段只承载基于全来源 metadata 的 advisory proposal；空值代表没有足够
+证据得到唯一全局最大来源，不代表任意一侧自动失败。
 
 ---
 
@@ -127,6 +134,7 @@ candidate generation、规则层或 LLM verdict，因此不会把 C2-B4 的 prom
 → 旧 row 无 fact_key 时，以 chunk_pair 保守回填
 → 按 fact_key 分组
 → 计算 source/value/type/status 聚合
+→ C4.6：对全部 member 的 C3 metadata 尝试求唯一全局 winner proposal
 → upsert disputed_facts（tenant + KB + fact_key 唯一）
 → 回写 member conflict.cluster_id
 → 删除当前无 member raw conflict 的 orphan cluster
@@ -166,6 +174,7 @@ POST /api/v1/knowledge-bases/:id/conflicts/clusters/rebuild
   "disputed_fact_count": 1,
   "assigned_conflict_count": 3,
   "unanchored_conflict_count": 0,
+  "winner_proposal_count": 1,
   "anchor_kinds": {"claim_key": 1}
 }
 ```
@@ -257,17 +266,51 @@ resolved_newer_wins
 resolved_older_wins
 ```
 
-因为一个 cluster 内不同 raw member 的 A/B 方向可不同。没有 C3 的文档版本、时间和来源
-权威性时，逐 member 套用“新/旧胜出”会错误禁用来源。`keep_both` 与 `not_conflict` 不禁用
-chunk，因而是当前唯一允许传播的安全子集。
+因为一个 cluster 内不同 raw member 的 A/B 方向可不同。即使 C4.6 已产生全局 winner
+proposal，C4.5 也不会把它自动转换成 `newer_wins` / `older_wins`：`keep_both` 与
+`not_conflict` 仍是当前唯一允许传播的安全子集。
 
 ---
 
-## 9. 已知限制
+## 9. C4.6：多来源全局 winner proposal（已冻结，advisory-only）
+
+真实运行证据见
+[C4.6 全局胜方 Proposal 评估报告](冲突检测V2-C4.6-全局胜方Proposal评估报告.md)。
+
+C4.6 在同一事实 cluster 内读取全部 member 的 C3 `doc_meta_a/b` snapshot，按 knowledge ID
+收集 source metadata 后才作判断。它不采用 raw member 的局部 A/B 方向，也不把
+`ConflictType=version_update` 当作 winner 证据。
+
+```text
+全部 source metadata 完整
+→ issuer 规范化后全部相等
+→ 所有日期/version 对可比较且方向一致
+→ 找到唯一一个严格晚于每个其他 source 的候选
+→ 仅在 disputed_facts 写 advisory winner proposal
+```
+
+任意 metadata 缺失、issuer 不同、同 source snapshot 不一致、日期区间重叠、版本并列或
+日期/version 方向不一致，均保守返回空 proposal。
+
+```bash
+make experiment-c46
+make experiment-c46-negative
+```
+
+真实正例将同 issuer V1/V2/V3 的 4 条 raw chunk-pair conflicts 聚为 1 条 `claim_key`
+DisputedFact，并通过 `c46_v3` 唯一 winner（confidence ≥0.95）断言；跨 issuer 负例以
+零 proposal 断言通过。proposal 只更新 aggregate 字段，不触发 Resolve、chunk 禁用、wiki
+写回或 agent 改写。
+
+---
+
+## 10. 已知限制
 
 1. 对已有历史 raw rows，若 C4 前没有保存 claim provenance，只能安全回填 `chunk_pair`，不能
    追溯地猜测跨 chunk 同一事实；
-2. `ConflictType=version_update` 仍由 C2 LLM 给出，C4 只聚合，不纠正类型；C3 处理版本语义；
+2. `ConflictType=version_update` 仍由 C2 LLM 给出，C4 只聚合，不纠正类型；C3/C4.6 只依赖
+   显式 metadata snapshot，不把该类型直接升级为全局权威性结论；
 3. 一个 raw chunk pair 若自身含多条矛盾事实，当前旧格式仍只携带一个 final verdict，C4 无法
    从中无损拆分；未来应在 candidate / verdict 层持久化细粒度 claim evidence；
-4. cluster 级 resolution、传播、wiki 写回必须在 cluster identity 和人工审计稳定后再实现。
+4. C4.6 尚未实现 proposal adoption、`newer_wins` / `older_wins` 全局传播、wiki 写回或 agent
+   叙事整合；这些必须以显式采纳和全局 winner（不是 raw A/B 方向）为前提。

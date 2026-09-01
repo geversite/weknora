@@ -3,11 +3,14 @@
 > 所属系列：[冲突检测 V2 里程碑规划](冲突检测V2-里程碑规划.md)
 >
 > 状态：**C3-Lite 研究原型已冻结（advisory-only）**。真实运行见
-> [C3-Lite 生产运行评估报告](冲突检测V2-C3-Lite-生产运行评估报告.md)。
+> [C3-Lite 生产运行评估报告](冲突检测V2-C3-Lite-生产运行评估报告.md)。其多来源事实级扩展
+> C4.6 已完成真实服务验证，见
+> [C4.6 全局胜方 Proposal 评估报告](冲突检测V2-C4.6-全局胜方Proposal评估报告.md)。
 >
 > 依赖：C1/C2 的 final raw conflict、C4/C4.5 的事实聚类与安全传播。
 >
 > Suggestion version：`c3-v1`；迁移：PostgreSQL `000090` / SQLite `000011`。
+> C4.6 proposal version：`c3-c4-v1`；迁移：PostgreSQL `000091` / SQLite `000012`。
 
 ---
 
@@ -187,13 +190,16 @@ resolved_keep_both
 resolved_not_conflict
 ```
 
-C3-Lite 不会自动开放 cluster-level `newer_wins`。它先提供可审计、无副作用的建议证据。
-只有在后续元数据 precision、issuer authority、跨多 member consistency 和人工审计都通过后，
-才可设计全局 winner selection 并安全接入 C4.5。
+C3-Lite 不会自动开放 cluster-level `newer_wins`。它先提供可审计、无副作用的逐 raw pair
+建议证据。C4.6 已在这之上完成全来源、唯一最大值的 **proposal**，但仍没有把 proposal 接入
+C4.5 的 Resolve：`resolved_newer_wins` / `resolved_older_wins` 仍被 C4.5 明确拒绝。
 
 ---
 
-## 7. C3/C4.6 全局 winner proposal（实现待运行验证）
+## 7. C3/C4.6 全局 winner proposal（已完成真实服务验证）
+
+真实运行与完整边界见
+[C4.6 全局胜方 Proposal 评估报告](冲突检测V2-C4.6-全局胜方Proposal评估报告.md)。
 
 C4.6 读取同一 `DisputedFact` 的全部 member `doc_meta_a/b`，而不是直接把每条 raw
 `SuggestedResolution` 当作全局结论。它要求：
@@ -219,8 +225,11 @@ winner_proposal_source_count
 它始终是 proposal：raw member status、`AutoResolved`、chunk enable state 均不改变。任何
 issuer 不一致、缺 metadata、日期/version 方向冲突、不可比较或并列最大值都会保留空 proposal。
 
-`make experiment-c46` 用 V1/V2/V3 同 issuer 三来源 triplet 验证 `c46_v3` 是唯一全局最大来源；
-`make experiment-c46-negative` 用跨 issuer exact conflict 验证 proposal 数量为零。
+`make experiment-c46` 已在真实 Linux 服务中以 exit code `0` 验证：V1/V2/V3 同 issuer
+三来源聚为一个 `claim_key` DisputedFact，并对 `c46_v3` 产生唯一 proposal（confidence ≥0.95）。
+`make experiment-c46-negative` 同样以 exit code `0` 验证：跨 issuer exact conflict 仍聚为一项
+事实争议，但 proposal 数量为零。正例中有 4 条 raw chunk-pair rows 和 4 条 C3 local suggestions，
+最终仍只有 1 条 C4.6 fact-level proposal。
 
 ## 8. 测试覆盖
 
