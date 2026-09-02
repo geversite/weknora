@@ -554,6 +554,7 @@ def query_conflicts(db: PostgresExporter, kb_id: str) -> list[dict[str, str]]:
         "COALESCE(c.doc_meta_a::text, '{}') AS doc_meta_a, "
         "COALESCE(c.doc_meta_b::text, '{}') AS doc_meta_b, "
         "c.suggested_resolution, c.suggestion_reason, c.suggestion_confidence, c.suggestion_version, c.auto_resolved, "
+        "c.winner_adoption_id, "
         "c.content_a, c.content_b, c.conflict_type, c.llm_reason, c.status, c.detected_by, "
         "c.created_at, c.updated_at, "
         "COALESCE(ka.title, '') AS title_a, COALESCE(kb.title, '') AS title_b "
@@ -625,6 +626,39 @@ def disputed_fact_winner_proposals_ready(db: PostgresExporter) -> bool:
     return {row.get("column_name", "") for row in rows} == required
 
 
+def disputed_fact_winner_adoptions_ready(db: PostgresExporter) -> bool:
+    """Return whether C4.8's durable adoption/reopen schema is complete."""
+    required_fact_columns = {"active_winner_adoption_id"}
+    fact_rows = db.query(
+        "SELECT column_name FROM information_schema.columns "
+        "WHERE table_schema = 'public' AND table_name = 'disputed_facts' "
+        "AND column_name = 'active_winner_adoption_id'"
+    )
+    required_conflict_columns = {"winner_adoption_id"}
+    conflict_rows = db.query(
+        "SELECT column_name FROM information_schema.columns "
+        "WHERE table_schema = 'public' AND table_name = 'knowledge_conflicts' "
+        "AND column_name = 'winner_adoption_id'"
+    )
+    table_rows = db.query("SELECT to_regclass('public.disputed_fact_winner_adoptions') AS table_name")
+    required_record_columns = {
+        "id", "tenant_id", "knowledge_base_id", "disputed_fact_id", "winner_knowledge_id",
+        "proposal_version", "proposal_confidence", "proposal_source_count", "member_conflict_ids",
+        "disabled_chunk_ids", "disabled_knowledge_ids", "status", "adopted_by", "adopted_at",
+        "adoption_note", "revoked_by", "revoked_at", "revoke_note",
+    }
+    record_rows = db.query(
+        "SELECT column_name FROM information_schema.columns "
+        "WHERE table_schema = 'public' AND table_name = 'disputed_fact_winner_adoptions'"
+    )
+    return (
+        {row.get("column_name", "") for row in fact_rows} == required_fact_columns
+        and {row.get("column_name", "") for row in conflict_rows} == required_conflict_columns
+        and bool(table_rows and table_rows[0].get("table_name"))
+        and required_record_columns.issubset({row.get("column_name", "") for row in record_rows})
+    )
+
+
 def query_disputed_facts(db: PostgresExporter, kb_id: str) -> list[dict[str, str]]:
     if not disputed_facts_table_exists(db):
         raise ExperimentError(
@@ -633,7 +667,7 @@ def query_disputed_facts(db: PostgresExporter, kb_id: str) -> list[dict[str, str
     return db.query(
         "SELECT id, tenant_id, knowledge_base_id, clusterer_version, fact_key, anchor_kind, claim_key, subject, predicate, "
         "suggested_winner_knowledge_id, winner_proposal_reason, winner_proposal_confidence, winner_proposal_version, "
-        "winner_proposal_source_count, "
+        "winner_proposal_source_count, active_winner_adoption_id, "
         "conflict_type, status, conflict_count, pending_conflict_count, source_count, candidate_value_count, "
         "COALESCE(candidate_values::text, '[]') AS candidate_values, "
         "COALESCE(source_refs::text, '[]') AS source_refs, created_at, updated_at "
@@ -1238,12 +1272,17 @@ def check_environment(client: APIClient, check_db: bool) -> int:
                 raise ExperimentError(
                     "缺少 C3/C4.6 winner proposal 列；请重启包含 migration 000091 的后端。"
                 )
+            if not disputed_fact_winner_adoptions_ready(db):
+                raise ExperimentError(
+                    "缺少 C4.8 durable winner adoption schema；请重启包含 migration 000092 的后端。"
+                )
             print("[check] PostgreSQL export: OK", db.describe_mode())
             print("[check] C2 conflict_detection_runs: OK")
             print("[check] C4 disputed_facts: OK")
             print("[check] C4.5/C4.7 conflict status width: OK")
             print("[check] C3 conflict version suggestions: OK")
             print("[check] C3/C4.6 winner proposals: OK")
+            print("[check] C4.8 durable winner adoptions: OK")
         except ExperimentError as exc:
             print("[check] PostgreSQL export: FAIL", exc, file=sys.stderr)
             return 1
@@ -1331,6 +1370,8 @@ def run_experiment(args: argparse.Namespace) -> int:
             raise ExperimentError("缺少 C3 conflict version suggestion 列；请重启包含 migration 000090 的后端。")
         if not disputed_fact_winner_proposals_ready(db):
             raise ExperimentError("缺少 C3/C4.6 winner proposal 列；请重启包含 migration 000091 的后端。")
+        if not disputed_fact_winner_adoptions_ready(db):
+            raise ExperimentError("缺少 C4.8 durable winner adoption schema；请重启包含 migration 000092 的后端。")
 
         template = client.get(f"/knowledge-bases/{args.template_kb_id}")
         if not isinstance(template, dict):

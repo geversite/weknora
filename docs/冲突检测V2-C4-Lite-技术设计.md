@@ -7,12 +7,16 @@
 > C3/C4.6 的多来源全局 winner proposal 亦已完成真实服务验证，见
 > [C4.6 全局胜方 Proposal 评估报告](冲突检测V2-C4.6-全局胜方Proposal评估报告.md)。C4.7 的
 > 显式采纳路径也已完成真实服务验证，见
-> [C4.7 显式全局胜方采纳评估报告](冲突检测V2-C4.7-显式全局胜方采纳评估报告.md)。
+> [C4.7 显式全局胜方采纳评估报告](冲突检测V2-C4.7-显式全局胜方采纳评估报告.md)。C4.8 的 durable
+> revoke/reopen 路径已实现、待真实服务验证，见
+> [C4.8 显式胜方撤销重开技术设计](冲突检测V2-C4.8-显式胜方撤销重开技术设计.md)。
 >
 > 依赖：C1 claims 与 C2-Lite 最终 raw `knowledge_conflicts`。
 >
-> C4-Lite core frozen version：`c4-v5`；C3/C4.6 proposal extension：`c4-v6`。
-> 基础聚类迁移：PostgreSQL `000088` / SQLite `000009`；proposal 扩展迁移：PostgreSQL `000091` / SQLite `000012`。
+> C4-Lite core frozen version：`c4-v5`；C3/C4.6 proposal extension：`c4-v6`；C4.8 durable
+> adoption/reopen aggregate extension：`c4-v7`。
+> 基础聚类迁移：PostgreSQL `000088` / SQLite `000009`；proposal 扩展迁移：PostgreSQL `000091` / SQLite `000012`；
+> durable adoption/reopen 扩展：PostgreSQL `000092` / SQLite `000013`。
 
 ---
 
@@ -314,8 +318,9 @@ DisputedFact，并通过 `c46_v3` 唯一 winner（confidence ≥0.95）断言；
 
 C4.7 不接受通用的 `newer_wins` / `older_wins` cluster resolution。它要求调用方从当前 cluster
 读取并回显 winner knowledge ID、proposal version、proposal source count 与 `updated_at`。服务在
-一个 database transaction 内锁定 aggregate、全部 current members 和 loser chunks，发现 proposal
-或 member/source snapshot 变化时以 HTTP `409` fail closed。
+一个 database transaction 内锁定 aggregate、全部 current members 和 member chunks，发现 proposal
+或 member/source snapshot 变化时以 HTTP `409` fail closed。C4.8 extension 会同时持久化 adoption record、
+raw `winner_adoption_id` 与 aggregate `active_winner_adoption_id`，以支持后续精确 reopen。
 
 成功时，所有 pending members 使用方向无关的 `resolved_global_winner`，而不是依赖某一 raw row 的
 A/B 方向；只禁用 cluster member 中属于非 winner source 的 chunks，保留 winner chunks。当前只允许
@@ -335,7 +340,30 @@ agent 写回。
 
 ---
 
-## 11. 已知限制
+## 11. C4.8：显式 winner revoke/reopen（已实现，待服务验证）
+
+完整合约见 [C4.8 显式胜方撤销重开技术设计](冲突检测V2-C4.8-显式胜方撤销重开技术设计.md)。C4.8
+不从 `resolution_note` 或当前 proposal 猜测 reenable target；它通过 migration `000092` 的 durable
+adoption record，精确记录 C4.7 当时的 raw member IDs、disabled chunk IDs 和 winner metadata。
+
+`POST /conflicts/clusters/reopen-winner` 要求 caller 回显当前 `active_winner_adoption_id` 和
+DisputedFact `updated_at`。服务在一个 transaction 中重新验证 record、member set、chunk owner、chunk
+禁用状态和 adoption 后的 timestamp；任一不同或 target 被另一 global adoption 占用时都 HTTP `409`。
+
+成功时，只恢复该 record 的 loser chunks，并把同一 adoption 的全部 raw members 从
+`resolved_global_winner` 变回 `pending`；record 自身变为 `revoked`，保留原始 adoption evidence。C4.8
+不自动 reopen，也不支持 migration 前的 legacy C4.7 rows。
+
+```bash
+make experiment-c46
+make experiment-c47 RUN=experiments/runs/<fresh-c46-positive-run>
+make experiment-c48 RUN=experiments/runs/<same-run>
+make experiment-c48-negative RUN=experiments/runs/<fresh-c46-negative-run>
+```
+
+---
+
+## 12. 已知限制
 
 1. 对已有历史 raw rows，若 C4 前没有保存 claim provenance，只能安全回填 `chunk_pair`，不能
    追溯地猜测跨 chunk 同一事实；
@@ -343,6 +371,7 @@ agent 写回。
    显式 metadata snapshot，不把该类型直接升级为全局权威性结论；
 3. 一个 raw chunk pair 若自身含多条矛盾事实，当前旧格式仍只携带一个 final verdict，C4 无法
    从中无损拆分；未来应在 candidate / verdict 层持久化细粒度 claim evidence；
-4. C4.7 已冻结仅限 exact `claim_key` 的显式 proposal adoption；`fuzzy_slot` / `document_singleton` /
-   `chunk_pair` 的 adoption、winner 撤销/重开、wiki 写回和 agent 叙事整合仍未实现。所有后续 winner
-   行为仍必须使用全局 winner，而不是 raw A/B 方向。
+4. C4.7 已冻结 exact `claim_key` 的显式 proposal adoption；C4.8 已实现同一 durable adoption 的
+   precise revoke/reopen，但尚待真实服务验收。`fuzzy_slot` / `document_singleton` / `chunk_pair` 的
+   adoption/reopen、winner 并列、wiki 写回和 agent 叙事整合仍未实现。reopen 后可以重新走 C4.7 的
+   显式采纳，但没有自动再采纳。所有 winner 行为仍必须使用全局 winner，而不是 raw A/B 方向。

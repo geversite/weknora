@@ -214,8 +214,15 @@ func (c *StringArray) Scan(value interface{}) error {
 	if value == nil {
 		return nil
 	}
-	b, ok := value.([]byte)
-	if !ok {
+	var b []byte
+	switch v := value.(type) {
+	case []byte:
+		b = v
+	case string:
+		// SQLite returns TEXT JSON as string while PostgreSQL/pgx commonly
+		// returns []byte. Treat both as the same persisted JSON payload.
+		b = []byte(v)
+	default:
 		return nil
 	}
 	return json.Unmarshal(b, c)

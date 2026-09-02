@@ -31,6 +31,9 @@ type KnowledgeConflictRepository interface {
 	// propagates an explicit global winner. It must never infer a winner from a
 	// member row's local A/B orientation.
 	AdoptPendingWinnerProposal(ctx context.Context, tenantID uint64, kbID, resolverUserID string, req types.DisputedFactWinnerAdoption) (*types.DisputedFactWinnerAdoptionResult, error)
+	// ReopenWinnerAdoption atomically revokes one current C4.7 adoption after
+	// validating its durable record, raw members and disabled chunk snapshots.
+	ReopenWinnerAdoption(ctx context.Context, tenantID uint64, kbID, resolverUserID string, req types.DisputedFactWinnerRevocation) (*types.DisputedFactWinnerRevocationResult, error)
 	// ListPendingByChunkIDs returns pending conflicts where either chunk is in the list.
 	// Used by rerank penalty and answer-time divergence tagging.
 	ListPendingByChunkIDs(ctx context.Context, chunkIDs []string) ([]*types.KnowledgeConflict, error)

@@ -199,6 +199,55 @@ func (s *conflictClusterService) AdoptDisputedFactWinner(
 	return result, nil
 }
 
+// ReopenDisputedFactWinner is C4.8's explicit reversal of one currently
+// active C4.7 adoption. It accepts neither a replacement winner nor an
+// inferred raw-pair direction: the durable adoption ID and current aggregate
+// updated_at snapshot must both match under the repository transaction.
+func (s *conflictClusterService) ReopenDisputedFactWinner(
+	ctx context.Context,
+	tenantID uint64,
+	resolverUserID string,
+	kbID string,
+	req types.DisputedFactWinnerRevocation,
+) (*types.DisputedFactWinnerRevocationResult, error) {
+	if s == nil || s.conflictRepo == nil || s.factRepo == nil {
+		return nil, errors.New("conflict cluster repositories not configured")
+	}
+	req.DisputedFactID = strings.TrimSpace(req.DisputedFactID)
+	req.WinnerAdoptionID = strings.TrimSpace(req.WinnerAdoptionID)
+	req.Note = strings.TrimSpace(req.Note)
+	if tenantID == 0 || kbID == "" || req.DisputedFactID == "" || req.WinnerAdoptionID == "" ||
+		req.ExpectedDisputedFactUpdatedAt.IsZero() {
+		return nil, errors.New(
+			"tenant id, knowledge base id, disputed_fact_id, winner_adoption_id and disputed fact updated_at are required",
+		)
+	}
+	if len([]rune(req.Note)) > 2000 {
+		return nil, errors.New("winner reopen note exceeds 2000 runes")
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	result, err := s.conflictRepo.ReopenWinnerAdoption(ctx, tenantID, kbID, resolverUserID, req)
+	if err != nil {
+		return nil, fmt.Errorf("reopen disputed fact %s winner adoption: %w", req.DisputedFactID, err)
+	}
+	if result == nil || result.ReopenedConflictCount == 0 {
+		return nil, errors.New("winner reopen returned no reopened raw conflicts")
+	}
+
+	rebuild, err := s.rebuildLocked(ctx, tenantID, kbID)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"reopened global winner adoption for %d raw conflicts but cluster rebuild failed: %w",
+			result.ReopenedConflictCount, err,
+		)
+	}
+	result.Rebuild = rebuild
+	return result, nil
+}
+
 func isSafeDisputedFactResolution(resolution string) bool {
 	return resolution == types.ConflictStatusResolvedKeepBoth ||
 		resolution == types.ConflictStatusResolvedNotConflict
@@ -634,6 +683,8 @@ func aggregateDisputedFact(
 	values := make(map[string]struct{})
 	sources := make(map[string]struct{})
 	conflictTypes := make(map[string]struct{})
+	activeAdoptionIDs := make(map[string]struct{})
+	allMembersFromActiveAdoption := true
 	pendingCount := 0
 	for _, member := range members {
 		if member == nil {
@@ -665,6 +716,11 @@ func aggregateDisputedFact(
 		if member.Status == types.ConflictStatusPending {
 			pendingCount++
 		}
+		if member.Status == types.ConflictStatusResolvedGlobalWinner && member.WinnerAdoptionID != "" {
+			activeAdoptionIDs[member.WinnerAdoptionID] = struct{}{}
+		} else {
+			allMembersFromActiveAdoption = false
+		}
 		fact.ConflictCount++
 	}
 	if fact.AnchorKind == "" {
@@ -680,6 +736,11 @@ func aggregateDisputedFact(
 		fact.Status = types.DisputedFactStatusPending
 	} else {
 		fact.Status = types.DisputedFactStatusResolved
+	}
+	if fact.ConflictCount > 0 && pendingCount == 0 && allMembersFromActiveAdoption && len(activeAdoptionIDs) == 1 {
+		for adoptionID := range activeAdoptionIDs {
+			fact.ActiveWinnerAdoptionID = adoptionID
+		}
 	}
 	proposal := suggestDisputedFactWinner(members)
 	fact.SuggestedWinnerKnowledgeID = proposal.WinnerKnowledgeID

@@ -68,6 +68,7 @@ func (r *disputedFactRepo) UpsertByFactKey(ctx context.Context, fact *types.Disp
 		"winner_proposal_confidence":    fact.WinnerProposalConfidence,
 		"winner_proposal_version":       fact.WinnerProposalVersion,
 		"winner_proposal_source_count":  fact.WinnerProposalSourceCount,
+		"active_winner_adoption_id":     fact.ActiveWinnerAdoptionID,
 		"conflict_count":                fact.ConflictCount,
 		"pending_conflict_count": fact.PendingConflictCount,
 		"source_count":          fact.SourceCount,
@@ -150,7 +151,20 @@ func (r *disputedFactRepo) DeleteByKB(ctx context.Context, tenantID uint64, kbID
 	if kbID == "" {
 		return nil
 	}
-	return r.db.WithContext(ctx).
-		Where("tenant_id = ? AND knowledge_base_id = ?", tenantID, kbID).
-		Delete(&types.DisputedFact{}).Error
+	// C4.8 adoption rows are audit records scoped to the same tenant/KB. Keep
+	// them while an individual source is deleted, but remove them when the KB
+	// itself is removed so no cross-tenant historical row is orphaned.
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// Keep KB deletion compatible with an operator temporarily running a
+		// binary after a failed/disabled migration: the derived fact rows still
+		// need cleanup even when the new audit table is unavailable.
+		if tx.Migrator().HasTable(&types.DisputedFactWinnerAdoptionRecord{}) {
+			if err := tx.Where("tenant_id = ? AND knowledge_base_id = ?", tenantID, kbID).
+				Delete(&types.DisputedFactWinnerAdoptionRecord{}).Error; err != nil {
+				return err
+			}
+		}
+		return tx.Where("tenant_id = ? AND knowledge_base_id = ?", tenantID, kbID).
+			Delete(&types.DisputedFact{}).Error
+	})
 }

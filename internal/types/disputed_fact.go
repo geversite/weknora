@@ -37,13 +37,17 @@ type DisputedFact struct {
 	WinnerProposalConfidence   float64 `json:"winner_proposal_confidence"`
 	WinnerProposalVersion      string  `json:"winner_proposal_version" gorm:"type:varchar(32)"`
 	WinnerProposalSourceCount  int     `json:"winner_proposal_source_count"`
+	// ActiveWinnerAdoptionID points to the one durable C4.7 adoption that
+	// currently owns every resolved_global_winner member in this fact. It is
+	// blank for pending, legacy, mixed, and C4.8-reopened clusters.
+	ActiveWinnerAdoptionID string `json:"active_winner_adoption_id" gorm:"type:varchar(36);index"`
 
-	ConflictCount      int         `json:"conflict_count"`
-	PendingConflictCount int       `json:"pending_conflict_count"`
-	SourceCount        int         `json:"source_count"`
-	CandidateValueCount int        `json:"candidate_value_count"`
-	CandidateValues    StringArray `json:"candidate_values" gorm:"type:json"`
-	SourceRefs         StringArray `json:"source_refs" gorm:"type:json"`
+	ConflictCount        int         `json:"conflict_count"`
+	PendingConflictCount int         `json:"pending_conflict_count"`
+	SourceCount          int         `json:"source_count"`
+	CandidateValueCount  int         `json:"candidate_value_count"`
+	CandidateValues      StringArray `json:"candidate_values" gorm:"type:json"`
+	SourceRefs           StringArray `json:"source_refs" gorm:"type:json"`
 
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
@@ -66,14 +70,15 @@ const (
 	// different chunk pairs.
 	ConflictFactAnchorChunkPair = "chunk_pair"
 
-	DisputedFactStatusPending      = "pending"
-	DisputedFactStatusResolved     = "resolved"
-	DisputedFactStatusMixed        = "mixed"
-	DisputedFactConflictTypeMixed  = "mixed"
+	DisputedFactStatusPending     = "pending"
+	DisputedFactStatusResolved    = "resolved"
+	DisputedFactStatusMixed       = "mixed"
+	DisputedFactConflictTypeMixed = "mixed"
 
 	// ConflictClustererVersion identifies deterministic clustering semantics.
-	// c4-v6 adds advisory global winner proposal aggregation over C3 metadata.
-	ConflictClustererVersion = "c4-v6"
+	// c4-v6 added C3/C4.6 advisory winner proposals; c4-v7 additionally
+	// derives active durable adoption identity for C4.8 reopen safety.
+	ConflictClustererVersion = "c4-v7"
 
 	// DisputedFactWinnerProposalVersion identifies C3/C4.6's unique-max source
 	// proposal semantics. It is distinct from the per-raw-conflict C3 parser.
@@ -83,26 +88,33 @@ const (
 	// that applies a currently-proposed global winner. It never represents an
 	// automatic model decision.
 	DisputedFactWinnerAdoptionVersion = "c4-winner-adopt-v1"
+
+	// DisputedFactWinnerReopenVersion identifies C4.8's explicit rollback of
+	// one durable C4.7 adoption back to a pending review state.
+	DisputedFactWinnerReopenVersion = "c4-winner-reopen-v1"
+
+	DisputedFactWinnerAdoptionStatusAdopted = "adopted"
+	DisputedFactWinnerAdoptionStatusRevoked = "revoked"
 )
 
 // ErrDisputedFactWinnerAdoptionConflict marks a current-state/precondition
-// failure that must be refreshed before the caller retries adoption. The HTTP
-// handler maps it to 409, rather than treating a stale proposal as a generic
-// malformed request.
-var ErrDisputedFactWinnerAdoptionConflict = errors.New("disputed fact winner proposal cannot be adopted in its current state")
+// failure that must be refreshed before the caller retries adoption or reopen.
+// The HTTP handler maps it to 409, rather than treating a stale proposal as a
+// generic malformed request.
+var ErrDisputedFactWinnerAdoptionConflict = errors.New("disputed fact winner proposal cannot be changed in its current state")
 
 // DisputedFactRebuildResult is returned by the C4-Lite rebuild endpoint and
 // exported by experiment scripts. It quantifies how much raw chunk-pair work
 // compresses into human-reviewable fact clusters.
 type DisputedFactRebuildResult struct {
-	KnowledgeBaseID          string         `json:"knowledge_base_id"`
-	ClustererVersion         string         `json:"clusterer_version"`
-	RawConflictCount         int            `json:"raw_conflict_count"`
-	DisputedFactCount        int            `json:"disputed_fact_count"`
-	AssignedConflictCount    int            `json:"assigned_conflict_count"`
-	UnanchoredConflictCount  int            `json:"unanchored_conflict_count"`
-	WinnerProposalCount      int            `json:"winner_proposal_count"`
-	AnchorKinds              map[string]int `json:"anchor_kinds"`
+	KnowledgeBaseID         string         `json:"knowledge_base_id"`
+	ClustererVersion        string         `json:"clusterer_version"`
+	RawConflictCount        int            `json:"raw_conflict_count"`
+	DisputedFactCount       int            `json:"disputed_fact_count"`
+	AssignedConflictCount   int            `json:"assigned_conflict_count"`
+	UnanchoredConflictCount int            `json:"unanchored_conflict_count"`
+	WinnerProposalCount     int            `json:"winner_proposal_count"`
+	AnchorKinds             map[string]int `json:"anchor_kinds"`
 }
 
 // DisputedFactResolution is a C4.5 cluster-level adjudication request. The
@@ -132,12 +144,12 @@ type DisputedFactAdjudicationResult struct {
 // action optimistic and fails closed when a rebuild, new raw member, or changed
 // proposal makes the review snapshot stale.
 type DisputedFactWinnerAdoption struct {
-	DisputedFactID              string    `json:"disputed_fact_id"`
-	ExpectedWinnerKnowledgeID    string    `json:"expected_winner_knowledge_id"`
-	ExpectedProposalVersion       string    `json:"expected_proposal_version"`
-	ExpectedProposalUpdatedAt     time.Time `json:"expected_proposal_updated_at"`
-	ExpectedProposalSourceCount   int       `json:"expected_proposal_source_count"`
-	Note                         string    `json:"note,omitempty"`
+	DisputedFactID            string    `json:"disputed_fact_id"`
+	ExpectedWinnerKnowledgeID  string    `json:"expected_winner_knowledge_id"`
+	ExpectedProposalVersion    string    `json:"expected_proposal_version"`
+	ExpectedProposalUpdatedAt  time.Time `json:"expected_proposal_updated_at"`
+	ExpectedProposalSourceCount int      `json:"expected_proposal_source_count"`
+	Note                       string    `json:"note,omitempty"`
 }
 
 // DisputedFactWinnerAdoptionResult is the durable, global-winner propagation
@@ -146,19 +158,81 @@ type DisputedFactWinnerAdoption struct {
 // intentionally direction-free because a raw pair may not include the global
 // winner at all.
 type DisputedFactWinnerAdoptionResult struct {
-	DisputedFactID          string                      `json:"disputed_fact_id"`
-	Resolution               string                      `json:"resolution"`
-	WinnerKnowledgeID        string                      `json:"winner_knowledge_id"`
-	ProposalVersion          string                      `json:"proposal_version"`
-	ProposalConfidence       float64                     `json:"proposal_confidence"`
-	ProposalSourceCount      int                         `json:"proposal_source_count"`
-	AdoptionVersion          string                      `json:"adoption_version"`
-	AdoptedAt                time.Time                   `json:"adopted_at"`
-	ResolutionNote           string                      `json:"resolution_note"`
-	UpdatedConflictIDs       []string                    `json:"updated_conflict_ids"`
-	UpdatedConflictCount     int                         `json:"updated_conflict_count"`
-	DisabledChunkIDs         []string                    `json:"disabled_chunk_ids"`
-	DisabledKnowledgeIDs     []string                    `json:"disabled_knowledge_ids"`
-	ClearPenaltyChunkIDs     []string                    `json:"clear_penalty_chunk_ids"`
-	Rebuild                  *DisputedFactRebuildResult `json:"rebuild,omitempty"`
+	DisputedFactID      string                      `json:"disputed_fact_id"`
+	Resolution           string                      `json:"resolution"`
+	WinnerKnowledgeID    string                      `json:"winner_knowledge_id"`
+	ProposalVersion      string                      `json:"proposal_version"`
+	ProposalConfidence   float64                     `json:"proposal_confidence"`
+	ProposalSourceCount  int                         `json:"proposal_source_count"`
+	AdoptionVersion      string                      `json:"adoption_version"`
+	WinnerAdoptionID     string                      `json:"winner_adoption_id"`
+	AdoptedAt            time.Time                   `json:"adopted_at"`
+	ResolutionNote       string                      `json:"resolution_note"`
+	UpdatedConflictIDs   []string                    `json:"updated_conflict_ids"`
+	UpdatedConflictCount int                         `json:"updated_conflict_count"`
+	DisabledChunkIDs     []string                    `json:"disabled_chunk_ids"`
+	DisabledKnowledgeIDs []string                    `json:"disabled_knowledge_ids"`
+	ClearPenaltyChunkIDs []string                    `json:"clear_penalty_chunk_ids"`
+	Rebuild              *DisputedFactRebuildResult `json:"rebuild,omitempty"`
+}
+
+// DisputedFactWinnerAdoptionRecord is an append-only-in-spirit audit record
+// for a C4.7 adoption. C4.8 changes Status to revoked but does not overwrite
+// the original winner/member/chunk evidence, so a reopened fact retains a
+// durable reason for why those chunks had been disabled.
+type DisputedFactWinnerAdoptionRecord struct {
+	ID              string `json:"id" gorm:"type:varchar(36);primaryKey"`
+	TenantID        uint64 `json:"tenant_id" gorm:"index"`
+	KnowledgeBaseID string `json:"knowledge_base_id" gorm:"type:varchar(36);index"`
+	DisputedFactID  string `json:"disputed_fact_id" gorm:"type:varchar(36);index"`
+	FactKey         string `json:"fact_key" gorm:"type:varchar(512);index"`
+
+	WinnerKnowledgeID   string  `json:"winner_knowledge_id" gorm:"type:varchar(36);index"`
+	ProposalVersion     string  `json:"proposal_version" gorm:"type:varchar(32)"`
+	ProposalConfidence  float64 `json:"proposal_confidence"`
+	ProposalSourceCount int     `json:"proposal_source_count"`
+
+	MemberConflictIDs   StringArray `json:"member_conflict_ids" gorm:"type:json"`
+	DisabledChunkIDs    StringArray `json:"disabled_chunk_ids" gorm:"type:json"`
+	DisabledKnowledgeIDs StringArray `json:"disabled_knowledge_ids" gorm:"type:json"`
+
+	Status       string     `json:"status" gorm:"type:varchar(32);index"`
+	AdoptedBy    string     `json:"adopted_by" gorm:"type:varchar(64)"`
+	AdoptedAt    time.Time  `json:"adopted_at"`
+	AdoptionNote string     `json:"adoption_note" gorm:"type:text"`
+	RevokedBy    string     `json:"revoked_by" gorm:"type:varchar(64)"`
+	RevokedAt    *time.Time `json:"revoked_at"`
+	RevokeNote   string     `json:"revoke_note" gorm:"type:text"`
+	CreatedAt    time.Time  `json:"created_at"`
+	UpdatedAt    time.Time  `json:"updated_at"`
+}
+
+func (DisputedFactWinnerAdoptionRecord) TableName() string {
+	return "disputed_fact_winner_adoptions"
+}
+
+// DisputedFactWinnerRevocation explicitly reopens one currently active C4.7
+// adoption. The caller must echo both the active adoption ID and the current
+// fact updated_at value obtained from GET /conflicts/clusters.
+type DisputedFactWinnerRevocation struct {
+	DisputedFactID                 string    `json:"disputed_fact_id"`
+	WinnerAdoptionID                string    `json:"winner_adoption_id"`
+	ExpectedDisputedFactUpdatedAt   time.Time `json:"expected_disputed_fact_updated_at"`
+	Note                            string    `json:"note,omitempty"`
+}
+
+// DisputedFactWinnerRevocationResult describes an explicit, successful C4.8
+// reopen. It is direction-free: all formerly adopted raw members are restored
+// to pending, and only the chunks recorded by that exact adoption are reenabled.
+type DisputedFactWinnerRevocationResult struct {
+	DisputedFactID       string                      `json:"disputed_fact_id"`
+	WinnerAdoptionID      string                      `json:"winner_adoption_id"`
+	WinnerKnowledgeID     string                      `json:"winner_knowledge_id"`
+	ReopenVersion         string                      `json:"reopen_version"`
+	RevokedAt             time.Time                   `json:"revoked_at"`
+	ReopenNote            string                      `json:"reopen_note"`
+	ReopenedConflictIDs   []string                    `json:"reopened_conflict_ids"`
+	ReopenedConflictCount int                         `json:"reopened_conflict_count"`
+	ReenabledChunkIDs     []string                    `json:"reenabled_chunk_ids"`
+	Rebuild               *DisputedFactRebuildResult `json:"rebuild,omitempty"`
 }

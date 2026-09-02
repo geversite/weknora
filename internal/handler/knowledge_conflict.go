@@ -270,6 +270,54 @@ func (h *KnowledgeConflictHandler) AdoptDisputedFactWinner(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": result})
 }
 
+// ReopenDisputedFactWinner godoc
+// @Summary      Explicitly revoke one active C4.7 global-winner adoption
+// @Description  Re-reads and locks the current DisputedFact, durable adoption
+//
+//	record, raw members and disabled chunks. The caller must echo the active
+//
+//	adoption ID and current DisputedFact updated_at snapshot. On success it
+//
+//	restores only that adoption's members/chunks to pending review. Missing,
+//
+//	stale or shared adoption state is rejected with HTTP 409 and no mutation.
+// @Tags         知识冲突
+// @Param        id   path string true "Knowledge base ID"
+// @Param        body body types.DisputedFactWinnerRevocation true "Winner adoption reopen payload"
+// @Success      200  {object} map[string]interface{}
+// @Failure      400  {object} errors.AppError
+// @Failure      409  {object} errors.AppError
+// @Failure      500  {object} errors.AppError
+// @Security     Bearer
+// @Security     ApiKeyAuth
+// @Router       /knowledge-bases/{id}/conflicts/clusters/reopen-winner [post]
+func (h *KnowledgeConflictHandler) ReopenDisputedFactWinner(c *gin.Context) {
+	if h.clusterService == nil {
+		c.Error(errors.NewInternalServerError("conflict cluster service is not configured"))
+		return
+	}
+	ctx := c.Request.Context()
+	kbID := c.Param("id")
+	tenantID := c.GetUint64(types.TenantIDContextKey.String())
+	resolverUserID := c.GetString(types.UserIDContextKey.String())
+	var req types.DisputedFactWinnerRevocation
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(errors.NewValidationError("invalid winner adoption reopen payload: " + err.Error()))
+		return
+	}
+	result, err := h.clusterService.ReopenDisputedFactWinner(ctx, tenantID, resolverUserID, kbID, req)
+	if err != nil {
+		logger.Errorf(ctx, "Reopen disputed fact %s winner adoption in KB %s failed: %v", req.DisputedFactID, kbID, err)
+		if stderrors.Is(err, types.ErrDisputedFactWinnerAdoptionConflict) {
+			c.Error(errors.NewConflictError(err.Error()))
+			return
+		}
+		c.Error(errors.NewValidationError(err.Error()))
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": result})
+}
+
 // Resolve godoc
 // @Summary      Adjudicate a content conflict
 // @Description  Resolves a pending conflict, applying the disable/penalty side-effects.

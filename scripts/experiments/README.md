@@ -85,7 +85,7 @@ python3 scripts/experiments/run_claims_eval.py --check --check-db
 1. `GET /health` 返回 `{"status":"ok"}`；
 2. API key 是否存在（不会输出其值）；
 3. Docker/psql 是否能执行只读 `SELECT 1`；
-4. C2 的 `conflict_detection_runs`、C4 的 `disputed_facts`、C4.5 status 宽度、C3 suggestion 列和 C4.6 winner proposal 列均已由 migration 创建。
+4. C2 的 `conflict_detection_runs`、C4 的 `disputed_facts`、C4.5/C4.7 status 宽度、C3 suggestion、C4.6 winner proposal，以及 C4.8 durable adoption 列/表均已由 migration 创建。
 
 ## 运行场景
 
@@ -297,9 +297,10 @@ expected_disputed_fact_winner_count = 0
 真实正/负例与 artifact 审计见
 [C4.7 显式全局胜方采纳评估报告](../../docs/冲突检测V2-C4.7-显式全局胜方采纳评估报告.md)。
 
-C4.7 是 C4.6 proposal 的**唯一有副作用入口**。它没有新增 migration（复用 C4.5 已验证的
-`knowledge_conflicts.status VARCHAR(32)`），但必须运行在已具备 C4.6 `000091` 列的后端上。
-它不自动执行：调用方必须先通过 `GET /conflicts/clusters` 审阅当前 proposal，再把完整快照提交到：
+C4.7 是 C4.6 proposal 的**唯一采纳入口**；C4.8 只允许回滚一条已有 adoption，不能创建新 winner。原始 C4.7 core 复用 C4.5 已验证的
+`knowledge_conflicts.status VARCHAR(32)`；当前 C4.8 durable/reopen extension 要求 PostgreSQL `000092`
+/ SQLite `000013`，以记录 adoption ID、成员和 chunk targets。它不自动执行：调用方必须先通过
+`GET /conflicts/clusters` 审阅当前 proposal，再把完整快照提交到：
 
 ```text
 POST /api/v1/knowledge-bases/:id/conflicts/clusters/adopt-winner
@@ -366,6 +367,54 @@ make experiment-c47-negative RUN="$NEG_RUN"
 <positive-run>/winner_adoption.json
 <negative-run>/winner_adoption_negative.json
 ```
+
+### C4.8 显式撤销 / reopen winner adoption
+
+C4.8 不会自动恢复任何 disabled chunk。它只能回滚 **migration `000092` 后由 C4.7 创建的 active
+adoption record**，并要求 caller 从当前 resolved cluster 回显：
+
+```text
+active_winner_adoption_id
+updated_at
+```
+
+API：
+
+```text
+POST /api/v1/knowledge-bases/:id/conflicts/clusters/reopen-winner
+```
+
+成功时只会重新启用该 durable record 当初禁用的 chunks，并把同一 adoption 的 raw members 恢复为
+`pending`。record 本身会标记为 `revoked`，不会删除原始 winner / member / chunk evidence。任何 stale
+snapshot、无 active adoption、member set 变化、target chunk 被另一个 global adoption 占用、chunk 在 adoption
+后被改动，都会得到 HTTP `409` 且不写入。
+
+```bash
+# Fresh proposal → durable C4.7 adoption → C4.8 reopen
+make experiment-c46
+POS_RUN="$(ls -td experiments/runs/*-c46_global_winner_triplet-c2-rules-* | head -1)"
+make experiment-c47 RUN="$POS_RUN"
+make experiment-c48 RUN="$POS_RUN"
+
+# A pending cross-issuer cluster has no active adoption and must be rejected.
+make experiment-c46-negative
+NEG_RUN="$(ls -td experiments/runs/*-c46_cross_issuer_no_proposal-c2-rules-* | head -1)"
+make experiment-c48-negative RUN="$NEG_RUN"
+```
+
+正例 verifier 先故意发送 stale `expected_disputed_fact_updated_at`，要求 HTTP `409` / no mutation；随后
+执行精确 reopen，并只读 PostgreSQL 验证：record `adopted → revoked`、全部 member `resolved_global_winner → pending`、
+`winner_adoption_id` 清空、recorded loser chunks `disabled → enabled`、DisputedFact `resolved → pending`。
+
+产物：
+
+```text
+<positive-run>/winner_reopen.json
+<negative-run>/winner_reopen_negative.json
+```
+
+migration `000092` 前的 C4.7 adoption 没有 durable record，C4.8 会明确拒绝它，而不会尝试从
+`resolution_note` 猜测应恢复哪些 chunks。
 
 ### C4-Lite 事实级聚类
 
@@ -499,7 +548,7 @@ experiments/runs/<timestamp>-<scenario>-<variant>-<commit>/
 
 - `0`：预期文档对出现、所有 `forbidden_conflict_document_pairs` 均未出现、C3 version suggestion 与 C4.6 winner proposal 断言（若配置）通过、`expected_disputed_fact_count`（若配置）匹配，且（若场景带完整 gold）`evaluate.py` 通过门槛；
 - `2`：服务链路完成并导出了证据，但缺少预期冲突对、出现禁止的冲突文档对、C3/C4.6 suggestion/proposal 断言失败、聚类数量断言失败，或抽取 P/R 未达门槛；
-- `1`：环境、API、任务或数据库导出失败；C4.5/C4.7 action-verifier 对预期状态、HTTP rejection 或副作用断言失败也返回 `1`；
+- `1`：环境、API、任务或数据库导出失败；C4.5/C4.7/C4.8 action-verifier 对预期状态、HTTP rejection 或副作用断言失败也返回 `1`；
 - `130`：用户中断。
 
 实验 KB 默认保留，便于针对其 `knowledge_id`、spans 和数据库记录排查。清理由人工确认后完成。

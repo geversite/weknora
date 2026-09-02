@@ -37,6 +37,7 @@ from run_claims_eval import (
     ExperimentError,
     PostgresExporter,
     conflict_status_width_is_sufficient,
+    disputed_fact_winner_adoptions_ready,
     disputed_fact_winner_proposals_ready,
     json_dump,
     sql_literal,
@@ -105,7 +106,7 @@ def select_live_fact(client: APIClient, kb_id: str, explicit_id: str, expect_no_
 def query_members(db: PostgresExporter, kb_id: str, cluster_id: str) -> list[dict[str, str]]:
     return db.query(
         "SELECT id, knowledge_id_a, knowledge_id_b, chunk_id_a, chunk_id_b, cluster_id, fact_key, "
-        "status, auto_resolved, resolved_by, resolved_at, resolution_note "
+        "status, auto_resolved, winner_adoption_id, resolved_by, resolved_at, resolution_note "
         "FROM knowledge_conflicts "
         f"WHERE knowledge_base_id = {sql_literal(kb_id)} AND cluster_id = {sql_literal(cluster_id)} "
         "ORDER BY created_at, id"
@@ -116,12 +117,26 @@ def query_fact(db: PostgresExporter, kb_id: str, cluster_id: str) -> dict[str, s
     rows = db.query(
         "SELECT id, status, conflict_count, pending_conflict_count, source_count, candidate_values, "
         "suggested_winner_knowledge_id, winner_proposal_confidence, winner_proposal_version, "
-        "winner_proposal_source_count, winner_proposal_reason, updated_at "
+        "winner_proposal_source_count, active_winner_adoption_id, winner_proposal_reason, updated_at "
         "FROM disputed_facts "
         f"WHERE knowledge_base_id = {sql_literal(kb_id)} AND id = {sql_literal(cluster_id)}"
     )
     if len(rows) != 1:
         raise ExperimentError(f"未找到唯一 DisputedFact {cluster_id}，查询结果={len(rows)}")
+    return rows[0]
+
+
+def query_adoption(db: PostgresExporter, kb_id: str, adoption_id: str) -> dict[str, str]:
+    rows = db.query(
+        "SELECT id, disputed_fact_id, winner_knowledge_id, proposal_version, proposal_confidence, "
+        "proposal_source_count, member_conflict_ids::text AS member_conflict_ids, "
+        "disabled_chunk_ids::text AS disabled_chunk_ids, disabled_knowledge_ids::text AS disabled_knowledge_ids, "
+        "status, adopted_by, adopted_at, adoption_note, revoked_by, revoked_at, revoke_note, updated_at "
+        "FROM disputed_fact_winner_adoptions "
+        f"WHERE knowledge_base_id = {sql_literal(kb_id)} AND id = {sql_literal(adoption_id)}"
+    )
+    if len(rows) != 1:
+        raise ExperimentError(f"未找到唯一 winner adoption {adoption_id}，查询结果={len(rows)}")
     return rows[0]
 
 
@@ -143,7 +158,7 @@ def member_snapshot(rows: list[dict[str, str]]) -> list[dict[str, str]]:
             key: row.get(key, "")
             for key in (
                 "id", "knowledge_id_a", "knowledge_id_b", "chunk_id_a", "chunk_id_b",
-                "cluster_id", "status", "auto_resolved", "resolved_by", "resolved_at", "resolution_note",
+                "cluster_id", "status", "auto_resolved", "winner_adoption_id", "resolved_by", "resolved_at", "resolution_note",
             )
         }
         for row in rows
@@ -303,6 +318,18 @@ def run_positive(args: argparse.Namespace, run_dir: Path, kb_id: str, client: AP
     if after_fact.get("suggested_winner_knowledge_id") != winner_id or \
             after_fact.get("winner_proposal_version") != payload["expected_proposal_version"]:
         raise ExperimentError("winner adoption 后 DisputedFact proposal 被意外更改")
+    adoption_id = str(result.get("winner_adoption_id", "")).strip()
+    if not adoption_id:
+        raise ExperimentError("winner adoption API 未返回 durable winner_adoption_id")
+    if after_fact.get("active_winner_adoption_id") != adoption_id:
+        raise ExperimentError("winner adoption 后 DisputedFact active_winner_adoption_id 不一致")
+    if any(row.get("winner_adoption_id") != adoption_id for row in after_members):
+        raise ExperimentError("winner adoption 后 raw members 未绑定同一 durable adoption ID")
+    adoption = query_adoption(db, kb_id, adoption_id)
+    if adoption.get("status") != "adopted" or adoption.get("disputed_fact_id") != cluster_id or \
+            adoption.get("winner_knowledge_id") != winner_id or \
+            adoption.get("proposal_version") != payload["expected_proposal_version"]:
+        raise ExperimentError(f"winner adoption durable audit row 异常: {adoption}")
 
     artifact = {
         "schema_version": 1,
@@ -319,6 +346,7 @@ def run_positive(args: argparse.Namespace, run_dir: Path, kb_id: str, client: AP
         "members_before": before_members,
         "chunks_before": before_chunks,
         "api_result": result,
+        "durable_adoption": adoption,
         "members_after": after_members,
         "chunks_after": after_chunks,
         "disputed_fact_after": after_fact,
@@ -370,7 +398,8 @@ def run_no_proposal_negative(args: argparse.Namespace, run_dir: Path, kb_id: str
     )
     verify_unchanged(db, kb_id, cluster_id, before_members, before_chunks)
     after_fact = query_fact(db, kb_id, cluster_id)
-    if after_fact.get("status") != "pending" or after_fact.get("suggested_winner_knowledge_id", ""):
+    if after_fact.get("status") != "pending" or after_fact.get("suggested_winner_knowledge_id", "") or \
+            after_fact.get("active_winner_adoption_id", ""):
         raise ExperimentError(f"negative adoption rejection 改变了 DisputedFact: {after_fact}")
 
     artifact = {
@@ -410,6 +439,8 @@ def run(args: argparse.Namespace) -> int:
         raise ExperimentError("knowledge_conflicts.status 宽度不足；请重启包含 C4.5/C4.7 所依赖 migration 000089 的后端。")
     if not disputed_fact_winner_proposals_ready(db):
         raise ExperimentError("缺少 C3/C4.6 winner proposal 列；请重启包含 migration 000091 的后端。")
+    if not disputed_fact_winner_adoptions_ready(db):
+        raise ExperimentError("缺少 C4.8 durable winner adoption schema；请重启包含 migration 000092 的后端。")
 
     if args.expect_no_proposal:
         return run_no_proposal_negative(args, run_dir, kb_id, client, db)

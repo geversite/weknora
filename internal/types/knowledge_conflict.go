@@ -41,6 +41,10 @@ type KnowledgeConflict struct {
 	SuggestionConfidence     float64 `json:"suggestion_confidence"`
 	SuggestionVersion        string  `json:"suggestion_version" gorm:"type:varchar(32)"`
 	AutoResolved             bool    `json:"auto_resolved"`
+	// WinnerAdoptionID is non-empty only while this raw member belongs to one
+	// active C4.7 global-winner adoption. C4.8 uses it to reopen exactly the
+	// rows and chunks that the recorded adoption changed.
+	WinnerAdoptionID         string  `json:"winner_adoption_id" gorm:"type:varchar(36);index"`
 
 	// ContentA / ContentB are snapshots of the conflicting chunks taken at
 	// detection time. They remain stable even if the source chunk is later

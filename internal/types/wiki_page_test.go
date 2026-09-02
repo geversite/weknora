@@ -85,6 +85,16 @@ func TestStringArrayValueScan(t *testing.T) {
 	if len(restored) != 3 || restored[0] != "a" || restored[1] != "b" || restored[2] != "c" {
 		t.Errorf("StringArray round-trip failed: got %v", restored)
 	}
+
+	// SQLite returns JSON-backed TEXT columns as string in several drivers.
+	// C4.8 adoption audit arrays must round-trip in both SQLite and PostgreSQL.
+	var sqliteRestored StringArray
+	if err := sqliteRestored.Scan(string(b)); err != nil {
+		t.Fatalf("StringArray.Scan(string) error: %v", err)
+	}
+	if len(sqliteRestored) != 3 || sqliteRestored[0] != "a" || sqliteRestored[1] != "b" || sqliteRestored[2] != "c" {
+		t.Errorf("StringArray sqlite round-trip failed: got %v", sqliteRestored)
+	}
 }
 
 func TestStringArrayEmpty(t *testing.T) {

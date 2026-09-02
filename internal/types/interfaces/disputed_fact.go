@@ -30,4 +30,7 @@ type ConflictClusterService interface {
 	// AdoptDisputedFactWinner accepts a currently displayed C4.6 proposal and
 	// propagates its one global winner only after optimistic snapshot checks.
 	AdoptDisputedFactWinner(ctx context.Context, tenantID uint64, resolverUserID string, kbID string, req types.DisputedFactWinnerAdoption) (*types.DisputedFactWinnerAdoptionResult, error)
+	// ReopenDisputedFactWinner revokes one durable active adoption and restores
+	// its exact members/chunks to a pending review state after snapshot checks.
+	ReopenDisputedFactWinner(ctx context.Context, tenantID uint64, resolverUserID string, kbID string, req types.DisputedFactWinnerRevocation) (*types.DisputedFactWinnerRevocationResult, error)
 }

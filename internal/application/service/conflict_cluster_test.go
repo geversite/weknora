@@ -106,6 +106,7 @@ func (r *memoryConflictClusterRepo) AdoptPendingWinnerProposal(
 	req types.DisputedFactWinnerAdoption,
 ) (*types.DisputedFactWinnerAdoptionResult, error) {
 	now := time.Now().UTC()
+	adoptionID := "adoption-" + req.DisputedFactID
 	updated := make([]string, 0)
 	disabledChunks := make(map[string]struct{})
 	disabledKnowledge := make(map[string]struct{})
@@ -129,6 +130,7 @@ func (r *memoryConflictClusterRepo) AdoptPendingWinnerProposal(
 			}
 		}
 		conflict.Status = types.ConflictStatusResolvedGlobalWinner
+		conflict.WinnerAdoptionID = adoptionID
 		conflict.ResolvedBy = resolverUserID
 		conflict.ResolvedAt = &now
 		conflict.AutoResolved = false
@@ -145,12 +147,49 @@ func (r *memoryConflictClusterRepo) AdoptPendingWinnerProposal(
 		ProposalVersion:      req.ExpectedProposalVersion,
 		ProposalSourceCount:  req.ExpectedProposalSourceCount,
 		AdoptionVersion:      types.DisputedFactWinnerAdoptionVersion,
+		WinnerAdoptionID:     adoptionID,
 		AdoptedAt:            now,
 		UpdatedConflictIDs:   updated,
 		UpdatedConflictCount: len(updated),
 		DisabledChunkIDs:     []string(sortedStringSet(disabledChunks)),
 		DisabledKnowledgeIDs: []string(sortedStringSet(disabledKnowledge)),
 		ClearPenaltyChunkIDs: []string(sortedStringSet(clearPenalty)),
+	}, nil
+}
+
+func (r *memoryConflictClusterRepo) ReopenWinnerAdoption(
+	_ context.Context,
+	tenantID uint64,
+	kbID, _ string,
+	req types.DisputedFactWinnerRevocation,
+) (*types.DisputedFactWinnerRevocationResult, error) {
+	now := time.Now().UTC()
+	reopened := make([]string, 0)
+	for _, conflict := range r.conflicts {
+		if conflict == nil || conflict.TenantID != tenantID || conflict.KnowledgeBaseID != kbID ||
+			conflict.ClusterID != req.DisputedFactID || conflict.Status != types.ConflictStatusResolvedGlobalWinner ||
+			conflict.WinnerAdoptionID != req.WinnerAdoptionID {
+			continue
+		}
+		conflict.Status = types.ConflictStatusPending
+		conflict.WinnerAdoptionID = ""
+		conflict.ResolvedBy = ""
+		conflict.ResolvedAt = nil
+		conflict.AutoResolved = false
+		conflict.UpdatedAt = now
+		reopened = append(reopened, conflict.ID)
+	}
+	if len(reopened) == 0 {
+		return nil, fmt.Errorf("no active winner adoption members")
+	}
+	sort.Strings(reopened)
+	return &types.DisputedFactWinnerRevocationResult{
+		DisputedFactID:       req.DisputedFactID,
+		WinnerAdoptionID:      req.WinnerAdoptionID,
+		ReopenVersion:         types.DisputedFactWinnerReopenVersion,
+		RevokedAt:             now,
+		ReopenedConflictIDs:   reopened,
+		ReopenedConflictCount: len(reopened),
 	}, nil
 }
 
@@ -628,7 +667,7 @@ func TestAdoptDisputedFactWinnerPropagatesOnlyExplicitGlobalWinner(t *testing.T)
 		t.Fatalf("AdoptDisputedFactWinner: %v", err)
 	}
 	if result.Resolution != types.ConflictStatusResolvedGlobalWinner || result.WinnerKnowledgeID != "doc-v3" ||
-		result.UpdatedConflictCount != 3 || result.Rebuild == nil {
+		result.WinnerAdoptionID == "" || result.UpdatedConflictCount != 3 || result.Rebuild == nil {
 		t.Fatalf("winner adoption result = %+v", result)
 	}
 	for _, conflict := range conflicts.conflicts {
@@ -637,8 +676,59 @@ func TestAdoptDisputedFactWinnerPropagatesOnlyExplicitGlobalWinner(t *testing.T)
 		}
 	}
 	stored, err := facts.GetByID(context.Background(), tenantID, kbID, fact.ID)
-	if err != nil || stored.Status != types.DisputedFactStatusResolved || stored.PendingConflictCount != 0 {
+	if err != nil || stored.Status != types.DisputedFactStatusResolved || stored.PendingConflictCount != 0 ||
+		stored.ActiveWinnerAdoptionID != result.WinnerAdoptionID {
 		t.Fatalf("rebuilt fact after global adoption = %+v err=%v", stored, err)
+	}
+}
+
+func TestReopenDisputedFactWinnerRestoresPendingProjection(t *testing.T) {
+	const (
+		tenantID = uint64(11)
+		kbID     = "kb-winner-reopen"
+		factKey  = "claim_key:餐补每日标准"
+		adoption = "adoption-fact-1"
+	)
+	conflicts := &memoryConflictClusterRepo{conflicts: []*types.KnowledgeConflict{
+		{ID: "v3-v1", TenantID: tenantID, KnowledgeBaseID: kbID, KnowledgeIDA: "doc-v3", KnowledgeIDB: "doc-v1", ChunkIDA: "c3", ChunkIDB: "c1", FactKey: factKey, FactAnchorKind: types.ConflictFactAnchorClaimKey, Status: types.ConflictStatusResolvedGlobalWinner, WinnerAdoptionID: adoption},
+		{ID: "v3-v2", TenantID: tenantID, KnowledgeBaseID: kbID, KnowledgeIDA: "doc-v3", KnowledgeIDB: "doc-v2", ChunkIDA: "c3", ChunkIDB: "c2", FactKey: factKey, FactAnchorKind: types.ConflictFactAnchorClaimKey, Status: types.ConflictStatusResolvedGlobalWinner, WinnerAdoptionID: adoption},
+	}}
+	facts := &memoryDisputedFactRepo{}
+	service := &conflictClusterService{conflictRepo: conflicts, factRepo: facts}
+	if _, err := service.Rebuild(context.Background(), tenantID, kbID); err != nil {
+		t.Fatalf("initial Rebuild: %v", err)
+	}
+	var fact *types.DisputedFact
+	for _, item := range facts.facts {
+		fact = item
+	}
+	if fact == nil || fact.Status != types.DisputedFactStatusResolved || fact.ActiveWinnerAdoptionID != adoption {
+		t.Fatalf("initial active adoption fact = %+v", fact)
+	}
+	fact.UpdatedAt = time.Now().UTC()
+
+	result, err := service.ReopenDisputedFactWinner(context.Background(), tenantID, "reviewer-2", kbID,
+		types.DisputedFactWinnerRevocation{
+			DisputedFactID:               fact.ID,
+			WinnerAdoptionID:              adoption,
+			ExpectedDisputedFactUpdatedAt: fact.UpdatedAt,
+			Note:                          "new evidence requires review",
+		},
+	)
+	if err != nil {
+		t.Fatalf("ReopenDisputedFactWinner: %v", err)
+	}
+	if result.ReopenedConflictCount != 2 || result.Rebuild == nil || result.ReopenVersion != types.DisputedFactWinnerReopenVersion {
+		t.Fatalf("winner reopen result = %+v", result)
+	}
+	for _, conflict := range conflicts.conflicts {
+		if conflict.Status != types.ConflictStatusPending || conflict.WinnerAdoptionID != "" || conflict.AutoResolved {
+			t.Fatalf("member was not reopened safely: %+v", conflict)
+		}
+	}
+	stored, err := facts.GetByID(context.Background(), tenantID, kbID, fact.ID)
+	if err != nil || stored.Status != types.DisputedFactStatusPending || stored.PendingConflictCount != 2 || stored.ActiveWinnerAdoptionID != "" {
+		t.Fatalf("rebuilt fact after winner reopen = %+v err=%v", stored, err)
 	}
 }
 

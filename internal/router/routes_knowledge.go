@@ -282,6 +282,9 @@ func RegisterKnowledgeConflictRoutes(r *gin.RouterGroup, conflictHandler *handle
 		// endpoint requires an explicit, optimistic acceptance of a current
 		// C4.6 global-winner proposal before it can disable loser chunks.
 		confWrite.POST("/clusters/adopt-winner", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), conflictHandler.AdoptDisputedFactWinner)
+		// C4.8 can only reopen the durable C4.7 adoption identified by the
+		// active adoption ID; it cannot infer/revive an arbitrary old winner.
+		confWrite.POST("/clusters/reopen-winner", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), conflictHandler.ReopenDisputedFactWinner)
 	}
 }
 

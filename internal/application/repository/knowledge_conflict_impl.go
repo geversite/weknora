@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -200,7 +201,7 @@ func (r *knowledgeConflictRepo) AdoptPendingWinnerProposal(
 
 		memberIDs := make([]string, 0, len(members))
 		sources, loserChunkOwners, loserKnowledgeIDs, allChunkOwners, err := collectWinnerAdoptionTargets(
-			members, fact.SuggestedWinnerKnowledgeID,
+			members, fact.SuggestedWinnerKnowledgeID, types.ConflictStatusPending,
 		)
 		if err != nil {
 			return err
@@ -232,12 +233,39 @@ func (r *knowledgeConflictRepo) AdoptPendingWinnerProposal(
 		resolutionNote := globalWinnerAdoptionNote(
 			req.Note, fact.SuggestedWinnerKnowledgeID, fact.WinnerProposalVersion, fact.WinnerProposalSourceCount,
 		)
+		adoptionID := uuid.NewString()
+		disabledKnowledgeIDs := sortedWinnerAdoptionSet(loserKnowledgeIDs)
+		adoption := &types.DisputedFactWinnerAdoptionRecord{
+			ID:                   adoptionID,
+			TenantID:             tenantID,
+			KnowledgeBaseID:      kbID,
+			DisputedFactID:       fact.ID,
+			FactKey:              fact.FactKey,
+			WinnerKnowledgeID:    fact.SuggestedWinnerKnowledgeID,
+			ProposalVersion:      fact.WinnerProposalVersion,
+			ProposalConfidence:   fact.WinnerProposalConfidence,
+			ProposalSourceCount:  fact.WinnerProposalSourceCount,
+			MemberConflictIDs:    types.StringArray(memberIDs),
+			DisabledChunkIDs:     types.StringArray(disabledChunkIDs),
+			DisabledKnowledgeIDs: types.StringArray(disabledKnowledgeIDs),
+			Status:               types.DisputedFactWinnerAdoptionStatusAdopted,
+			AdoptedBy:            resolverUserID,
+			AdoptedAt:            now,
+			AdoptionNote:         resolutionNote,
+			CreatedAt:            now,
+			UpdatedAt:            now,
+		}
+		if err := tx.Create(adoption).Error; err != nil {
+			return err
+		}
+
 		updated := tx.Model(&types.KnowledgeConflict{}).
 			Where("tenant_id = ? AND knowledge_base_id = ? AND cluster_id = ? AND id IN ? AND status = ?",
 				tenantID, kbID, fact.ID, memberIDs, types.ConflictStatusPending).
 			Updates(map[string]interface{}{
-				"status":          types.ConflictStatusResolvedGlobalWinner,
-				"resolved_by":     resolverUserID,
+				"status":             types.ConflictStatusResolvedGlobalWinner,
+				"winner_adoption_id": adoptionID,
+				"resolved_by":        resolverUserID,
 				"resolved_at":     now,
 				"resolution_note": resolutionNote,
 				"auto_resolved":   false,
@@ -256,9 +284,10 @@ func (r *knowledgeConflictRepo) AdoptPendingWinnerProposal(
 		updatedFact := tx.Model(&types.DisputedFact{}).
 			Where("id = ? AND tenant_id = ? AND knowledge_base_id = ?", fact.ID, tenantID, kbID).
 			Updates(map[string]interface{}{
-				"status":                 types.DisputedFactStatusResolved,
-				"pending_conflict_count": 0,
-				"updated_at":             now,
+				"status":                    types.DisputedFactStatusResolved,
+				"pending_conflict_count":    0,
+				"active_winner_adoption_id": adoptionID,
+				"updated_at":                now,
 			})
 		if updatedFact.Error != nil {
 			return updatedFact.Error
@@ -275,12 +304,13 @@ func (r *knowledgeConflictRepo) AdoptPendingWinnerProposal(
 			ProposalConfidence:   fact.WinnerProposalConfidence,
 			ProposalSourceCount:  fact.WinnerProposalSourceCount,
 			AdoptionVersion:      types.DisputedFactWinnerAdoptionVersion,
+			WinnerAdoptionID:     adoptionID,
 			AdoptedAt:            now,
 			ResolutionNote:       resolutionNote,
 			UpdatedConflictIDs:   memberIDs,
 			UpdatedConflictCount: len(memberIDs),
 			DisabledChunkIDs:     disabledChunkIDs,
-			DisabledKnowledgeIDs: sortedWinnerAdoptionSet(loserKnowledgeIDs),
+			DisabledKnowledgeIDs: disabledKnowledgeIDs,
 			ClearPenaltyChunkIDs: sortedWinnerAdoptionChunkIDs(allChunkOwners),
 		}
 		return nil
@@ -291,12 +321,311 @@ func (r *knowledgeConflictRepo) AdoptPendingWinnerProposal(
 	return result, nil
 }
 
+// ReopenWinnerAdoption is C4.8's explicit reversal path. It can only reopen
+// an adoption made after migration 000092, because the durable record ties the
+// exact raw members and disabled chunks to one action. Legacy C4.7 rows with an
+// empty adoption ID intentionally fail closed rather than guessing what to
+// re-enable.
+func (r *knowledgeConflictRepo) ReopenWinnerAdoption(
+	ctx context.Context,
+	tenantID uint64,
+	kbID, resolverUserID string,
+	req types.DisputedFactWinnerRevocation,
+) (*types.DisputedFactWinnerRevocationResult, error) {
+	if tenantID == 0 || strings.TrimSpace(kbID) == "" || strings.TrimSpace(req.DisputedFactID) == "" ||
+		strings.TrimSpace(req.WinnerAdoptionID) == "" {
+		return nil, gorm.ErrInvalidData
+	}
+
+	var result *types.DisputedFactWinnerRevocationResult
+	now := time.Now().UTC()
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var fact types.DisputedFact
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("id = ? AND tenant_id = ? AND knowledge_base_id = ?", req.DisputedFactID, tenantID, kbID).
+			First(&fact).Error; err != nil {
+			return err
+		}
+		if err := validateLockedWinnerRevocationFact(&fact, req); err != nil {
+			return err
+		}
+
+		var adoption types.DisputedFactWinnerAdoptionRecord
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND disputed_fact_id = ?",
+				req.WinnerAdoptionID, tenantID, kbID, fact.ID).
+			First(&adoption).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return winnerAdoptionConflict(
+					"active winner adoption %s has no durable C4.8 audit record", req.WinnerAdoptionID,
+				)
+			}
+			return err
+		}
+		if err := validateLockedWinnerAdoptionRecord(&fact, &adoption); err != nil {
+			return err
+		}
+
+		var members []*types.KnowledgeConflict
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("tenant_id = ? AND knowledge_base_id = ? AND cluster_id = ?", tenantID, kbID, fact.ID).
+			Order("created_at ASC, id ASC").
+			Find(&members).Error; err != nil {
+			return err
+		}
+		if len(members) == 0 || fact.ConflictCount != len(members) || fact.PendingConflictCount != 0 {
+			return winnerAdoptionConflict(
+				"disputed fact %s member snapshot is stale for reopen (fact total=%d pending=%d, locked members=%d)",
+				fact.ID, fact.ConflictCount, fact.PendingConflictCount, len(members),
+			)
+		}
+
+		memberIDs := make([]string, 0, len(members))
+		for _, member := range members {
+			if member == nil || member.ID == "" || member.Status != types.ConflictStatusResolvedGlobalWinner ||
+				member.WinnerAdoptionID != adoption.ID || member.AutoResolved {
+				return winnerAdoptionConflict(
+					"disputed fact %s no longer has one uniform active winner adoption", fact.ID,
+				)
+			}
+			memberIDs = append(memberIDs, member.ID)
+		}
+		sort.Strings(memberIDs)
+		if !sameWinnerAdoptionStrings(memberIDs, []string(adoption.MemberConflictIDs)) {
+			return winnerAdoptionConflict("winner adoption %s member set changed; refresh and review", adoption.ID)
+		}
+
+		sources, loserChunkOwners, loserKnowledgeIDs, _, err := collectWinnerAdoptionTargets(
+			members, adoption.WinnerKnowledgeID, types.ConflictStatusResolvedGlobalWinner,
+		)
+		if err != nil {
+			return err
+		}
+		if _, found := sources[adoption.WinnerKnowledgeID]; !found || len(sources) != adoption.ProposalSourceCount ||
+			len(sources) != fact.SourceCount || len(sources) != fact.WinnerProposalSourceCount {
+			return winnerAdoptionConflict("winner adoption %s source set changed; refresh and review", adoption.ID)
+		}
+		reenableChunkIDs := sortedWinnerAdoptionChunkIDs(loserChunkOwners)
+		if !sameWinnerAdoptionStrings(reenableChunkIDs, []string(adoption.DisabledChunkIDs)) ||
+			!sameWinnerAdoptionStrings(sortedWinnerAdoptionSet(loserKnowledgeIDs), []string(adoption.DisabledKnowledgeIDs)) {
+			return winnerAdoptionConflict("winner adoption %s target set changed; refresh and review", adoption.ID)
+		}
+		if err := lockAndReenableWinnerAdoptionChunks(
+			tx, tenantID, kbID, reenableChunkIDs, loserChunkOwners, adoption.ID, adoption.AdoptedAt, now,
+		); err != nil {
+			return err
+		}
+
+		reopenNote := globalWinnerReopenNote(req.Note, adoption.ID, adoption.WinnerKnowledgeID)
+		updated := tx.Model(&types.KnowledgeConflict{}).
+			Where("tenant_id = ? AND knowledge_base_id = ? AND cluster_id = ? AND id IN ? AND status = ? AND winner_adoption_id = ?",
+				tenantID, kbID, fact.ID, memberIDs, types.ConflictStatusResolvedGlobalWinner, adoption.ID).
+			Updates(map[string]interface{}{
+				"status":             types.ConflictStatusPending,
+				"winner_adoption_id": "",
+				"resolved_by":        "",
+				"resolved_at":        nil,
+				"resolution_note":    reopenNote,
+				"auto_resolved":      false,
+				"updated_at":         now,
+			})
+		if updated.Error != nil {
+			return updated.Error
+		}
+		if updated.RowsAffected != int64(len(memberIDs)) {
+			return winnerAdoptionConflict("winner adoption %s changed while reopening", adoption.ID)
+		}
+
+		updatedFact := tx.Model(&types.DisputedFact{}).
+			Where("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND active_winner_adoption_id = ?",
+				fact.ID, tenantID, kbID, adoption.ID).
+			Updates(map[string]interface{}{
+				"status":                    types.DisputedFactStatusPending,
+				"pending_conflict_count":    len(memberIDs),
+				"active_winner_adoption_id": "",
+				"updated_at":                now,
+			})
+		if updatedFact.Error != nil {
+			return updatedFact.Error
+		}
+		if updatedFact.RowsAffected != 1 {
+			return winnerAdoptionConflict("disputed fact %s changed while reopening adoption", fact.ID)
+		}
+
+		updatedAdoption := tx.Model(&types.DisputedFactWinnerAdoptionRecord{}).
+			Where("id = ? AND tenant_id = ? AND knowledge_base_id = ? AND status = ?",
+				adoption.ID, tenantID, kbID, types.DisputedFactWinnerAdoptionStatusAdopted).
+			Updates(map[string]interface{}{
+				"status":      types.DisputedFactWinnerAdoptionStatusRevoked,
+				"revoked_by":  resolverUserID,
+				"revoked_at":  now,
+				"revoke_note": reopenNote,
+				"updated_at":  now,
+			})
+		if updatedAdoption.Error != nil {
+			return updatedAdoption.Error
+		}
+		if updatedAdoption.RowsAffected != 1 {
+			return winnerAdoptionConflict("winner adoption %s changed while reopening", adoption.ID)
+		}
+
+		result = &types.DisputedFactWinnerRevocationResult{
+			DisputedFactID:       fact.ID,
+			WinnerAdoptionID:      adoption.ID,
+			WinnerKnowledgeID:     adoption.WinnerKnowledgeID,
+			ReopenVersion:         types.DisputedFactWinnerReopenVersion,
+			RevokedAt:             now,
+			ReopenNote:            reopenNote,
+			ReopenedConflictIDs:   memberIDs,
+			ReopenedConflictCount: len(memberIDs),
+			ReenabledChunkIDs:     reenableChunkIDs,
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func validateLockedWinnerRevocationFact(
+	fact *types.DisputedFact,
+	req types.DisputedFactWinnerRevocation,
+) error {
+	if fact == nil || fact.Status != types.DisputedFactStatusResolved || fact.ActiveWinnerAdoptionID == "" {
+		return winnerAdoptionConflict("disputed fact has no active winner adoption to reopen")
+	}
+	if fact.ActiveWinnerAdoptionID != req.WinnerAdoptionID {
+		return winnerAdoptionConflict("active winner adoption changed; refresh the disputed fact before reopening")
+	}
+	if !fact.UpdatedAt.Equal(req.ExpectedDisputedFactUpdatedAt) {
+		return winnerAdoptionConflict("disputed fact snapshot is stale; refresh before reopening")
+	}
+	return nil
+}
+
+func validateLockedWinnerAdoptionRecord(
+	fact *types.DisputedFact,
+	adoption *types.DisputedFactWinnerAdoptionRecord,
+) error {
+	if adoption == nil || adoption.Status != types.DisputedFactWinnerAdoptionStatusAdopted || adoption.AdoptedAt.IsZero() {
+		return winnerAdoptionConflict("winner adoption is not active")
+	}
+	if adoption.DisputedFactID != fact.ID || adoption.FactKey != fact.FactKey || adoption.WinnerKnowledgeID == "" ||
+		adoption.WinnerKnowledgeID != fact.SuggestedWinnerKnowledgeID ||
+		adoption.ProposalVersion != fact.WinnerProposalVersion ||
+		adoption.ProposalSourceCount < 2 || adoption.ProposalSourceCount != fact.WinnerProposalSourceCount {
+		return winnerAdoptionConflict("winner adoption record no longer matches the current proposal")
+	}
+	return nil
+}
+
+func lockAndReenableWinnerAdoptionChunks(
+	tx *gorm.DB,
+	tenantID uint64,
+	kbID string,
+	reenableChunkIDs []string,
+	loserChunkOwners map[string]string,
+	adoptionID string,
+	adoptedAt time.Time,
+	now time.Time,
+) error {
+	if len(reenableChunkIDs) == 0 || adoptedAt.IsZero() {
+		return winnerAdoptionConflict("winner adoption has no durable reenable chunk snapshot")
+	}
+
+	// Lock chunks before inspecting other adoption rows. C4.7 locks the same
+	// member chunks before it writes a new adoption, so this ordering prevents
+	// a concurrent adoption from committing after the ownership check but
+	// before this reopen re-enables the chunk.
+	var chunks []*types.Chunk
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("tenant_id = ? AND knowledge_base_id = ? AND id IN ?", tenantID, kbID, reenableChunkIDs).
+		Order("id ASC").
+		Find(&chunks).Error; err != nil {
+		return err
+	}
+	if len(chunks) != len(reenableChunkIDs) {
+		return winnerAdoptionConflict(
+			"disabled chunk snapshot changed (locked=%d expected=%d)", len(chunks), len(reenableChunkIDs),
+		)
+	}
+	for _, chunk := range chunks {
+		if chunk == nil {
+			return winnerAdoptionConflict("disabled chunk snapshot contains nil row")
+		}
+		if expectedKnowledgeID, found := loserChunkOwners[chunk.ID]; !found || chunk.KnowledgeID != expectedKnowledgeID {
+			return winnerAdoptionConflict("disabled chunk %s no longer matches its adoption source", chunk.ID)
+		}
+		if chunk.IsEnabled || !chunk.UpdatedAt.Equal(adoptedAt) {
+			return winnerAdoptionConflict(
+				"disabled chunk %s changed after adoption; refuse unsafe reenable", chunk.ID,
+			)
+		}
+	}
+	var otherOwnerCount int64
+	if err := tx.Model(&types.KnowledgeConflict{}).
+		Where("status = ? AND winner_adoption_id <> ? AND (chunk_id_a IN ? OR chunk_id_b IN ?)",
+			types.ConflictStatusResolvedGlobalWinner, adoptionID, reenableChunkIDs, reenableChunkIDs).
+		Count(&otherOwnerCount).Error; err != nil {
+		return err
+	}
+	if otherOwnerCount > 0 {
+		return winnerAdoptionConflict(
+			"one or more loser chunks are owned by another active global winner adoption",
+		)
+	}
+	updated := tx.Model(&types.Chunk{}).
+		Where("tenant_id = ? AND knowledge_base_id = ? AND id IN ?", tenantID, kbID, reenableChunkIDs).
+		Updates(map[string]interface{}{
+			"is_enabled": true,
+			"updated_at": now,
+		})
+	if updated.Error != nil {
+		return updated.Error
+	}
+	if updated.RowsAffected != int64(len(reenableChunkIDs)) {
+		return winnerAdoptionConflict("disabled chunks changed while reopening adoption")
+	}
+	return nil
+}
+
+func globalWinnerReopenNote(note, adoptionID, winnerKnowledgeID string) string {
+	base := fmt.Sprintf(
+		"[c4.8:%s] explicitly reopened winner_adoption_id=%s former_winner=%s.",
+		types.DisputedFactWinnerReopenVersion, adoptionID, winnerKnowledgeID,
+	)
+	if note = strings.TrimSpace(note); note != "" {
+		return base + " " + note
+	}
+	return base
+}
+
+func sameWinnerAdoptionStrings(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	leftCopy := append([]string(nil), left...)
+	rightCopy := append([]string(nil), right...)
+	sort.Strings(leftCopy)
+	sort.Strings(rightCopy)
+	for index := range leftCopy {
+		if leftCopy[index] != rightCopy[index] {
+			return false
+		}
+	}
+	return true
+}
+
 func validateLockedWinnerProposal(fact *types.DisputedFact, req types.DisputedFactWinnerAdoption) error {
 	if fact == nil {
 		return winnerAdoptionConflict("disputed fact is missing")
 	}
 	if fact.Status != types.DisputedFactStatusPending {
 		return winnerAdoptionConflict("disputed fact %s is not pending (status=%s)", fact.ID, fact.Status)
+	}
+	if fact.ActiveWinnerAdoptionID != "" {
+		return winnerAdoptionConflict("disputed fact %s still has an active winner adoption", fact.ID)
 	}
 	// C4.7 deliberately starts from the strongest fact identity only. Fuzzy
 	// and document-singleton clusters remain advisory until their broader
@@ -329,6 +658,7 @@ func validateLockedWinnerProposal(fact *types.DisputedFact, req types.DisputedFa
 func collectWinnerAdoptionTargets(
 	members []*types.KnowledgeConflict,
 	winnerKnowledgeID string,
+	expectedStatus string,
 ) (map[string]struct{}, map[string]string, map[string]struct{}, map[string]string, error) {
 	winnerKnowledgeID = strings.TrimSpace(winnerKnowledgeID)
 	if winnerKnowledgeID == "" {
@@ -345,9 +675,9 @@ func collectWinnerAdoptionTargets(
 		if member == nil {
 			return nil, nil, nil, nil, winnerAdoptionConflict("cluster contains a nil raw member")
 		}
-		if member.Status != types.ConflictStatusPending {
+		if member.Status != expectedStatus {
 			return nil, nil, nil, nil, winnerAdoptionConflict(
-				"raw conflict %s is no longer pending (status=%s)", member.ID, member.Status,
+				"raw conflict %s has status=%s, expected=%s", member.ID, member.Status, expectedStatus,
 			)
 		}
 		for _, side := range []struct {
