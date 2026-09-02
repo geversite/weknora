@@ -419,6 +419,45 @@ make experiment-c48-negative RUN="$NEG_RUN"
 migration `000092` 前的 C4.7 adoption 没有 durable record，C4.8 会明确拒绝它，而不会尝试从
 `resolution_note` 猜测应恢复哪些 chunks。
 
+### C4.9 lifecycle 多 replicate 矩阵
+
+C4.9 不是另一个自动裁决功能，而是 C4.6/C4.7/C4.8 的**独立重复执行 + policy matrix**评估工具。
+它明确使用 `replicate` 而不是 `seed`：当前 provider API 没有可移植 RNG seed 控制。
+
+```bash
+# 默认 5 个 policy cases × 3 个 independent replicates
+make experiment-c49
+
+# 可按模型成本调整
+make experiment-c49 REPLICATES=5
+```
+
+默认 matrix 覆盖：同 issuer ordered 两轮 adopt→reopen、同 issuer out-of-order、cross issuer、
+date/version direction disagreement、date/version tie。每个 replicate 均创建 fresh temporary KB，且
+所有 mutation 都仍通过 public HTTP API；matrix driver 不直接写 PostgreSQL。
+
+输出位于 Git-ignored 的：
+
+```text
+experiments/comparisons/<timestamp>-c49_winner_lifecycle_matrix-<commit>/
+├── matrix_summary.json
+├── matrix_summary.md
+├── matrix_results.json
+├── winner_lifecycle_review.csv
+└── replicates/<case>/replicate-XX/
+```
+
+`winner_lifecycle_review.csv` 为双审阅与仲裁保留 `reviewer_1_*`、`reviewer_2_*`、`adjudicated_*` 列；
+填写后可运行：
+
+```bash
+make experiment-c49-review REVIEW=experiments/comparisons/<c49-run>/winner_lifecycle_review.csv
+```
+
+默认 controlled policy matrix 的 P/R 只能描述已标注场景的 policy/integration correctness，不能称为真实语料
+泛化或人类准确率。review summary 也不会把空白、uncertain 或 reviewer disagreement 偷偷计为正确。详见
+[C4.9 生命周期重复实验技术设计](../../docs/冲突检测V2-C4.9-生命周期重复实验技术设计.md)。
+
 ### C4-Lite 事实级聚类
 
 后端运行 C4 migration `000088` 后，运行三文档同事实三取值场景：

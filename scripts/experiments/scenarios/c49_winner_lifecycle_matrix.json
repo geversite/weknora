@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "name": "c49_winner_lifecycle_matrix",
+  "description": "Controlled C4.6/C4.7/C4.8 policy matrix. Each replicate executes real HTTP ingest, Asynq detection, PostgreSQL export, explicit winner adoption/reopen, and no-action negative probes. Replicates are independent executions; this runner does not claim provider RNG seed control.",
+  "variant": "c2-rules",
+  "cases": [
+    {
+      "id": "ordered_triplet_two_cycles",
+      "scenario": "scripts/experiments/scenarios/c46_global_winner_triplet.json",
+      "expected_outcome": "adopt_reopen",
+      "expected_winner_document": "c46_v3",
+      "adoption_cycles": 2
+    },
+    {
+      "id": "out_of_order_triplet",
+      "scenario": "scripts/experiments/scenarios/c49_global_winner_out_of_order.json",
+      "expected_outcome": "adopt_reopen",
+      "expected_winner_document": "c49_v3",
+      "adoption_cycles": 1
+    },
+    {
+      "id": "cross_issuer_no_proposal",
+      "scenario": "scripts/experiments/scenarios/c46_cross_issuer_no_proposal.json",
+      "expected_outcome": "no_proposal"
+    },
+    {
+      "id": "date_version_disagreement_no_proposal",
+      "scenario": "scripts/experiments/scenarios/c49_metadata_direction_disagreement.json",
+      "expected_outcome": "no_proposal"
+    },
+    {
+      "id": "date_version_tie_no_proposal",
+      "scenario": "scripts/experiments/scenarios/c49_metadata_tie_no_proposal.json",
+      "expected_outcome": "no_proposal"
+    }
+  ]
+}

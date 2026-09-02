@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "name": "c49_metadata_direction_disagreement",
+  "description": "C4.9 negative regression. Two same-issuer documents conflict on one exact claim, but the newer effective date and higher version point in opposite directions. C3/C4.6 must leave the global proposal empty.",
+  "min_claims_per_document": 1,
+  "documents": [
+    {
+      "id": "c49_date_older_version_higher",
+      "path": "testdata/claims_eval/docs/c4_meal_allowance_a.md",
+      "title": "发布机构：天穹财团；生效日期：2148年1月1日；版本号：V2.0"
+    },
+    {
+      "id": "c49_date_newer_version_lower",
+      "path": "testdata/claims_eval/docs/c4_meal_allowance_b.md",
+      "title": "发布机构：天穹财团；生效日期：2149年1月1日；版本号：V1.0"
+    }
+  ],
+  "expected_conflict_document_pairs": [
+    {
+      "id": "C49_DATE_VERSION_DISAGREE",
+      "left": "c49_date_older_version_higher",
+      "right": "c49_date_newer_version_lower"
+    }
+  ],
+  "expected_disputed_fact_count": 1,
+  "expected_disputed_fact_anchor_kinds": {
+    "claim_key": 1
+  },
+  "expected_disputed_fact_winner_count": 0
+}

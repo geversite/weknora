@@ -368,7 +368,25 @@ HTTP `409` / no mutation。C4.6 proposal 在 reopen 后保留，winner chunk 始
 
 ---
 
-## 12. 已知限制
+## 12. C4.9：lifecycle independent replicate matrix（已实现，待运行）
+
+C4.9 的 controlled policy matrix 见
+[C4.9 生命周期重复实验技术设计](冲突检测V2-C4.9-生命周期重复实验技术设计.md)。它顺序驱动
+C4.6 proposal、C4.7 durable adoption 和 C4.8 reopen，并对 ordered/out-of-order triplet、cross issuer、
+date/version direction disagreement、tie 做独立 replicate。每次执行使用 fresh temporary KB 和真实
+HTTP/Asynq/PostgreSQL 路径。
+
+它明确不称为 multi-seed：当前 provider API 没有可移植 RNG seed。输出的 policy precision/recall 仅对
+显式标注 controlled cases 有效；`winner_lifecycle_review.csv` 为外部真实语料的第二审阅者预留，不能替代
+双审阅 holdout 评估。
+
+```bash
+make experiment-c49 REPLICATES=3
+```
+
+---
+
+## 13. 已知限制
 
 1. 对已有历史 raw rows，若 C4 前没有保存 claim provenance，只能安全回填 `chunk_pair`，不能
    追溯地猜测跨 chunk 同一事实；
@@ -377,6 +395,7 @@ HTTP `409` / no mutation。C4.6 proposal 在 reopen 后保留，winner chunk 始
 3. 一个 raw chunk pair 若自身含多条矛盾事实，当前旧格式仍只携带一个 final verdict，C4 无法
    从中无损拆分；未来应在 candidate / verdict 层持久化细粒度 claim evidence；
 4. C4.7/C4.8 已冻结 exact `claim_key` 的显式 proposal adoption 与同一 durable adoption 的 precise
-   revoke/reopen。`fuzzy_slot` / `document_singleton` / `chunk_pair` 的 adoption/reopen、winner 并列、
+   revoke/reopen。C4.9 已实现 controlled policy replicate matrix，但尚未运行，且它不能替代真实语料/
+   双审阅 holdout。`fuzzy_slot` / `document_singleton` / `chunk_pair` 的 adoption/reopen、winner 并列、
    wiki 写回和 agent 叙事整合仍未实现。reopen 后可以重新走 C4.7 的显式采纳，但没有自动再采纳。所有
    winner 行为仍必须使用全局 winner，而不是 raw A/B 方向。

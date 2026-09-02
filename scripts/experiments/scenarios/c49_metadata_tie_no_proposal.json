@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "name": "c49_metadata_tie_no_proposal",
+  "description": "C4.9 negative regression. Two same-issuer documents conflict on one exact claim but carry the same explicit effective date and version. There is no strict maximum, so C3/C4.6 must leave the global proposal empty.",
+  "min_claims_per_document": 1,
+  "documents": [
+    {
+      "id": "c49_tie_a",
+      "path": "testdata/claims_eval/docs/c4_meal_allowance_a.md",
+      "title": "发布机构：天穹财团；生效日期：2148年1月1日；版本号：V1.0"
+    },
+    {
+      "id": "c49_tie_b",
+      "path": "testdata/claims_eval/docs/c4_meal_allowance_b.md",
+      "title": "发布机构：天穹财团；生效日期：2148年1月1日；版本号：V1.0"
+    }
+  ],
+  "expected_conflict_document_pairs": [
+    {"id": "C49_TIE", "left": "c49_tie_a", "right": "c49_tie_b"}
+  ],
+  "expected_disputed_fact_count": 1,
+  "expected_disputed_fact_anchor_kinds": {
+    "claim_key": 1
+  },
+  "expected_disputed_fact_winner_count": 0
+}
