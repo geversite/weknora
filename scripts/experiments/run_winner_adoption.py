@@ -115,7 +115,7 @@ def query_members(db: PostgresExporter, kb_id: str, cluster_id: str) -> list[dic
 
 def query_fact(db: PostgresExporter, kb_id: str, cluster_id: str) -> dict[str, str]:
     rows = db.query(
-        "SELECT id, status, conflict_count, pending_conflict_count, source_count, candidate_values, "
+        "SELECT id, clusterer_version, status, conflict_count, pending_conflict_count, source_count, candidate_values, "
         "suggested_winner_knowledge_id, winner_proposal_confidence, winner_proposal_version, "
         "winner_proposal_source_count, active_winner_adoption_id, winner_proposal_reason, updated_at "
         "FROM disputed_facts "

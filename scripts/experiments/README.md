@@ -370,6 +370,9 @@ make experiment-c47-negative RUN="$NEG_RUN"
 
 ### C4.8 显式撤销 / reopen winner adoption
 
+真实正/负例和 durable artifact 审计见
+[C4.8 显式胜方撤销重开评估报告](../../docs/冲突检测V2-C4.8-显式胜方撤销重开评估报告.md)。
+
 C4.8 不会自动恢复任何 disabled chunk。它只能回滚 **migration `000092` 后由 C4.7 创建的 active
 adoption record**，并要求 caller 从当前 resolved cluster 回显：
 

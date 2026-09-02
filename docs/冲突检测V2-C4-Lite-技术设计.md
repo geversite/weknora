@@ -8,8 +8,8 @@
 > [C4.6 全局胜方 Proposal 评估报告](冲突检测V2-C4.6-全局胜方Proposal评估报告.md)。C4.7 的
 > 显式采纳路径也已完成真实服务验证，见
 > [C4.7 显式全局胜方采纳评估报告](冲突检测V2-C4.7-显式全局胜方采纳评估报告.md)。C4.8 的 durable
-> revoke/reopen 路径已实现、待真实服务验证，见
-> [C4.8 显式胜方撤销重开技术设计](冲突检测V2-C4.8-显式胜方撤销重开技术设计.md)。
+> revoke/reopen 路径也已完成真实服务验证，见
+> [C4.8 显式胜方撤销重开评估报告](冲突检测V2-C4.8-显式胜方撤销重开评估报告.md)。
 >
 > 依赖：C1 claims 与 C2-Lite 最终 raw `knowledge_conflicts`。
 >
@@ -340,9 +340,10 @@ agent 写回。
 
 ---
 
-## 11. C4.8：显式 winner revoke/reopen（已实现，待服务验证）
+## 11. C4.8：显式 winner revoke/reopen（已冻结，explicit-only）
 
-完整合约见 [C4.8 显式胜方撤销重开技术设计](冲突检测V2-C4.8-显式胜方撤销重开技术设计.md)。C4.8
+完整合约见 [C4.8 显式胜方撤销重开技术设计](冲突检测V2-C4.8-显式胜方撤销重开技术设计.md)，真实
+运行见 [C4.8 显式胜方撤销重开评估报告](冲突检测V2-C4.8-显式胜方撤销重开评估报告.md)。C4.8
 不从 `resolution_note` 或当前 proposal 猜测 reenable target；它通过 migration `000092` 的 durable
 adoption record，精确记录 C4.7 当时的 raw member IDs、disabled chunk IDs 和 winner metadata。
 
@@ -361,6 +362,10 @@ make experiment-c48 RUN=experiments/runs/<same-run>
 make experiment-c48-negative RUN=experiments/runs/<fresh-c46-negative-run>
 ```
 
+真实正例已验证 3 条 raw member 由 `resolved_global_winner` 精确回到 `pending`、2 个 durable
+recorded loser chunks 重启、record `adopted → revoked`；stale updated_at 与无 active adoption 均为
+HTTP `409` / no mutation。C4.6 proposal 在 reopen 后保留，winner chunk 始终 enabled。
+
 ---
 
 ## 12. 已知限制
@@ -371,7 +376,7 @@ make experiment-c48-negative RUN=experiments/runs/<fresh-c46-negative-run>
    显式 metadata snapshot，不把该类型直接升级为全局权威性结论；
 3. 一个 raw chunk pair 若自身含多条矛盾事实，当前旧格式仍只携带一个 final verdict，C4 无法
    从中无损拆分；未来应在 candidate / verdict 层持久化细粒度 claim evidence；
-4. C4.7 已冻结 exact `claim_key` 的显式 proposal adoption；C4.8 已实现同一 durable adoption 的
-   precise revoke/reopen，但尚待真实服务验收。`fuzzy_slot` / `document_singleton` / `chunk_pair` 的
-   adoption/reopen、winner 并列、wiki 写回和 agent 叙事整合仍未实现。reopen 后可以重新走 C4.7 的
-   显式采纳，但没有自动再采纳。所有 winner 行为仍必须使用全局 winner，而不是 raw A/B 方向。
+4. C4.7/C4.8 已冻结 exact `claim_key` 的显式 proposal adoption 与同一 durable adoption 的 precise
+   revoke/reopen。`fuzzy_slot` / `document_singleton` / `chunk_pair` 的 adoption/reopen、winner 并列、
+   wiki 写回和 agent 叙事整合仍未实现。reopen 后可以重新走 C4.7 的显式采纳，但没有自动再采纳。所有
+   winner 行为仍必须使用全局 winner，而不是 raw A/B 方向。

@@ -231,6 +231,8 @@ def verify_reopen_positive(args: argparse.Namespace, run_dir: Path, kb_id: str, 
         raise ExperimentError("winner reopen 后 member chunks 未全部 enabled")
     if after_fact.get("status") != "pending" or as_int(after_fact.get("pending_conflict_count")) != len(before_member_ids):
         raise ExperimentError(f"winner reopen 后 DisputedFact 未收敛为 pending: {after_fact}")
+    if not str(after_fact.get("clusterer_version", "")).strip():
+        raise ExperimentError("winner reopen 后 DisputedFact 缺少 clusterer_version 导出")
     if after_fact.get("active_winner_adoption_id", ""):
         raise ExperimentError("winner reopen 后 active_winner_adoption_id 未清空")
     if after_fact.get("suggested_winner_knowledge_id") != winner_id or \
