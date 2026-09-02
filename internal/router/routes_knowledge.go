@@ -278,6 +278,10 @@ func RegisterKnowledgeConflictRoutes(r *gin.RouterGroup, conflictHandler *handle
 		confWrite.POST("/resolve", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), conflictHandler.Resolve)
 		confWrite.POST("/clusters/rebuild", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), conflictHandler.RebuildDisputedFacts)
 		confWrite.POST("/clusters/resolve", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), conflictHandler.ResolveDisputedFact)
+		// C4.7 is deliberately separate from the generic safe resolver: this
+		// endpoint requires an explicit, optimistic acceptance of a current
+		// C4.6 global-winner proposal before it can disable loser chunks.
+		confWrite.POST("/clusters/adopt-winner", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), conflictHandler.AdoptDisputedFactWinner)
 	}
 }
 

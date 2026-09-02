@@ -5,7 +5,7 @@ import "time"
 // KnowledgeConflict records a content conflict detected between two knowledge
 // files within the same KB. One row = one conflicting chunk pair. Rows are
 // created post-upload by the async conflict-detection pipeline and are resolved
-// by an Owner/Admin through the adjudication queue (M3).
+// by an Owner/Admin through the adjudication queue (M3/C4.5/C4.7).
 type KnowledgeConflict struct {
 	ID              string `json:"id" gorm:"type:varchar(36);primaryKey"`
 	TenantID        uint64 `json:"tenant_id" gorm:"index"`
@@ -79,6 +79,10 @@ const (
 	ConflictStatusResolvedNewer       = "resolved_newer_wins"
 	ConflictStatusResolvedOlder       = "resolved_older_wins"
 	ConflictStatusResolvedNotConflict = "resolved_not_conflict"
+	// ConflictStatusResolvedGlobalWinner records an explicit C4.7 adoption
+	// of one C4.6 fact-level winner. It deliberately does not encode raw A/B
+	// direction: a member pair need not contain the global winning source.
+	ConflictStatusResolvedGlobalWinner = "resolved_global_winner"
 )
 
 // ConflictDetectedBy constants

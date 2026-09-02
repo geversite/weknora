@@ -1,6 +1,7 @@
 package handler
 
 import (
+	stderrors "errors"
 	"net/http"
 	"strconv"
 
@@ -41,7 +42,7 @@ func NewKnowledgeConflictHandler(
 //
 // @Tags         知识冲突
 // @Param        id       path      string  true  "Knowledge base ID"
-// @Param        status   query     string  false "Filter by status: pending|resolved_keep_both|resolved_newer_wins|resolved_older_wins|resolved_not_conflict"
+// @Param        status   query     string  false "Filter by status: pending|resolved_keep_both|resolved_newer_wins|resolved_older_wins|resolved_not_conflict|resolved_global_winner"
 // @Param        page     query     int     false "Page number (default 1)"
 // @Param        page_size query    int     false "Page size (default 20, max 200)"
 // @Success      200      {object}  map[string]interface{}
@@ -185,9 +186,9 @@ func (h *KnowledgeConflictHandler) RebuildDisputedFacts(c *gin.Context) {
 
 // ResolveDisputedFact godoc
 // @Summary      Safely resolve every pending raw member of a DisputedFact
-// @Description  C4.5 currently permits only keep_both and not_conflict because
+// @Description  C4.5 permits only keep_both and not_conflict. C4.7 global
 //
-//	newer/older wins require C3's cluster-wide authority semantics.
+//	winner adoption is a separate explicit endpoint with snapshot checks.
 //
 // @Tags         知识冲突
 // @Param        id   path string true "Knowledge base ID"
@@ -215,6 +216,54 @@ func (h *KnowledgeConflictHandler) ResolveDisputedFact(c *gin.Context) {
 	result, err := h.clusterService.ResolveDisputedFact(ctx, tenantID, resolverUserID, kbID, req)
 	if err != nil {
 		logger.Errorf(ctx, "Resolve disputed fact %s in KB %s failed: %v", req.DisputedFactID, kbID, err)
+		c.Error(errors.NewValidationError(err.Error()))
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": result})
+}
+
+// AdoptDisputedFactWinner godoc
+// @Summary      Explicitly adopt a current C4.6 global winner proposal
+// @Description  Re-reads and locks the reviewed DisputedFact proposal and all
+//
+//	current raw members. The caller must echo the winner, proposal version,
+//
+//	source count and updated_at snapshot. On success, every pending member
+//
+//	becomes resolved_global_winner and only non-winner source chunks are
+//
+//	disabled. This endpoint never derives a decision from local raw A/B order.
+// @Tags         知识冲突
+// @Param        id   path string true "Knowledge base ID"
+// @Param        body body types.DisputedFactWinnerAdoption true "Winner proposal adoption payload"
+// @Success      200  {object} map[string]interface{}
+// @Failure      400  {object} errors.AppError
+// @Failure      409  {object} errors.AppError
+// @Failure      500  {object} errors.AppError
+// @Security     Bearer
+// @Security     ApiKeyAuth
+// @Router       /knowledge-bases/{id}/conflicts/clusters/adopt-winner [post]
+func (h *KnowledgeConflictHandler) AdoptDisputedFactWinner(c *gin.Context) {
+	if h.clusterService == nil {
+		c.Error(errors.NewInternalServerError("conflict cluster service is not configured"))
+		return
+	}
+	ctx := c.Request.Context()
+	kbID := c.Param("id")
+	tenantID := c.GetUint64(types.TenantIDContextKey.String())
+	resolverUserID := c.GetString(types.UserIDContextKey.String())
+	var req types.DisputedFactWinnerAdoption
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.Error(errors.NewValidationError("invalid winner proposal adoption payload: " + err.Error()))
+		return
+	}
+	result, err := h.clusterService.AdoptDisputedFactWinner(ctx, tenantID, resolverUserID, kbID, req)
+	if err != nil {
+		logger.Errorf(ctx, "Adopt disputed fact %s winner in KB %s failed: %v", req.DisputedFactID, kbID, err)
+		if stderrors.Is(err, types.ErrDisputedFactWinnerAdoptionConflict) {
+			c.Error(errors.NewConflictError(err.Error()))
+			return
+		}
 		c.Error(errors.NewValidationError(err.Error()))
 		return
 	}

@@ -17,8 +17,8 @@ import (
 )
 
 // conflictClusterService implements C4-Lite's deterministic raw conflict →
-// DisputedFact projection. It intentionally does not resolve member conflicts
-// or write to wiki pages; those side effects are later C4/C7 work.
+// DisputedFact projection. C4.5 has a no-disable resolver and C4.7 has one
+// explicit global-winner adoption path; neither writes wiki pages.
 type conflictClusterService struct {
 	conflictRepo interfaces.KnowledgeConflictRepository
 	factRepo     interfaces.DisputedFactRepository
@@ -67,9 +67,9 @@ func (s *conflictClusterService) ListDisputedFacts(
 
 // ResolveDisputedFact propagates one research-safe resolution to every pending
 // raw member of a cluster. Only no-disable resolutions are intentionally
-// supported: a cluster can contain member pairs with opposite A/B directions,
-// so applying newer_wins/older_wins pair-by-pair would be unsafe until C3
-// supplies a globally comparable authority/version policy.
+// supported here: a cluster can contain member pairs with opposite A/B
+// directions. C4.7 therefore exposes global-winner propagation through a
+// separate explicit-proposal path, never as a generic newer/older resolution.
 func (s *conflictClusterService) ResolveDisputedFact(
 	ctx context.Context,
 	tenantID uint64,
@@ -136,6 +136,66 @@ func (s *conflictClusterService) ResolveDisputedFact(
 	sort.Strings(result.UpdatedConflictIDs)
 	result.ClearPenaltyChunkIDs = []string(sortedStringSet(clearPenalty))
 	result.UpdatedConflictCount = len(result.UpdatedConflictIDs)
+	return result, nil
+}
+
+// AdoptDisputedFactWinner is C4.7's only path from an advisory C4.6 proposal
+// to side effects. The caller must echo the reviewed winner, proposal version,
+// source count, and aggregate updated_at value. The repository re-checks all
+// of them inside its transaction and rejects stale/reopened/partial clusters.
+//
+// On success every member receives direction-free resolved_global_winner, and
+// only chunks owned by sources other than the one global winner are disabled.
+// This intentionally differs from applying raw resolved_newer_wins or
+// resolved_older_wins pair by pair: a member can contain two loser sources and
+// neither side is allowed to redefine the cluster winner.
+func (s *conflictClusterService) AdoptDisputedFactWinner(
+	ctx context.Context,
+	tenantID uint64,
+	resolverUserID string,
+	kbID string,
+	req types.DisputedFactWinnerAdoption,
+) (*types.DisputedFactWinnerAdoptionResult, error) {
+	if s == nil || s.conflictRepo == nil || s.factRepo == nil {
+		return nil, errors.New("conflict cluster repositories not configured")
+	}
+	req.DisputedFactID = strings.TrimSpace(req.DisputedFactID)
+	req.ExpectedWinnerKnowledgeID = strings.TrimSpace(req.ExpectedWinnerKnowledgeID)
+	req.ExpectedProposalVersion = strings.TrimSpace(req.ExpectedProposalVersion)
+	req.Note = strings.TrimSpace(req.Note)
+	if tenantID == 0 || kbID == "" || req.DisputedFactID == "" || req.ExpectedWinnerKnowledgeID == "" ||
+		req.ExpectedProposalVersion == "" || req.ExpectedProposalUpdatedAt.IsZero() ||
+		req.ExpectedProposalSourceCount < 2 {
+		return nil, errors.New(
+			"tenant id, knowledge base id, disputed_fact_id, expected winner, proposal version, updated_at and source count are required",
+		)
+	}
+	if len([]rune(req.Note)) > 2000 {
+		return nil, errors.New("winner adoption note exceeds 2000 runes")
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	result, err := s.conflictRepo.AdoptPendingWinnerProposal(ctx, tenantID, kbID, resolverUserID, req)
+	if err != nil {
+		return nil, fmt.Errorf("adopt disputed fact %s winner proposal: %w", req.DisputedFactID, err)
+	}
+	if result == nil || result.UpdatedConflictCount == 0 {
+		return nil, errors.New("winner adoption returned no updated raw conflicts")
+	}
+
+	// The repository transaction has already set the fact to resolved with zero
+	// pending members. Rebuild remains the canonical projection convergence step
+	// and refreshes aggregate fields / current proposal after this explicit action.
+	rebuild, err := s.rebuildLocked(ctx, tenantID, kbID)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"adopted global winner for %d raw conflicts but cluster rebuild failed: %w",
+			result.UpdatedConflictCount, err,
+		)
+	}
+	result.Rebuild = rebuild
 	return result, nil
 }
 

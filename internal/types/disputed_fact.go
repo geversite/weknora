@@ -1,6 +1,9 @@
 package types
 
-import "time"
+import (
+	"errors"
+	"time"
+)
 
 // DisputedFact is the C4-Lite, fact-level aggregate of one or more raw
 // KnowledgeConflict chunk-pair rows. FactKey is a stable, deterministic
@@ -75,7 +78,18 @@ const (
 	// DisputedFactWinnerProposalVersion identifies C3/C4.6's unique-max source
 	// proposal semantics. It is distinct from the per-raw-conflict C3 parser.
 	DisputedFactWinnerProposalVersion = "c3-c4-v1"
+
+	// DisputedFactWinnerAdoptionVersion identifies the explicit C4.7 action
+	// that applies a currently-proposed global winner. It never represents an
+	// automatic model decision.
+	DisputedFactWinnerAdoptionVersion = "c4-winner-adopt-v1"
 )
+
+// ErrDisputedFactWinnerAdoptionConflict marks a current-state/precondition
+// failure that must be refreshed before the caller retries adoption. The HTTP
+// handler maps it to 409, rather than treating a stale proposal as a generic
+// malformed request.
+var ErrDisputedFactWinnerAdoptionConflict = errors.New("disputed fact winner proposal cannot be adopted in its current state")
 
 // DisputedFactRebuildResult is returned by the C4-Lite rebuild endpoint and
 // exported by experiment scripts. It quantifies how much raw chunk-pair work
@@ -93,8 +107,8 @@ type DisputedFactRebuildResult struct {
 
 // DisputedFactResolution is a C4.5 cluster-level adjudication request. The
 // first research-safe implementation deliberately permits only resolutions
-// that disable no chunk: keep_both and not_conflict. Global winner selection
-// awaits C3 metadata/version semantics.
+// that disable no chunk: keep_both and not_conflict. C4.7 winner adoption is
+// a separate explicit endpoint with its own optimistic proposal checks.
 type DisputedFactResolution struct {
 	DisputedFactID string `json:"disputed_fact_id"`
 	Resolution      string `json:"resolution"`
@@ -105,10 +119,46 @@ type DisputedFactResolution struct {
 // makes the reduction from raw-pair actions to one fact-level action explicit
 // for C4.5 experiments.
 type DisputedFactAdjudicationResult struct {
-	DisputedFactID       string                      `json:"disputed_fact_id"`
-	Resolution            string                      `json:"resolution"`
-	UpdatedConflictIDs    []string                    `json:"updated_conflict_ids"`
-	UpdatedConflictCount  int                         `json:"updated_conflict_count"`
-	ClearPenaltyChunkIDs  []string                    `json:"clear_penalty_chunk_ids"`
-	Rebuild               *DisputedFactRebuildResult `json:"rebuild,omitempty"`
+	DisputedFactID      string                      `json:"disputed_fact_id"`
+	Resolution           string                      `json:"resolution"`
+	UpdatedConflictIDs   []string                    `json:"updated_conflict_ids"`
+	UpdatedConflictCount int                         `json:"updated_conflict_count"`
+	ClearPenaltyChunkIDs []string                    `json:"clear_penalty_chunk_ids"`
+	Rebuild              *DisputedFactRebuildResult `json:"rebuild,omitempty"`
+}
+
+// DisputedFactWinnerAdoption is an explicit human/API acceptance of a current
+// C4.6 global-winner proposal. Every expected_* field is required: it makes the
+// action optimistic and fails closed when a rebuild, new raw member, or changed
+// proposal makes the review snapshot stale.
+type DisputedFactWinnerAdoption struct {
+	DisputedFactID              string    `json:"disputed_fact_id"`
+	ExpectedWinnerKnowledgeID    string    `json:"expected_winner_knowledge_id"`
+	ExpectedProposalVersion       string    `json:"expected_proposal_version"`
+	ExpectedProposalUpdatedAt     time.Time `json:"expected_proposal_updated_at"`
+	ExpectedProposalSourceCount   int       `json:"expected_proposal_source_count"`
+	Note                         string    `json:"note,omitempty"`
+}
+
+// DisputedFactWinnerAdoptionResult is the durable, global-winner propagation
+// result. Every affected raw member receives resolved_global_winner, and only
+// chunks belonging to non-winner sources are disabled. The per-member status is
+// intentionally direction-free because a raw pair may not include the global
+// winner at all.
+type DisputedFactWinnerAdoptionResult struct {
+	DisputedFactID          string                      `json:"disputed_fact_id"`
+	Resolution               string                      `json:"resolution"`
+	WinnerKnowledgeID        string                      `json:"winner_knowledge_id"`
+	ProposalVersion          string                      `json:"proposal_version"`
+	ProposalConfidence       float64                     `json:"proposal_confidence"`
+	ProposalSourceCount      int                         `json:"proposal_source_count"`
+	AdoptionVersion          string                      `json:"adoption_version"`
+	AdoptedAt                time.Time                   `json:"adopted_at"`
+	ResolutionNote           string                      `json:"resolution_note"`
+	UpdatedConflictIDs       []string                    `json:"updated_conflict_ids"`
+	UpdatedConflictCount     int                         `json:"updated_conflict_count"`
+	DisabledChunkIDs         []string                    `json:"disabled_chunk_ids"`
+	DisabledKnowledgeIDs     []string                    `json:"disabled_knowledge_ids"`
+	ClearPenaltyChunkIDs     []string                    `json:"clear_penalty_chunk_ids"`
+	Rebuild                  *DisputedFactRebuildResult `json:"rebuild,omitempty"`
 }

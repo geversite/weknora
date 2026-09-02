@@ -10,6 +10,7 @@ func TestConflictStatusesFitPersistedWidth(t *testing.T) {
 		ConflictStatusResolvedNewer,
 		ConflictStatusResolvedOlder,
 		ConflictStatusResolvedNotConflict,
+		ConflictStatusResolvedGlobalWinner,
 	}
 	for _, status := range statuses {
 		if len(status) > persistedStatusWidth {

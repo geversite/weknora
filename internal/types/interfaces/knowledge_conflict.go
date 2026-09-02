@@ -26,6 +26,11 @@ type KnowledgeConflictRepository interface {
 	// ResolvePendingByClusterID atomically applies a no-disable resolution to
 	// every pending member of one C4 DisputedFact and returns those members.
 	ResolvePendingByClusterID(ctx context.Context, tenantID uint64, kbID, clusterID, status, resolverUserID, note string) ([]*types.KnowledgeConflict, error)
+	// AdoptPendingWinnerProposal atomically re-reads a C4.6 proposal and all
+	// current members, validates the caller's optimistic review snapshot, then
+	// propagates an explicit global winner. It must never infer a winner from a
+	// member row's local A/B orientation.
+	AdoptPendingWinnerProposal(ctx context.Context, tenantID uint64, kbID, resolverUserID string, req types.DisputedFactWinnerAdoption) (*types.DisputedFactWinnerAdoptionResult, error)
 	// ListPendingByChunkIDs returns pending conflicts where either chunk is in the list.
 	// Used by rerank penalty and answer-time divergence tagging.
 	ListPendingByChunkIDs(ctx context.Context, chunkIDs []string) ([]*types.KnowledgeConflict, error)

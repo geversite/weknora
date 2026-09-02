@@ -1071,12 +1071,17 @@ func (s *KnowledgeConflictService) GetConflictStats(ctx context.Context, tenantI
 	if err != nil {
 		return nil, err
 	}
+	globalWinner, err := s.conflictRepo.CountByKB(ctx, tenantID, kbID, types.ConflictStatusResolvedGlobalWinner)
+	if err != nil {
+		return nil, err
+	}
 	return map[string]int64{
-		"pending":      pending,
-		"keep_both":    keepBoth,
-		"newer_wins":   newer,
-		"older_wins":   older,
-		"not_conflict": notConflict,
+		"pending":       pending,
+		"keep_both":     keepBoth,
+		"newer_wins":    newer,
+		"older_wins":    older,
+		"not_conflict":  notConflict,
+		"global_winner": globalWinner,
 	}, nil
 }
 

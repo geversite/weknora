@@ -99,6 +99,61 @@ func (r *memoryConflictClusterRepo) ResolvePendingByClusterID(
 	return updated, nil
 }
 
+func (r *memoryConflictClusterRepo) AdoptPendingWinnerProposal(
+	_ context.Context,
+	tenantID uint64,
+	kbID, resolverUserID string,
+	req types.DisputedFactWinnerAdoption,
+) (*types.DisputedFactWinnerAdoptionResult, error) {
+	now := time.Now().UTC()
+	updated := make([]string, 0)
+	disabledChunks := make(map[string]struct{})
+	disabledKnowledge := make(map[string]struct{})
+	clearPenalty := make(map[string]struct{})
+	for _, conflict := range r.conflicts {
+		if conflict == nil || conflict.TenantID != tenantID || conflict.KnowledgeBaseID != kbID ||
+			conflict.ClusterID != req.DisputedFactID || conflict.Status != types.ConflictStatusPending {
+			continue
+		}
+		updated = append(updated, conflict.ID)
+		for _, side := range []struct{ knowledgeID, chunkID string }{
+			{conflict.KnowledgeIDA, conflict.ChunkIDA},
+			{conflict.KnowledgeIDB, conflict.ChunkIDB},
+		} {
+			if side.chunkID != "" {
+				clearPenalty[side.chunkID] = struct{}{}
+			}
+			if side.knowledgeID != req.ExpectedWinnerKnowledgeID && side.chunkID != "" {
+				disabledChunks[side.chunkID] = struct{}{}
+				disabledKnowledge[side.knowledgeID] = struct{}{}
+			}
+		}
+		conflict.Status = types.ConflictStatusResolvedGlobalWinner
+		conflict.ResolvedBy = resolverUserID
+		conflict.ResolvedAt = &now
+		conflict.AutoResolved = false
+		conflict.UpdatedAt = now
+	}
+	if len(updated) == 0 {
+		return nil, fmt.Errorf("no pending member conflicts")
+	}
+	sort.Strings(updated)
+	return &types.DisputedFactWinnerAdoptionResult{
+		DisputedFactID:      req.DisputedFactID,
+		Resolution:           types.ConflictStatusResolvedGlobalWinner,
+		WinnerKnowledgeID:    req.ExpectedWinnerKnowledgeID,
+		ProposalVersion:      req.ExpectedProposalVersion,
+		ProposalSourceCount:  req.ExpectedProposalSourceCount,
+		AdoptionVersion:      types.DisputedFactWinnerAdoptionVersion,
+		AdoptedAt:            now,
+		UpdatedConflictIDs:   updated,
+		UpdatedConflictCount: len(updated),
+		DisabledChunkIDs:     []string(sortedStringSet(disabledChunks)),
+		DisabledKnowledgeIDs: []string(sortedStringSet(disabledKnowledge)),
+		ClearPenaltyChunkIDs: []string(sortedStringSet(clearPenalty)),
+	}, nil
+}
+
 func (r *memoryConflictClusterRepo) ListPendingByChunkIDs(_ context.Context, chunkIDs []string) ([]*types.KnowledgeConflict, error) {
 	wanted := make(map[string]bool)
 	for _, id := range chunkIDs {
@@ -518,6 +573,75 @@ func TestDisputedFactWinnerProposalSelectsUniqueGlobalMaximum(t *testing.T) {
 	}
 }
 
+func TestAdoptDisputedFactWinnerPropagatesOnlyExplicitGlobalWinner(t *testing.T) {
+	const (
+		tenantID = uint64(10)
+		kbID     = "kb-winner-adopt"
+		factKey  = "claim_key:餐补每日标准"
+	)
+	metaV1 := conflictDocumentMetaJSON(types.ConflictDocumentMeta{
+		ParserVersion: types.ConflictVersionSuggestionVersion, KnowledgeID: "doc-v1",
+		Issuer: "天穹财团", EffectiveDate: "2148-01-01", Version: "1.0",
+	})
+	metaV2 := conflictDocumentMetaJSON(types.ConflictDocumentMeta{
+		ParserVersion: types.ConflictVersionSuggestionVersion, KnowledgeID: "doc-v2",
+		Issuer: "天穹财团", EffectiveDate: "2148-06-01", Version: "2.0",
+	})
+	metaV3 := conflictDocumentMetaJSON(types.ConflictDocumentMeta{
+		ParserVersion: types.ConflictVersionSuggestionVersion, KnowledgeID: "doc-v3",
+		Issuer: "天穹财团", EffectiveDate: "2149-01-01", Version: "3.0",
+	})
+	conflicts := &memoryConflictClusterRepo{conflicts: []*types.KnowledgeConflict{
+		// This member has no doc-v3 side. The global decision must still resolve
+		// it without treating doc-v2 as the adopted winner.
+		{ID: "v2-v1", TenantID: tenantID, KnowledgeBaseID: kbID, KnowledgeIDA: "doc-v2", KnowledgeIDB: "doc-v1", ChunkIDA: "c2", ChunkIDB: "c1", FactKey: factKey, FactAnchorKind: types.ConflictFactAnchorClaimKey, DocMetaA: metaV2, DocMetaB: metaV1, Status: types.ConflictStatusPending},
+		{ID: "v3-v1", TenantID: tenantID, KnowledgeBaseID: kbID, KnowledgeIDA: "doc-v3", KnowledgeIDB: "doc-v1", ChunkIDA: "c3", ChunkIDB: "c1", FactKey: factKey, FactAnchorKind: types.ConflictFactAnchorClaimKey, DocMetaA: metaV3, DocMetaB: metaV1, Status: types.ConflictStatusPending},
+		{ID: "v3-v2", TenantID: tenantID, KnowledgeBaseID: kbID, KnowledgeIDA: "doc-v3", KnowledgeIDB: "doc-v2", ChunkIDA: "c3", ChunkIDB: "c2", FactKey: factKey, FactAnchorKind: types.ConflictFactAnchorClaimKey, DocMetaA: metaV3, DocMetaB: metaV2, Status: types.ConflictStatusPending},
+	}}
+	facts := &memoryDisputedFactRepo{}
+	service := &conflictClusterService{conflictRepo: conflicts, factRepo: facts}
+	if _, err := service.Rebuild(context.Background(), tenantID, kbID); err != nil {
+		t.Fatalf("initial Rebuild: %v", err)
+	}
+	var fact *types.DisputedFact
+	for _, item := range facts.facts {
+		fact = item
+	}
+	if fact == nil || fact.SuggestedWinnerKnowledgeID != "doc-v3" {
+		t.Fatalf("initial global winner fact = %+v", fact)
+	}
+	// The real repository obtains this from the public GET response. Give the
+	// in-memory fake the same non-zero optimistic token for service validation.
+	fact.UpdatedAt = time.Now().UTC()
+
+	result, err := service.AdoptDisputedFactWinner(context.Background(), tenantID, "reviewer-1", kbID,
+		types.DisputedFactWinnerAdoption{
+			DisputedFactID:            fact.ID,
+			ExpectedWinnerKnowledgeID:  "doc-v3",
+			ExpectedProposalVersion:    types.DisputedFactWinnerProposalVersion,
+			ExpectedProposalUpdatedAt:  fact.UpdatedAt,
+			ExpectedProposalSourceCount: 3,
+			Note:                       "explicit reviewer action",
+		},
+	)
+	if err != nil {
+		t.Fatalf("AdoptDisputedFactWinner: %v", err)
+	}
+	if result.Resolution != types.ConflictStatusResolvedGlobalWinner || result.WinnerKnowledgeID != "doc-v3" ||
+		result.UpdatedConflictCount != 3 || result.Rebuild == nil {
+		t.Fatalf("winner adoption result = %+v", result)
+	}
+	for _, conflict := range conflicts.conflicts {
+		if conflict.Status != types.ConflictStatusResolvedGlobalWinner || conflict.AutoResolved {
+			t.Fatalf("global winner was not propagated safely: %+v", conflict)
+		}
+	}
+	stored, err := facts.GetByID(context.Background(), tenantID, kbID, fact.ID)
+	if err != nil || stored.Status != types.DisputedFactStatusResolved || stored.PendingConflictCount != 0 {
+		t.Fatalf("rebuilt fact after global adoption = %+v err=%v", stored, err)
+	}
+}
+
 func TestDisputedFactWinnerProposalRejectsIssuerMismatch(t *testing.T) {
 	members := []*types.KnowledgeConflict{
 		{
@@ -539,6 +663,7 @@ func TestSafeDisputedFactResolutionAllowsOnlyNoDisableStatuses(t *testing.T) {
 	for _, resolution := range []string{
 		types.ConflictStatusResolvedNewer,
 		types.ConflictStatusResolvedOlder,
+		types.ConflictStatusResolvedGlobalWinner,
 		"pending",
 		"",
 	} {
@@ -584,7 +709,7 @@ func TestResolveDisputedFactPropagatesSafeResolution(t *testing.T) {
 		DisputedFactID: clusterID,
 		Resolution:      types.ConflictStatusResolvedNewer,
 	}); err == nil {
-		t.Fatal("newer_wins must be rejected before C3")
+		t.Fatal("generic cluster resolver must reject newer_wins outside explicit C4.7 adoption")
 	}
 	if conflicts.conflicts[0].Status != types.ConflictStatusPending {
 		t.Fatal("unsupported cluster resolution must not mutate member conflicts")

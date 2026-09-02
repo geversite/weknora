@@ -27,4 +27,7 @@ type ConflictClusterService interface {
 	Rebuild(ctx context.Context, tenantID uint64, kbID string) (*types.DisputedFactRebuildResult, error)
 	ListDisputedFacts(ctx context.Context, tenantID uint64, kbID, status string, limit, offset int) ([]*types.DisputedFact, int64, error)
 	ResolveDisputedFact(ctx context.Context, tenantID uint64, resolverUserID string, kbID string, req types.DisputedFactResolution) (*types.DisputedFactAdjudicationResult, error)
+	// AdoptDisputedFactWinner accepts a currently displayed C4.6 proposal and
+	// propagates its one global winner only after optimistic snapshot checks.
+	AdoptDisputedFactWinner(ctx context.Context, tenantID uint64, resolverUserID string, kbID string, req types.DisputedFactWinnerAdoption) (*types.DisputedFactWinnerAdoptionResult, error)
 }

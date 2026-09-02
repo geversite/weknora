@@ -85,7 +85,7 @@ python3 scripts/experiments/run_claims_eval.py --check --check-db
 1. `GET /health` 返回 `{"status":"ok"}`；
 2. API key 是否存在（不会输出其值）；
 3. Docker/psql 是否能执行只读 `SELECT 1`；
-4. C2 的 `conflict_detection_runs`、C4 的 `disputed_facts`、C4.5 status 宽度和 C3 suggestion 列均已由 migration 创建。
+4. C2 的 `conflict_detection_runs`、C4 的 `disputed_facts`、C4.5 status 宽度、C3 suggestion 列和 C4.6 winner proposal 列均已由 migration 创建。
 
 ## 运行场景
 
@@ -292,6 +292,78 @@ expected_disputed_fact_winner_count = 0
 
 任何发布机构不一致、metadata 缺失/冲突、不可比较时间区间或并列最大版本都会得到空 proposal。
 
+### C4.7 显式全局 winner adoption
+
+C4.7 是 C4.6 proposal 的**唯一有副作用入口**。它没有新增 migration（复用 C4.5 已验证的
+`knowledge_conflicts.status VARCHAR(32)`），但必须运行在已具备 C4.6 `000091` 列的后端上。
+它不自动执行：调用方必须先通过 `GET /conflicts/clusters` 审阅当前 proposal，再把完整快照提交到：
+
+```text
+POST /api/v1/knowledge-bases/:id/conflicts/clusters/adopt-winner
+```
+
+请求必须回显：
+
+```json
+{
+  "disputed_fact_id": "<cluster id>",
+  "expected_winner_knowledge_id": "<current suggested_winner_knowledge_id>",
+  "expected_proposal_version": "c3-c4-v1",
+  "expected_proposal_updated_at": "<current disputed fact updated_at>",
+  "expected_proposal_source_count": 3,
+  "note": "optional human audit note"
+}
+```
+
+服务在一个数据库 transaction 中锁定并重新读取 DisputedFact、全部 member raw conflicts 和
+全部 member chunks。以下任一情况均以 HTTP `409` 拒绝且不写入：proposal 缺失/改变、`updated_at`
+快照过期、source/member count 不一致、任一 member 已被局部裁决、winner 不在当前 sources、任一
+member chunk 已禁用，或 chunk ownership 与 raw evidence 不一致。
+
+成功时仅允许 exact `claim_key` cluster：
+
+```text
+所有 pending raw members → status=resolved_global_winner
+AutoResolved → false
+winner source chunks → 保持 enabled
+所有 non-winner source 的 member chunks → disabled
+DisputedFact → status=resolved / pending_conflict_count=0
+resolution_note → 包含 winner、proposal version、source count 与人工 note
+```
+
+`resolved_global_winner` 刻意不编码 raw A/B 方向，因为例如 V2 ↔ V1 member 本身可能不含全局
+V3 winner。C4.7 不调用 generic `resolve` 或 C4.5 `/clusters/resolve`，不会把局部
+`resolved_newer_wins` / `resolved_older_wins` 当成全局命令。它也不新增 wiki dispute block
+或 agent 写回；那仍是后续工作。
+
+在 fresh、尚未采纳的 C4.6 run 上运行：
+
+```bash
+make experiment-c46
+POS_RUN="$(ls -td experiments/runs/*-c46_global_winner_triplet-c2-rules-* | head -1)"
+make experiment-c47 RUN="$POS_RUN"
+```
+
+正例脚本首先故意发送一个错误 proposal version，要求 HTTP `409` 且 raw members/chunks 完全不变；
+然后才发送从 live `GET /clusters` 读取的精确快照。成功后它只读 PostgreSQL 验证：全部 member
+为 `resolved_global_winner`、winner chunk 未禁用、所有 loser member chunks 已禁用、aggregate
+已收敛为 `resolved`。
+
+跨 issuer / 无 proposal 负例：
+
+```bash
+make experiment-c46-negative
+NEG_RUN="$(ls -td experiments/runs/*-c46_cross_issuer_no_proposal-c2-rules-* | head -1)"
+make experiment-c47-negative RUN="$NEG_RUN"
+```
+
+它必须得到 HTTP `409`，并验证没有 raw status 或 chunk enable state 被改变。产物分别写入：
+
+```text
+<positive-run>/winner_adoption.json
+<negative-run>/winner_adoption_negative.json
+```
+
 ### C4-Lite 事实级聚类
 
 后端运行 C4 migration `000088` 后，运行三文档同事实三取值场景：
@@ -422,9 +494,9 @@ experiments/runs/<timestamp>-<scenario>-<variant>-<commit>/
 
 退出码：
 
-- `0`：预期文档对出现、所有 `forbidden_conflict_document_pairs` 均未出现、C3 version suggestion 断言（若配置）通过、`expected_disputed_fact_count`（若配置）匹配，且（若场景带完整 gold）`evaluate.py` 通过门槛；
-- `2`：服务链路完成并导出了证据，但缺少预期冲突对、出现禁止的冲突文档对、C3 suggestion 断言失败、聚类数量断言失败，或抽取 P/R 未达门槛；
-- `1`：环境、API、任务或数据库导出失败；
+- `0`：预期文档对出现、所有 `forbidden_conflict_document_pairs` 均未出现、C3 version suggestion 与 C4.6 winner proposal 断言（若配置）通过、`expected_disputed_fact_count`（若配置）匹配，且（若场景带完整 gold）`evaluate.py` 通过门槛；
+- `2`：服务链路完成并导出了证据，但缺少预期冲突对、出现禁止的冲突文档对、C3/C4.6 suggestion/proposal 断言失败、聚类数量断言失败，或抽取 P/R 未达门槛；
+- `1`：环境、API、任务或数据库导出失败；C4.5/C4.7 action-verifier 对预期状态、HTTP rejection 或副作用断言失败也返回 `1`；
 - `130`：用户中断。
 
 实验 KB 默认保留，便于针对其 `knowledge_id`、spans 和数据库记录排查。清理由人工确认后完成。

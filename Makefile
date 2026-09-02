@@ -1,4 +1,4 @@
-.PHONY: help build run test clean docker-build-app docker-build-docreader docker-build-frontend docker-build-all docker-run migrate-up migrate-down docker-restart docker-stop start-all stop-all start-ollama stop-ollama build-images build-images-app build-images-docreader build-images-frontend clean-images check-env list-containers pull-images show-platform dev-start dev-stop dev-restart dev-logs dev-status dev-app dev-frontend docs install-swagger build-lite run-lite package-lite experiment-check experiment-c1 experiment-c2-rules experiment-c2-batch experiment-c2-compare experiment-c3 experiment-c46 experiment-c46-negative experiment-c4 experiment-c4-fuzzy experiment-c4-resolve experiment-p2 experiment-p3 experiment-p12 experiment-v1 experiment-audit experiment-audit-summary experiment-audit-metrics experiment-gold-v2 experiment-gold-v2-review experiment-gold-v2-scope-review experiment-gold-v2-apply-recommendations experiment-gold-v2-finalize experiment-dual-scope-metrics
+.PHONY: help build run test clean docker-build-app docker-build-docreader docker-build-frontend docker-build-all docker-run migrate-up migrate-down docker-restart docker-stop start-all stop-all start-ollama stop-ollama build-images build-images-app build-images-docreader build-images-frontend clean-images check-env list-containers pull-images show-platform dev-start dev-stop dev-restart dev-logs dev-status dev-app dev-frontend docs install-swagger build-lite run-lite package-lite experiment-check experiment-c1 experiment-c2-rules experiment-c2-batch experiment-c2-compare experiment-c3 experiment-c46 experiment-c46-negative experiment-c47 experiment-c47-negative experiment-c4 experiment-c4-fuzzy experiment-c4-resolve experiment-p2 experiment-p3 experiment-p12 experiment-v1 experiment-audit experiment-audit-summary experiment-audit-metrics experiment-gold-v2 experiment-gold-v2-review experiment-gold-v2-scope-review experiment-gold-v2-apply-recommendations experiment-gold-v2-finalize experiment-dual-scope-metrics
 
 # Show help
 help:
@@ -67,7 +67,9 @@ help:
 	@echo "  experiment-c3     运行 C3-Lite 版本/发布机构建议实验"
 	@echo "  experiment-c46    运行 C3/C4.6 三来源全局胜方 proposal 实验"
 	@echo "  experiment-c46-negative 运行 C3/C4.6 跨发布机构无 winner proposal 回归"
-	@echo "  experiment-c4     运行 C4-Lite 三值同事实聚类实验"} જઈന്തassistant to=functions.edit_file  菲律宾申博 天天种彩票 天天中彩票软件  天天乐购彩票{
+	@echo "  experiment-c47    显式采纳一个 fresh C4.6 winner proposal（RUN=<run>）"
+	@echo "  experiment-c47-negative 验证无 proposal 时 API 拒绝采纳（RUN=<run>）"
+	@echo "  experiment-c4     运行 C4-Lite 三值同事实聚类实验"
 	@echo "  experiment-c4-fuzzy 运行 C4-Lite schema-drift fallback 聚类实验"
 	@echo "  experiment-c4-resolve 对一个 C4 cluster 执行安全传播裁决（RUN=...）"
 	@echo "  experiment-p2     运行 P2 claim→detect 时序隔离实验"
@@ -395,6 +397,16 @@ experiment-c46:
 experiment-c46-negative:
 	python3 scripts/experiments/run_claims_eval.py \
 		--scenario scripts/experiments/scenarios/c46_cross_issuer_no_proposal.json --variant c2-rules
+
+# Usage: make experiment-c47 RUN=experiments/runs/<fresh-c46-positive-run> [CLUSTER_ID=<id>]
+experiment-c47:
+	@test -n "$(RUN)" || (echo "Usage: make experiment-c47 RUN=experiments/runs/<fresh-c46-positive-run>"; exit 2)
+	python3 scripts/experiments/run_winner_adoption.py --run-dir "$(RUN)" $(if $(CLUSTER_ID),--cluster-id "$(CLUSTER_ID)")
+
+# Usage: make experiment-c47-negative RUN=experiments/runs/<fresh-c46-negative-run> [CLUSTER_ID=<id>]
+experiment-c47-negative:
+	@test -n "$(RUN)" || (echo "Usage: make experiment-c47-negative RUN=experiments/runs/<fresh-c46-negative-run>"; exit 2)
+	python3 scripts/experiments/run_winner_adoption.py --run-dir "$(RUN)" --expect-no-proposal $(if $(CLUSTER_ID),--cluster-id "$(CLUSTER_ID)")
 
 experiment-c4:
 	python3 scripts/experiments/run_claims_eval.py \
