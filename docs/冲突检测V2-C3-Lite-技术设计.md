@@ -191,8 +191,8 @@ resolved_not_conflict
 ```
 
 C3-Lite 不会自动开放 cluster-level `newer_wins`。它先提供可审计、无副作用的逐 raw pair
-建议证据。C4.6 已在这之上完成全来源、唯一最大值的 **proposal**。C4.7 已实现独立的显式
-adoption endpoint（待真实服务验证），但没有扩展 C4.5 的 generic Resolve：
+建议证据。C4.6 已在这之上完成全来源、唯一最大值的 **proposal**；C4.7 已完成独立显式
+adoption endpoint 的真实服务验证。它没有扩展 C4.5 的 generic Resolve：
 `resolved_newer_wins` / `resolved_older_wins` 仍被 C4.5 明确拒绝。
 
 ---
@@ -201,8 +201,9 @@ adoption endpoint（待真实服务验证），但没有扩展 C4.5 的 generic 
 
 真实运行与完整边界见
 [C4.6 全局胜方 Proposal 评估报告](冲突检测V2-C4.6-全局胜方Proposal评估报告.md)。在 C4.6
-proposal 之上的显式 adoption 合约见
-[C4.7 显式全局胜方采纳技术设计](冲突检测V2-C4.7-显式全局胜方采纳技术设计.md)。
+proposal 之上的显式 adoption 合约与真实验证见
+[C4.7 显式全局胜方采纳技术设计](冲突检测V2-C4.7-显式全局胜方采纳技术设计.md) 和
+[C4.7 显式全局胜方采纳评估报告](冲突检测V2-C4.7-显式全局胜方采纳评估报告.md)。
 
 C4.6 读取同一 `DisputedFact` 的全部 member `doc_meta_a/b`，而不是直接把每条 raw
 `SuggestedResolution` 当作全局结论。它要求：

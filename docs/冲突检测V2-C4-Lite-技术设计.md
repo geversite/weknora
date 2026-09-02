@@ -6,8 +6,8 @@
 > [C4-Lite 生产运行评估报告](冲突检测V2-C4-Lite-生产运行评估报告.md)。
 > C3/C4.6 的多来源全局 winner proposal 亦已完成真实服务验证，见
 > [C4.6 全局胜方 Proposal 评估报告](冲突检测V2-C4.6-全局胜方Proposal评估报告.md)。C4.7 的
-> 显式采纳路径已实现、待真实服务验证，见
-> [C4.7 显式全局胜方采纳技术设计](冲突检测V2-C4.7-显式全局胜方采纳技术设计.md)。
+> 显式采纳路径也已完成真实服务验证，见
+> [C4.7 显式全局胜方采纳评估报告](冲突检测V2-C4.7-显式全局胜方采纳评估报告.md)。
 >
 > 依赖：C1 claims 与 C2-Lite 最终 raw `knowledge_conflicts`。
 >
@@ -307,9 +307,10 @@ DisputedFact，并通过 `c46_v3` 唯一 winner（confidence ≥0.95）断言；
 
 ---
 
-## 10. C4.7：显式 global winner adoption（已实现，待服务验证）
+## 10. C4.7：显式 global winner adoption（已冻结，explicit-only）
 
-设计细节见 [C4.7 显式全局胜方采纳技术设计](冲突检测V2-C4.7-显式全局胜方采纳技术设计.md)。
+设计细节见 [C4.7 显式全局胜方采纳技术设计](冲突检测V2-C4.7-显式全局胜方采纳技术设计.md)，真实
+运行见 [C4.7 显式全局胜方采纳评估报告](冲突检测V2-C4.7-显式全局胜方采纳评估报告.md)。
 
 C4.7 不接受通用的 `newer_wins` / `older_wins` cluster resolution。它要求调用方从当前 cluster
 读取并回显 winner knowledge ID、proposal version、proposal source count 与 `updated_at`。服务在
@@ -327,9 +328,10 @@ make experiment-c46-negative
 make experiment-c47-negative RUN=experiments/runs/<fresh-c46-negative-run>
 ```
 
-正例脚本先验证 stale snapshot HTTP `409` / no mutation，再执行精确 snapshot 采纳；负例验证跨 issuer
-空 proposal 同样只能 HTTP `409` / no mutation。该路径不添加 UI、自动采纳、wiki dispute block 或 agent
-写回。
+正例已在真实服务中验证 stale snapshot HTTP `409` / no mutation，再以精确 snapshot 一次更新 4 条
+raw members 为 `resolved_global_winner`、保留 winner chunk 并禁用 3 个 loser member chunks；负例也已验证
+跨 issuer 空 proposal 只能 HTTP `409` / no mutation。该路径不添加 UI、自动采纳、wiki dispute block 或
+agent 写回。
 
 ---
 
@@ -341,6 +343,6 @@ make experiment-c47-negative RUN=experiments/runs/<fresh-c46-negative-run>
    显式 metadata snapshot，不把该类型直接升级为全局权威性结论；
 3. 一个 raw chunk pair 若自身含多条矛盾事实，当前旧格式仍只携带一个 final verdict，C4 无法
    从中无损拆分；未来应在 candidate / verdict 层持久化细粒度 claim evidence；
-4. C4.7 已实现仅限 exact `claim_key` 的显式 proposal adoption，但尚未完成真实服务验收；
-   `fuzzy_slot` / `document_singleton` / `chunk_pair` 的 adoption、winner 撤销/重开、wiki 写回和 agent
-   叙事整合仍未实现。所有后续 winner 行为仍必须使用全局 winner，而不是 raw A/B 方向。
+4. C4.7 已冻结仅限 exact `claim_key` 的显式 proposal adoption；`fuzzy_slot` / `document_singleton` /
+   `chunk_pair` 的 adoption、winner 撤销/重开、wiki 写回和 agent 叙事整合仍未实现。所有后续 winner
+   行为仍必须使用全局 winner，而不是 raw A/B 方向。

@@ -294,6 +294,9 @@ expected_disputed_fact_winner_count = 0
 
 ### C4.7 显式全局 winner adoption
 
+真实正/负例与 artifact 审计见
+[C4.7 显式全局胜方采纳评估报告](../../docs/冲突检测V2-C4.7-显式全局胜方采纳评估报告.md)。
+
 C4.7 是 C4.6 proposal 的**唯一有副作用入口**。它没有新增 migration（复用 C4.5 已验证的
 `knowledge_conflicts.status VARCHAR(32)`），但必须运行在已具备 C4.6 `000091` 列的后端上。
 它不自动执行：调用方必须先通过 `GET /conflicts/clusters` 审阅当前 proposal，再把完整快照提交到：
