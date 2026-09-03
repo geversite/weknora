@@ -227,6 +227,9 @@ def validate_detector(
         issues.append("detector observed forbidden conflict pair(s)")
     if metrics.get("disputed_fact_count_matches") is not True or metrics.get("disputed_fact_anchor_kinds_match") is not True:
         issues.append("detector disputed-fact count/anchor assertion failed")
+    dead_letter_count = as_int(metrics.get("dead_letter_count"))
+    if dead_letter_count != 0:
+        issues.append(f"detector dead_letter_count={dead_letter_count}, expected 0")
     observed = as_int(metrics.get("observed_disputed_fact_winner_count"))
     expected = 1 if case["expected_outcome"] == "adopt_reopen" else 0
     if observed != expected or metrics.get("disputed_fact_winner_count_matches") is not True:
@@ -414,6 +417,7 @@ def execute_case(
         "detector_exit_code": steps[0].get("exit_code"),
         "raw_conflict_count": raw_conflicts,
         "disputed_fact_count": clusters,
+        "dead_letter_count": as_int(metrics.get("dead_letter_count")) if isinstance(metrics, dict) else 0,
         "winner_proposals": winners if isinstance(winners, list) else [],
         "action_artifacts": action_artifacts,
         "steps": steps,
@@ -434,6 +438,7 @@ def summarize(records: list[dict[str, Any]], matrix: dict[str, Any], replicates:
     tp = fp = fn = tn = 0
     cycle_expected = cycle_passed = 0
     raw_counts: list[int] = []
+    dead_letter_counts: list[int] = []
     for item in records:
         winners = item.get("winner_proposals", [])
         predicted = bool(winners)
@@ -458,6 +463,7 @@ def summarize(records: list[dict[str, Any]], matrix: dict[str, Any], replicates:
             tn += 1
         if item.get("raw_conflict_count"):
             raw_counts.append(int(item["raw_conflict_count"]))
+        dead_letter_counts.append(as_int(item.get("dead_letter_count")))
     return {
         "matrix_name": matrix["name"],
         "replicates_requested": replicates,
@@ -489,6 +495,12 @@ def summarize(records: list[dict[str, Any]], matrix: dict[str, Any], replicates:
             "mean": round(mean(raw_counts), 6) if raw_counts else None,
             "note": "Raw chunk-pair count may vary between independent executions; fact-level assertions are the primary unit.",
         },
+        "dead_letter_count": {
+            "observations": len(dead_letter_counts),
+            "total": sum(dead_letter_counts),
+            "max": max(dead_letter_counts) if dead_letter_counts else None,
+            "all_zero": all(value == 0 for value in dead_letter_counts),
+        },
         "seed_control": "none; independent replicates only",
     }
 
@@ -503,6 +515,13 @@ def write_summary_markdown(path: Path, matrix_id: str, matrix: dict[str, Any], s
         "## Controlled policy metrics", "",
         "```json",
         json.dumps(summary["proposal_policy_matrix"], ensure_ascii=False, indent=2),
+        "```", "",
+        "## Lifecycle / integrity totals", "", "```json",
+        json.dumps({
+            "lifecycle_cycles": summary["lifecycle_cycles"],
+            "raw_conflict_count": summary["raw_conflict_count"],
+            "dead_letter_count": summary["dead_letter_count"],
+        }, ensure_ascii=False, indent=2),
         "```", "",
         "## Per-case evidence", "",
         "| case | replicate | expected | winner(s) | raw | clusters | result |", "|---|---:|---|---|---:|---:|---|",

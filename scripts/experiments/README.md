@@ -434,7 +434,8 @@ make experiment-c49 REPLICATES=5
 
 默认 matrix 覆盖：同 issuer ordered 两轮 adopt→reopen、同 issuer out-of-order、cross issuer、
 date/version direction disagreement、date/version tie。每个 replicate 均创建 fresh temporary KB，且
-所有 mutation 都仍通过 public HTTP API；matrix driver 不直接写 PostgreSQL。
+所有 mutation 都仍通过 public HTTP API；matrix driver 不直接写 PostgreSQL。任一 detector artifact 的
+`dead_letter_count != 0` 会令该 case 失败并汇总到 matrix summary。
 
 输出位于 Git-ignored 的：
 
