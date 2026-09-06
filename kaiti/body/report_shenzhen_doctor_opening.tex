@@ -16,7 +16,8 @@
 % 本轮修订要点：
 %   (1) 补充课题来源；(2) 增补 WikiContradict / Mem0 / 真值发现 / Lost-in-the-middle
 %   相关工作并调整差异化表述；(3) 统一冲突分类术语；(4) 收敛研究主线并写明优先级；
-%   (5) 增补 6 处插图位（占位框 + 绘制说明，替换为 \includegraphics 即可）；
+%   (5) 增补 6 处插图位：其中 5 张 AI 插图已接入（见 figures/），
+%   仅剩前期原型截图组（fig:prototype）待补截图；
 %   (6) 表格列型改为 p{} 防止溢出；(7) 修正评测循环性、进度缓冲与成果口径。
 %   新增参考文献 5 条已并入 reference.bib；各图绘制要点见 figures/绘图指南.md。
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -120,8 +121,7 @@ MemGPT 将操作系统的分页思想引入 LLM 记忆管理 \cite{packer2023}�
 % =====================================================================
 \begin{figure}[htbp]
   \centering
-  % \includegraphics[width=0.9\textwidth]{figures/gap-position}
-  \fbox{\parbox[c][5.5cm][c]{0.88\textwidth}{\centering 占位图：研究定位图\\[2pt]\small 横轴：冲突位置（参数 vs.\ 证据 $\rightarrow$ 语料内部）；纵轴：个体记忆 $\rightarrow$ 组织资产\\四象限放置代表性工作，右下（语料内部 $\times$ 组织资产）标注本课题}}
+  \includegraphics[width=0.85\textwidth]{gap-position}
   \caption{知识冲突与记忆研究方向定位}
   \label{fig:gap}
 \end{figure}
@@ -190,8 +190,7 @@ MemGPT 将操作系统的分页思想引入 LLM 记忆管理 \cite{packer2023}�
 % =====================================================================
 \begin{figure}[htbp]
   \centering
-  % \includegraphics[width=0.95\textwidth]{figures/framework}
-  \fbox{\parbox[c][6.5cm][c]{0.9\textwidth}{\centering 占位图：总体研究框架图\\[2pt]\small 中部：知识生命周期管线（摄入—组织—使用—演化—一致性维护）\\上部：研究内容一/二/三挂接各环节\quad 底部：研究内容四（WeKnora 系统底座）\\箭头标注关键数据流：冲突对、引用信号、对话写入、裁决降权}}
+  \includegraphics[width=0.95\textwidth]{framework}
   \caption{总体研究框架：沿知识生命周期组织的四个研究内容及其关联}
   \label{fig:framework}
 \end{figure}
@@ -229,8 +228,7 @@ MemGPT 将操作系统的分页思想引入 LLM 记忆管理 \cite{packer2023}�
 % =====================================================================
 \begin{figure}[htbp]
   \centering
-  % \includegraphics[width=0.95\textwidth]{figures/cascade-pipeline}
-  \fbox{\parbox[c][5.5cm][c]{0.9\textwidth}{\centering 占位图：两阶段级联检测与裁决闭环流程\\[2pt]\small chunk 池 → 向量粗筛（候选对 top-k，零 LLM 调用）→ LLM 精判（四类分类）\\冲突状态机（待裁决/保留双方/以新为准/以旧为准/非冲突）→ 裁决结果回写检索端降权}}
+  \includegraphics[width=0.98\textwidth]{cascade-pipeline}
   \caption{两阶段级联冲突检测与"检测—裁决—检索"闭环}
   \label{fig:cascade}
 \end{figure}
@@ -266,8 +264,7 @@ MemGPT 将操作系统的分页思想引入 LLM 记忆管理 \cite{packer2023}�
 % =====================================================================
 \begin{figure}[htbp]
   \centering
-  % \includegraphics[width=0.9\textwidth]{figures/behavior-taxonomy}
-  \fbox{\parbox[c][6cm][c]{0.88\textwidth}{\centering 占位图：矛盾证据下的生成行为分类示例\\[2pt]\small 上：问题 + 两条带来源/时间戳的矛盾证据卡片\\下：四种行为回答示例——正确呈现分歧 ✓ / 盲从一方 ✗ / 幻觉调和 ✗ / 拒答 △}}
+  \includegraphics[width=0.85\textwidth]{behavior-taxonomy}
   \caption{检索证据内部矛盾下的 LLM 生成行为分类（示例）}
   \label{fig:behavior}
 \end{figure}
@@ -303,8 +300,7 @@ MemGPT 将操作系统的分页思想引入 LLM 记忆管理 \cite{packer2023}�
 % =====================================================================
 \begin{figure}[htbp]
   \centering
-  % \includegraphics[width=0.95\textwidth]{figures/write-pipeline}
-  \fbox{\parbox[c][6cm][c]{0.9\textwidth}{\centering 占位图：两阶段写入管线与三重防线\\[2pt]\small 消息流 → 阶段一过滤（事实/提问/闲聊/观点分流）→ 阶段二定位与追加规划 → 自动写入（只追加 + 快照）\\审计队列 → 复核/回滚/转裁决；三重防线（过滤 / 挂靠约束 / 审计回滚）分层标注}}
+  \includegraphics[width=0.92\textwidth]{write-pipeline}
   \caption{对话驱动的知识写入管线及其风险控制防线}
   \label{fig:pipeline}
 \end{figure}
