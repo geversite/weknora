@@ -143,8 +143,10 @@ MemGPT 将操作系统的分页思想引入 LLM 记忆管理 \cite{packer2023}�
 % =====================================================================
 \begin{figure}[htbp]
   \centering
-  % \includegraphics[width=0.98\textwidth]{figures/prototype-screenshots}
-  \fbox{\parbox[c][5cm][c]{0.92\textwidth}{\centering 占位图：前期原型系统截图组\\[2pt]\small (a) 冲突裁决队列\quad (b) 引用计数资产视图\quad (c) 文件夹层次治理\quad (d) 反哺 Wiki 审计与回滚}}
+  \subfigure[(a) 冲突裁决队列]{\includegraphics[width=0.45\textwidth]{conflict-queue}}\hfill
+  \subfigure[(b) 引用计数资产视图]{\includegraphics[width=0.45\textwidth]{ref-count}}\\
+  \subfigure[(c) 文件夹层次治理]{\includegraphics[width=0.45\textwidth]{folder-manage}}\hfill
+  \subfigure[(d) 反哺 Wiki 审计与回滚]{\includegraphics[width=0.45\textwidth]{wiki-report}}
   \caption{前期四项原型工作在 WeKnora 中的界面截图}
   \label{fig:prototype}
 \end{figure}
