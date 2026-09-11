@@ -1,0 +1,5 @@
+# Put licensed/private real documents outside this repository whenever possible.
+# These local convenience directories must never be committed by accident.
+private/
+real_docs/
+reviewed/

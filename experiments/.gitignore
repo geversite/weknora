@@ -2,3 +2,4 @@
 # Keep the directory itself so scripts have a stable default destination.
 runs/
 comparisons/
+corpus_plans/

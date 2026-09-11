@@ -1,0 +1,158 @@
+# C4.10 真实版本语料与双审阅协议
+
+本目录不是默认实验数据集，而是将 C4.6/C4.7/C4.8 从 controlled policy matrix 推进到可复核真实语料的
+**结构、split 和标注模板**。
+
+- `sample_docs/` 与 `corpus.sample.json` 仅是可运行的 synthetic schema example；
+- 真实、受许可或已匿名化的文档建议存放在仓库外的受控目录，并在 manifest 中使用绝对路径；
+- 不要把客户文档、未获许可法规全文、身份信息或 API Key 提交到 Git；
+- 每个 case 是一个预期只聚成一个 `DisputedFact` 的事实家族；复杂多事实文档应拆成多个 case，或明确扩大
+  `expected_disputed_fact_count` 并接受更复杂的标注协议。
+
+## 1. 什么时候达到论文可写程度？
+
+可以**现在开始写论文草稿**的引言、问题定义、架构、C1/C2 成本消融和 C4.6–C4.9 controlled evidence；但在
+没有真实 holdout 和双审阅前，不应把结果部分写成系统泛化结论。
+
+建议分三级门槛：
+
+| 阶段 | 最小证据 | 可以做什么 |
+|---|---|---|
+| Draft-ready（当前接近） | 冻结系统、可重复脚本、controlled policy matrix、明确限制 | 写 introduction/method/engineering evaluation 草稿 |
+| Workshop/pilot-ready | 30–50 个事实家族；至少 15 个正例与 15 个 no-proposal/ambiguous 负例；development/holdout 按 fact family 分离；两位 reviewer 覆盖 holdout | 可信的 workshop、demo 或内部研究稿 |
+| Full-paper-ready | 建议 100+ facts、至少 3 个来源的正例、多个 issuer/metadata failure 模式；双审阅/仲裁、agreement、holdout、baseline/ablation、95% CI、系统性 error analysis | 考虑正式 conference/journal 投稿 |
+
+这些不是任何特定 venue 的硬性规则；实际样本量取决于论文主张与目标 venue。关键是**按事实家族而不是按 raw
+chunk-pair 拆分**，避免同一文档版本同时进入 development 和 holdout。
+
+## 2. Corpus manifest
+
+复制 `corpus.sample.json`，每个 case 至少包含：
+
+```json
+{
+  "id": "policy_triplet_001",
+  "fact_family_id": "travel_allowance_001",
+  "split": "development | holdout",
+  "expected_outcome": "adopt_reopen | no_proposal",
+  "expected_winner_document": "revision_v3",
+  "adoption_cycles": 1,
+  "documents": [
+    {
+      "id": "revision_v1",
+      "path": "/secure/corpus/travel_v1.md",
+      "title": "发布机构：某机构；生效日期：2025年1月1日；版本号：V1.0"
+    }
+  ],
+  "expected_conflict_document_pairs": [
+    {"id": "P1", "left": "revision_v2", "right": "revision_v1"}
+  ],
+  "expected_disputed_fact_count": 1,
+  "expected_disputed_fact_anchor_kinds": {"claim_key": 1}
+}
+```
+
+约束：
+
+```text
+adopt_reopen：至少 3 个 documents，winner 必须是 case 内 document，adoption_cycles=1..3
+no_proposal：expected_winner_document 为空，adoption_cycles=0
+同一 fact_family_id 不能跨 development/holdout
+同一个 document path 不能跨 development/holdout
+每个 expected conflict pair 必须显式列出
+```
+
+建议 first pilot corpus：
+
+```text
+开发集：15–25 fact families，用于发现 schema/metadata 问题
+holdout：15–25 fact families，只在规则/脚本冻结后运行
+正例：每项尽量 3 sources
+负例：cross issuer、metadata missing、date/version disagreement、tie、时间区间不可比
+```
+
+## 3. 生成 C4.9 matrices 与盲审 sheet
+
+```bash
+cd ~/weknora
+
+python3 scripts/experiments/build_winner_corpus_matrix.py \
+  --corpus /secure/corpus/my_winner_corpus.json \
+  --output-dir experiments/corpus_plans/my-winner-corpus
+```
+
+生成：
+
+```text
+generated_scenarios/
+winner_lifecycle_matrix.development.json
+winner_lifecycle_matrix.holdout.json
+winner_lifecycle_matrix.all.json
+reviewer_1_blind.csv
+reviewer_2_blind.csv
+gold_adjudication.csv
+normalized_corpus.json
+README.md
+```
+
+先在 development matrix 上做必要的、预先记录的校准；冻结代码/metadata rules 后，才运行 holdout：
+
+```bash
+python3 scripts/experiments/run_winner_lifecycle_eval.py \
+  --matrix experiments/corpus_plans/my-winner-corpus/winner_lifecycle_matrix.holdout.json \
+  --replicates 3
+```
+
+不要用 `.all.json` 得出 holdout 结论；它仅用于本地便利检查。
+
+## 4. 双审阅协议
+
+两位 reviewer 分别填写自己的 blind CSV，**不先查看 gold_adjudication.csv**。
+
+每位 reviewer 应记录：
+
+```text
+reviewer_label:
+  correct_winner | correct_no_proposal | wrong_winner |
+  missed_winner | unsafe_action | uncertain | exclude
+
+reviewer_winner_document:
+  仅正确/错误 winner 相关 case 填写
+
+reviewer_evidence:
+  issuer/date/version 的连续原文证据或可定位段落
+
+reviewer_note:
+  不可比、授权层级、版本语义、事实是否同一等理由
+```
+
+两位 reviewer 完成后，使用 `gold_adjudication.csv` 记录最终仲裁：
+
+```text
+adjudicated_label
+adjudicated_winner_document
+adjudicated_evidence
+adjudicated_note
+```
+
+C4.9 runtime 的 `winner_lifecycle_review.csv` 可用：
+
+```bash
+make experiment-c49-review REVIEW=<run>/winner_lifecycle_review.csv
+```
+
+汇总 runtime outcome 的双审阅 agreement / Cohen's kappa / manual policy accuracy。对于 corpus-level
+盲审 sheet，保留原 CSV 和仲裁版本；不要让脚本自动覆盖人工原始标注。
+
+## 5. 建议的论文实验表
+
+至少保留以下四类结果：
+
+1. **C1/C2 detection + cost ablation**：V1/C1/C2-Rules/C2-B4 的 calls、tokens、duration、integrity；
+2. **C4 clustering**：raw pairs → DisputedFacts、anchor-kind、review-units-saved；
+3. **C4.6 proposal decision**：winner/no-proposal precision、recall、abstention、错误类型；
+4. **C4.7/C4.8 lifecycle safety**：stale rejection、no-action negatives、adopt/reopen/re-adopt 成功率、unsafe action count。
+
+对 holdout 中以 fact family 为单位的指标报告 95% bootstrap CI。保留所有 failed case，而不是只报告成功
+replicates。当前 C4.9 的 controlled matrix 只能作为 integration evidence；真实 corpus 的 reviewer
+agreement 和 error analysis 才能支撑外部有效性讨论。

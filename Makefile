@@ -1,4 +1,4 @@
-.PHONY: help build run test clean docker-build-app docker-build-docreader docker-build-frontend docker-build-all docker-run migrate-up migrate-down docker-restart docker-stop start-all stop-all start-ollama stop-ollama build-images build-images-app build-images-docreader build-images-frontend clean-images check-env list-containers pull-images show-platform dev-start dev-stop dev-restart dev-logs dev-status dev-app dev-frontend docs install-swagger build-lite run-lite package-lite experiment-check experiment-c1 experiment-c2-rules experiment-c2-batch experiment-c2-compare experiment-c3 experiment-c46 experiment-c46-negative experiment-c47 experiment-c47-negative experiment-c48 experiment-c48-negative experiment-c49 experiment-c49-review experiment-c4 experiment-c4-fuzzy experiment-c4-resolve experiment-p2 experiment-p3 experiment-p12 experiment-v1 experiment-audit experiment-audit-summary experiment-audit-metrics experiment-gold-v2 experiment-gold-v2-review experiment-gold-v2-scope-review experiment-gold-v2-apply-recommendations experiment-gold-v2-finalize experiment-dual-scope-metrics
+.PHONY: help build run test clean docker-build-app docker-build-docreader docker-build-frontend docker-build-all docker-run migrate-up migrate-down docker-restart docker-stop start-all stop-all start-ollama stop-ollama build-images build-images-app build-images-docreader build-images-frontend clean-images check-env list-containers pull-images show-platform dev-start dev-stop dev-restart dev-logs dev-status dev-app dev-frontend docs install-swagger build-lite run-lite package-lite experiment-check experiment-c1 experiment-c2-rules experiment-c2-batch experiment-c2-compare experiment-c3 experiment-c46 experiment-c46-negative experiment-c47 experiment-c47-negative experiment-c48 experiment-c48-negative experiment-c49 experiment-c49-review experiment-c410-plan experiment-c4 experiment-c4-fuzzy experiment-c4-resolve experiment-p2 experiment-p3 experiment-p12 experiment-v1 experiment-audit experiment-audit-summary experiment-audit-metrics experiment-gold-v2 experiment-gold-v2-review experiment-gold-v2-scope-review experiment-gold-v2-apply-recommendations experiment-gold-v2-finalize experiment-dual-scope-metrics
 
 # Show help
 help:
@@ -73,6 +73,7 @@ help:
 	@echo "  experiment-c48-negative 验证无 active adoption 时 API 拒绝 reopen（RUN=<run>）"
 	@echo "  experiment-c49    运行 C4.6/C4.7/C4.8 多 replicate 生命周期矩阵（REPLICATES=3）"
 	@echo "  experiment-c49-review 汇总 C4.9 双审阅 CSV（REVIEW=<csv>）"
+	@echo "  experiment-c410-plan 验证真实语料 split 并生成 C4.9 matrix（CORPUS=<json>）"
 	@echo "  experiment-c4     运行 C4-Lite 三值同事实聚类实验"
 	@echo "  experiment-c4-fuzzy 运行 C4-Lite schema-drift fallback 聚类实验"
 	@echo "  experiment-c4-resolve 对一个 C4 cluster 执行安全传播裁决（RUN=...）"
@@ -430,6 +431,11 @@ experiment-c49:
 experiment-c49-review:
 	@test -n "$(REVIEW)" || (echo "Usage: make experiment-c49-review REVIEW=experiments/comparisons/<c49-run>/winner_lifecycle_review.csv"; exit 2)
 	python3 scripts/experiments/summarize_winner_lifecycle_review.py --review "$(REVIEW)" $(if $(OUTPUT),--output-dir "$(OUTPUT)")
+
+# Usage: make experiment-c410-plan CORPUS=/secure/corpus/my_winner_corpus.json [OUTPUT=experiments/corpus_plans/<name>] [ALLOW_MISSING=1]
+experiment-c410-plan:
+	@test -n "$(CORPUS)" || (echo "Usage: make experiment-c410-plan CORPUS=/secure/corpus/my_winner_corpus.json"; exit 2)
+	python3 scripts/experiments/build_winner_corpus_matrix.py --corpus "$(CORPUS)" $(if $(OUTPUT),--output-dir "$(OUTPUT)") $(if $(ALLOW_MISSING),--allow-missing-documents)
 
 experiment-c4:
 	python3 scripts/experiments/run_claims_eval.py \

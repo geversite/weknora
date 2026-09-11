@@ -384,6 +384,10 @@ HTTP/Asynq/PostgreSQL 路径。
 make experiment-c49 REPLICATES=3
 ```
 
+C4.10 已提供真实语料的 fact-family development/holdout split guard、scenario/matrix generator 和双 blind
+reviewer sheets；详见 [C4.10 真实版本语料与双审阅协议](../testdata/winner_lifecycle_corpus/README.md)。它不
+引入新的自动裁决或 wiki side effect。
+
 ---
 
 ## 13. 已知限制
@@ -395,7 +399,8 @@ make experiment-c49 REPLICATES=3
 3. 一个 raw chunk pair 若自身含多条矛盾事实，当前旧格式仍只携带一个 final verdict，C4 无法
    从中无损拆分；未来应在 candidate / verdict 层持久化细粒度 claim evidence；
 4. C4.7/C4.8 已冻结 exact `claim_key` 的显式 proposal adoption 与同一 durable adoption 的 precise
-   revoke/reopen。C4.9 已实现 controlled policy replicate matrix，但尚未运行，且它不能替代真实语料/
-   双审阅 holdout。`fuzzy_slot` / `document_singleton` / `chunk_pair` 的 adoption/reopen、winner 并列、
-   wiki 写回和 agent 叙事整合仍未实现。reopen 后可以重新走 C4.7 的显式采纳，但没有自动再采纳。所有
-   winner 行为仍必须使用全局 winner，而不是 raw A/B 方向。
+   revoke/reopen。C4.9 的 15/15 controlled policy replicate matrix 已通过，待 dead-letter 后验确认，且它
+   不能替代真实语料/双审阅 holdout。C4.10 的 corpus/holdout protocol 已就绪但尚未接入真实数据。
+   `fuzzy_slot` / `document_singleton` / `chunk_pair` 的 adoption/reopen、winner 并列、wiki 写回和 agent
+   叙事整合仍未实现。reopen 后可以重新走 C4.7 的显式采纳，但没有自动再采纳。所有 winner 行为仍必须
+   使用全局 winner，而不是 raw A/B 方向。

@@ -459,6 +459,21 @@ make experiment-c49-review REVIEW=experiments/comparisons/<c49-run>/winner_lifec
 泛化或人类准确率。review summary 也不会把空白、uncertain 或 reviewer disagreement 偷偷计为正确。详见
 [C4.9 生命周期重复实验技术设计](../../docs/冲突检测V2-C4.9-生命周期重复实验技术设计.md)。
 
+### C4.10 真实语料 corpus / holdout plan
+
+C4.10 不引入模型或数据库写入；它验证一个带 development/holdout split 的 corpus manifest，生成
+C4.9-compatible scenarios/matrices 与两份 blind reviewer sheet：
+
+```bash
+make experiment-c410-plan \
+  CORPUS=/secure/corpus/my_winner_corpus.json \
+  OUTPUT=experiments/corpus_plans/my-winner-corpus
+```
+
+它会拒绝同一 `fact_family_id` 或同一 document path 跨 development/holdout 重用。真实文档可放在仓库外的
+受控路径；`experiments/corpus_plans/` 已被 Git 忽略。完整数据格式、双审阅协议和论文门槛见
+[C4.10 真实版本语料与双审阅协议](../../testdata/winner_lifecycle_corpus/README.md)。
+
 ### C4-Lite 事实级聚类
 
 后端运行 C4 migration `000088` 后，运行三文档同事实三取值场景：
