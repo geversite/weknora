@@ -432,9 +432,9 @@ experiment-c49-review:
 	@test -n "$(REVIEW)" || (echo "Usage: make experiment-c49-review REVIEW=experiments/comparisons/<c49-run>/winner_lifecycle_review.csv"; exit 2)
 	python3 scripts/experiments/summarize_winner_lifecycle_review.py --review "$(REVIEW)" $(if $(OUTPUT),--output-dir "$(OUTPUT)")
 
-# Usage: make experiment-c410-plan CORPUS=/secure/corpus/my_winner_corpus.json [OUTPUT=experiments/corpus_plans/<name>] [ALLOW_MISSING=1]
+# Usage: make experiment-c410-plan CORPUS=$HOME/weknora-private-corpus/my_winner_corpus.json [OUTPUT=<private-output-dir>] [ALLOW_MISSING=1]
 experiment-c410-plan:
-	@test -n "$(CORPUS)" || (echo "Usage: make experiment-c410-plan CORPUS=/secure/corpus/my_winner_corpus.json"; exit 2)
+	@test -n "$(CORPUS)" || (echo "Usage: make experiment-c410-plan CORPUS=$$HOME/weknora-private-corpus/my_winner_corpus.json"; exit 2)
 	python3 scripts/experiments/build_winner_corpus_matrix.py --corpus "$(CORPUS)" $(if $(OUTPUT),--output-dir "$(OUTPUT)") $(if $(ALLOW_MISSING),--allow-missing-documents)
 
 experiment-c4:

@@ -5,6 +5,7 @@
 
 - `sample_docs/` 与 `corpus.sample.json` 仅是可运行的 synthetic schema example；
 - 真实、受许可或已匿名化的文档建议存放在仓库外的受控目录，并在 manifest 中使用绝对路径；
+- `/secure/corpus/...` 在示例中只是占位符，不会自动存在；推荐在自己的 home 下创建私有目录；
 - 不要把客户文档、未获许可法规全文、身份信息或 API Key 提交到 Git；
 - 每个 case 是一个预期只聚成一个 `DisputedFact` 的事实家族；复杂多事实文档应拆成多个 case，或明确扩大
   `expected_disputed_fact_count` 并接受更复杂的标注协议。
@@ -25,7 +26,22 @@
 这些不是任何特定 venue 的硬性规则；实际样本量取决于论文主张与目标 venue。关键是**按事实家族而不是按 raw
 chunk-pair 拆分**，避免同一文档版本同时进入 development 和 holdout。
 
-## 2. Corpus manifest
+## 2. 创建私有 corpus 目录
+
+先在仓库外创建一个你自己可写、不会被 Git 跟踪的目录：
+
+```bash
+CORPUS_ROOT="$HOME/weknora-private-corpus"
+mkdir -p "$CORPUS_ROOT/docs"
+chmod 700 "$CORPUS_ROOT"
+
+cp ~/weknora/testdata/winner_lifecycle_corpus/corpus.sample.json \
+  "$CORPUS_ROOT/my_winner_corpus.json"
+```
+
+`/secure/corpus/...` 只是文档中的示例前缀；若你的机器没有该目录，使用上面的 `$CORPUS_ROOT` 即可。
+
+## 3. Corpus manifest
 
 复制 `corpus.sample.json`，每个 case 至少包含：
 
@@ -71,7 +87,7 @@ holdout：15–25 fact families，只在规则/脚本冻结后运行
 负例：cross issuer、metadata missing、date/version disagreement、tie、时间区间不可比
 ```
 
-## 3. 生成 C4.9 matrices 与盲审 sheet
+## 4. 生成 C4.9 matrices 与盲审 sheet
 
 ```bash
 cd ~/weknora
@@ -105,7 +121,7 @@ python3 scripts/experiments/run_winner_lifecycle_eval.py \
 
 不要用 `.all.json` 得出 holdout 结论；它仅用于本地便利检查。
 
-## 4. 双审阅协议
+## 5. 双审阅协议
 
 两位 reviewer 分别填写自己的 blind CSV，**不先查看 gold_adjudication.csv**。
 
@@ -144,7 +160,7 @@ make experiment-c49-review REVIEW=<run>/winner_lifecycle_review.csv
 汇总 runtime outcome 的双审阅 agreement / Cohen's kappa / manual policy accuracy。对于 corpus-level
 盲审 sheet，保留原 CSV 和仲裁版本；不要让脚本自动覆盖人工原始标注。
 
-## 5. 建议的论文实验表
+## 6. 建议的论文实验表
 
 至少保留以下四类结果：
 

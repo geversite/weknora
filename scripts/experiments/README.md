@@ -465,9 +465,14 @@ C4.10 不引入模型或数据库写入；它验证一个带 development/holdout
 C4.9-compatible scenarios/matrices 与两份 blind reviewer sheet：
 
 ```bash
+CORPUS_ROOT="$HOME/weknora-private-corpus"
+mkdir -p "$CORPUS_ROOT/docs"
+chmod 700 "$CORPUS_ROOT"
+cp testdata/winner_lifecycle_corpus/corpus.sample.json "$CORPUS_ROOT/my_winner_corpus.json"
+
 make experiment-c410-plan \
-  CORPUS=/secure/corpus/my_winner_corpus.json \
-  OUTPUT=experiments/corpus_plans/my-winner-corpus
+  CORPUS="$CORPUS_ROOT/my_winner_corpus.json" \
+  OUTPUT="$CORPUS_ROOT/generated-plan"
 ```
 
 它会拒绝同一 `fact_family_id` 或同一 document path 跨 development/holdout 重用。真实文档可放在仓库外的
