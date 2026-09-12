@@ -461,13 +461,28 @@ make experiment-c49-review REVIEW=experiments/comparisons/<c49-run>/winner_lifec
 
 ### C4.10 真实语料 corpus / holdout plan
 
-C4.10 不引入模型或数据库写入；它验证一个带 development/holdout split 的 corpus manifest，生成
+若真实文档已集中在一个目录，先不移动、不上传，做 filename/hash inventory：
+
+```bash
+DOC_ROOT="/path/to/your/existing/documents"
+CORPUS_ROOT="$HOME/weknora-private-corpus"
+mkdir -p "$CORPUS_ROOT"
+chmod 700 "$CORPUS_ROOT"
+
+make experiment-c410-inventory \
+  DOC_ROOT="$DOC_ROOT" \
+  OUTPUT="$CORPUS_ROOT/inventory"
+```
+
+它递归扫描 `pdf/doc/docx/rtf/html/md/markdown/txt`，输出 SHA-256 duplicate groups、filename-derived
+version/date hints 和 `family_candidates.csv`；不导出正文，也不调用模型、API、Asynq 或数据库。filename hints
+只能帮助分组，正式 issuer/date/version evidence 必须人工核对原始 title/header。
+
+筛选版本族后，C4.10 再验证一个带 development/holdout split 的 corpus manifest，并生成
 C4.9-compatible scenarios/matrices 与两份 blind reviewer sheet：
 
 ```bash
-CORPUS_ROOT="$HOME/weknora-private-corpus"
 mkdir -p "$CORPUS_ROOT/docs"
-chmod 700 "$CORPUS_ROOT"
 cp testdata/winner_lifecycle_corpus/corpus.sample.json "$CORPUS_ROOT/my_winner_corpus.json"
 
 make experiment-c410-plan \

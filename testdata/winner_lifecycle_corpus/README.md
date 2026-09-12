@@ -41,7 +41,35 @@ cp ~/weknora/testdata/winner_lifecycle_corpus/corpus.sample.json \
 
 `/secure/corpus/...` 只是文档中的示例前缀；若你的机器没有该目录，使用上面的 `$CORPUS_ROOT` 即可。
 
-## 3. Corpus manifest
+## 3. 扫描已有文档文件夹（不移动、不上传）
+
+真实文档已经在一个文件夹时，先递归盘点，而不是手工逐个复制或直接批量上传：
+
+```bash
+DOC_ROOT="/path/to/your/existing/documents"
+INVENTORY_OUT="$CORPUS_ROOT/inventory"
+
+cd ~/weknora
+make experiment-c410-inventory \
+  DOC_ROOT="$DOC_ROOT" \
+  OUTPUT="$INVENTORY_OUT"
+```
+
+默认扫描 `pdf/doc/docx/rtf/html/md/markdown/txt`，只输出文件名、路径、大小、mtime、SHA-256、以及从**文件名**
+猜测的 version/date/family candidate；不会把正文复制到 artifact、不会调用模型/API/Asynq/PostgreSQL。
+
+重点查看：
+
+```text
+$INVENTORY_OUT/document_inventory.csv
+$INVENTORY_OUT/family_candidates.csv
+$INVENTORY_OUT/inventory_summary.json
+```
+
+`family_candidate`、`version_hint`、`date_hint` 只是分组建议；issuer/date/version 的正式证据仍须从文档标题/header
+人工确认。先在 `family_candidates.csv` 中筛出少量真正属于同一事实的版本族，再写入 corpus manifest。
+
+## 4. Corpus manifest
 
 复制 `corpus.sample.json`，每个 case 至少包含：
 
@@ -87,7 +115,7 @@ holdout：15–25 fact families，只在规则/脚本冻结后运行
 负例：cross issuer、metadata missing、date/version disagreement、tie、时间区间不可比
 ```
 
-## 4. 生成 C4.9 matrices 与盲审 sheet
+## 5. 生成 C4.9 matrices 与盲审 sheet
 
 ```bash
 cd ~/weknora
@@ -121,7 +149,7 @@ python3 scripts/experiments/run_winner_lifecycle_eval.py \
 
 不要用 `.all.json` 得出 holdout 结论；它仅用于本地便利检查。
 
-## 5. 双审阅协议
+## 6. 双审阅协议
 
 两位 reviewer 分别填写自己的 blind CSV，**不先查看 gold_adjudication.csv**。
 
@@ -160,7 +188,7 @@ make experiment-c49-review REVIEW=<run>/winner_lifecycle_review.csv
 汇总 runtime outcome 的双审阅 agreement / Cohen's kappa / manual policy accuracy。对于 corpus-level
 盲审 sheet，保留原 CSV 和仲裁版本；不要让脚本自动覆盖人工原始标注。
 
-## 6. 建议的论文实验表
+## 7. 建议的论文实验表
 
 至少保留以下四类结果：
 
