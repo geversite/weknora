@@ -69,6 +69,59 @@ $INVENTORY_OUT/inventory_summary.json
 `family_candidate`、`version_hint`、`date_hint` 只是分组建议；issuer/date/version 的正式证据仍须从文档标题/header
 人工确认。先在 `family_candidates.csv` 中筛出少量真正属于同一事实的版本族，再写入 corpus manifest。
 
+### 3.1 大文件夹的省事选材表（推荐）
+
+不要直接编辑 496 行 inventory，也不要上传所有文件。先生成只保留 canonical SHA-256、默认排除小于 1024 bytes
+占位文件的 selection queue：
+
+```bash
+make experiment-c410-prepare \
+  INVENTORY="$INVENTORY_OUT/document_inventory.csv" \
+  OUTPUT="$CORPUS_ROOT/selection"
+```
+
+生成的文件：
+
+```text
+$CORPUS_ROOT/selection/corpus_selection.csv
+$CORPUS_ROOT/selection/directory_triage.csv
+$CORPUS_ROOT/selection/same_filename_families.csv
+$CORPUS_ROOT/selection/selection_summary.json
+```
+
+先从 `directory_triage.csv` 选择很窄的主题，再在 `corpus_selection.csv` 中仅编辑相关行。每个准备入选的 row：
+
+```text
+include=yes
+case_id=<同一事实的 case>
+document_id=<稳定别名，默认可保留>
+fact_family_id=<不会跨 split 的真实事实家族>
+split=development | holdout
+expected_outcome=adopt_reopen | no_proposal
+winner=yes（仅 adopt_reopen，且同一 case 恰好一份）
+adoption_cycles=1（仅 adopt_reopen，每行一致）
+expected_conflict_with=<同 case 的 document_id；或明确的 *>
+metadata_title=发布机构：...；生效日期：...；版本号：...
+metadata_evidence_verified=yes
+metadata_evidence_location=<封面/页码/标题行等可复核位置>
+```
+
+`*` 仅表示这份来源与同 case 的**每一份**来源都应有 conflict；不确定时必须逐个填写 partner。`metadata_title`
+不是让脚本从文件名拼接：它必须是人工从原始 title/header 复核的显式证据。对于 `no_proposal`，也应填写已核实的
+metadata title/证据位置（包括“确实缺失”或“不同 issuer”等负例理由），不能只凭文件名推断。
+
+CSV 填好后，把它转为 JSON；过程仍不会读取正文或访问服务：
+
+```bash
+make experiment-c410-materialize \
+  SELECTION="$CORPUS_ROOT/selection/corpus_selection.csv" \
+  CORPUS="$CORPUS_ROOT/my_winner_corpus.json" \
+  NAME=winner_lifecycle_real_pilot
+```
+
+materializer 会拒绝：跨 split 的 family/source 泄漏、重复 SHA-256 source、正例少于三份来源、无/多 winner、未核实
+metadata、binary 误用 manual、或未明确 conflict pair。随后再运行 `experiment-c410-plan`。
+
 ## 4. Corpus manifest
 
 复制 `corpus.sample.json`，每个 case 至少包含：
@@ -95,6 +148,19 @@ $INVENTORY_OUT/inventory_summary.json
   "expected_disputed_fact_anchor_kinds": {"claim_key": 1}
 }
 ```
+
+对于 `.pdf/.doc/.docx`，document 还必须显式写：
+
+```json
+{
+  "ingest_mode": "file",
+  "source_sha256": "<document_inventory.csv 中的 SHA-256>"
+}
+```
+
+生成的 live scenario 会通过真实 multipart API 上传**该 case 选中的**文件，并经 DocReader/Asynq；不会把二进制
+内容作为 Markdown 读取。`title` 会成为 file-mode 的实验知识显示名，且保留源文件扩展名，因此应是从正文 title/header
+核实后的简短 metadata 标签，不应含路径或换行。
 
 约束：
 

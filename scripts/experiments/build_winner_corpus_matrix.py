@@ -16,9 +16,11 @@ should remain outside Git unless their licenses explicitly permit publication.
 from __future__ import annotations
 
 import argparse
+import copy
 import csv
 import datetime as dt
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -30,6 +32,15 @@ DEFAULT_OUTPUT_ROOT = ROOT / "experiments/corpus_plans"
 VALID_OUTCOMES = {"adopt_reopen", "no_proposal"}
 VALID_SPLITS = {"development", "holdout"}
 VALID_VARIANTS = {"v1", "c1", "c2-rules", "c2-batch"}
+VALID_INGEST_MODES = {"manual", "file"}
+MANUAL_TEXT_EXTENSIONS = {".md", ".markdown", ".txt", ".html", ".htm"}
+BINARY_FILE_EXTENSIONS = {".pdf", ".doc", ".docx"}
+SUPPORTED_FILE_UPLOAD_EXTENSIONS = {
+    ".pdf", ".txt", ".docx", ".doc", ".epub", ".html", ".htm", ".mhtml", ".md", ".markdown",
+    ".png", ".jpg", ".jpeg", ".gif", ".csv", ".xlsx", ".xls", ".pptx", ".ppt", ".json",
+    ".mp3", ".wav", ".m4a", ".flac", ".ogg",
+}
+SOURCE_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
 class CorpusError(RuntimeError):
@@ -104,7 +115,7 @@ def normalize_case(raw_case: Any, inherited_variant: str, allow_missing_document
     documents_raw = raw_case.get("documents")
     if not isinstance(documents_raw, list) or len(documents_raw) < 2:
         raise CorpusError(f"case {case_id}: documents 至少需要两份文档")
-    documents: list[dict[str, str]] = []
+    documents: list[dict[str, Any]] = []
     doc_ids: set[str] = set()
     for raw_doc in documents_raw:
         if not isinstance(raw_doc, dict):
@@ -115,9 +126,64 @@ def normalize_case(raw_case: Any, inherited_variant: str, allow_missing_document
         if not doc_id or not path or not title or doc_id in doc_ids:
             raise CorpusError(f"case {case_id}: document 必须有唯一 id/path/title")
         resolved = resolve_document_path(path)
+        suffix = resolved.suffix.lower()
+        ingest_mode = str(raw_doc.get("ingest_mode", "")).strip().lower()
+        if not ingest_mode:
+            if suffix not in MANUAL_TEXT_EXTENSIONS:
+                raise CorpusError(
+                    f"case {case_id}: {resolved.name} 不是默认可安全读取的文本；"
+                    "请显式设置 ingest_mode=file，通过真实 multipart/DocReader 入口。",
+                )
+            ingest_mode = "manual"
+        if ingest_mode not in VALID_INGEST_MODES:
+            raise CorpusError(f"case {case_id}: document {doc_id} ingest_mode 必须为 manual/file")
+        if ingest_mode == "manual" and suffix not in MANUAL_TEXT_EXTENSIONS:
+            raise CorpusError(
+                f"case {case_id}: document {doc_id} 的 {suffix or '(无扩展名)'} 不能用 manual；"
+                "请使用 ingest_mode=file。",
+            )
+        if ingest_mode == "file" and not suffix:
+            raise CorpusError(f"case {case_id}: document {doc_id} file 上传路径缺少扩展名")
+        if ingest_mode == "file" and suffix not in SUPPORTED_FILE_UPLOAD_EXTENSIONS:
+            raise CorpusError(
+                f"case {case_id}: document {doc_id} 的 {suffix} 不受当前文件上传 API 支持；"
+                "请先转换为 pdf/doc/docx/md/txt 等受支持格式。",
+            )
         if not allow_missing_documents and not resolved.is_file():
             raise CorpusError(f"case {case_id}: document 不存在: {resolved}")
-        documents.append({"id": doc_id, "path": str(resolved), "title": title})
+
+        document: dict[str, Any] = {
+            "id": doc_id,
+            "path": str(resolved),
+            "title": title,
+            "ingest_mode": ingest_mode,
+        }
+        source_sha256 = str(raw_doc.get("source_sha256", "")).strip().lower()
+        if source_sha256:
+            if not SOURCE_SHA256_RE.fullmatch(source_sha256):
+                raise CorpusError(f"case {case_id}: document {doc_id} source_sha256 非法")
+            document["source_sha256"] = source_sha256
+        for field in ("source_document_id", "source_relative_path", "metadata_evidence_location", "upload_file_name"):
+            if field in raw_doc and raw_doc[field] is not None:
+                value = str(raw_doc[field]).strip()
+                if value:
+                    document[field] = value
+        if "metadata" in raw_doc and raw_doc["metadata"] is not None:
+            metadata = raw_doc["metadata"]
+            if not isinstance(metadata, dict) or not all(isinstance(key, str) and isinstance(value, str) for key, value in metadata.items()):
+                raise CorpusError(f"case {case_id}: document {doc_id} metadata 必须是 string:string 对象")
+            document["metadata"] = copy.deepcopy(metadata)
+        if "process_config" in raw_doc and raw_doc["process_config"] is not None:
+            process_config = raw_doc["process_config"]
+            if not isinstance(process_config, dict):
+                raise CorpusError(f"case {case_id}: document {doc_id} process_config 必须是对象")
+            document["process_config"] = copy.deepcopy(process_config)
+        if "enable_multimodel" in raw_doc and raw_doc["enable_multimodel"] is not None:
+            enable_multimodel = raw_doc["enable_multimodel"]
+            if not isinstance(enable_multimodel, bool):
+                raise CorpusError(f"case {case_id}: document {doc_id} enable_multimodel 必须是布尔值")
+            document["enable_multimodel"] = enable_multimodel
+        documents.append(document)
         doc_ids.add(doc_id)
 
     pairs_raw = raw_case.get("expected_conflict_document_pairs")

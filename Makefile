@@ -1,4 +1,4 @@
-.PHONY: help build run test clean docker-build-app docker-build-docreader docker-build-frontend docker-build-all docker-run migrate-up migrate-down docker-restart docker-stop start-all stop-all start-ollama stop-ollama build-images build-images-app build-images-docreader build-images-frontend clean-images check-env list-containers pull-images show-platform dev-start dev-stop dev-restart dev-logs dev-status dev-app dev-frontend docs install-swagger build-lite run-lite package-lite experiment-check experiment-c1 experiment-c2-rules experiment-c2-batch experiment-c2-compare experiment-c3 experiment-c46 experiment-c46-negative experiment-c47 experiment-c47-negative experiment-c48 experiment-c48-negative experiment-c49 experiment-c49-review experiment-c410-plan experiment-c410-inventory experiment-c4 experiment-c4-fuzzy experiment-c4-resolve experiment-p2 experiment-p3 experiment-p12 experiment-v1 experiment-audit experiment-audit-summary experiment-audit-metrics experiment-gold-v2 experiment-gold-v2-review experiment-gold-v2-scope-review experiment-gold-v2-apply-recommendations experiment-gold-v2-finalize experiment-dual-scope-metrics
+.PHONY: help build run test clean docker-build-app docker-build-docreader docker-build-frontend docker-build-all docker-run migrate-up migrate-down docker-restart docker-stop start-all stop-all start-ollama stop-ollama build-images build-images-app build-images-docreader build-images-frontend clean-images check-env list-containers pull-images show-platform dev-start dev-stop dev-restart dev-logs dev-status dev-app dev-frontend docs install-swagger build-lite run-lite package-lite experiment-check experiment-c1 experiment-c2-rules experiment-c2-batch experiment-c2-compare experiment-c3 experiment-c46 experiment-c46-negative experiment-c47 experiment-c47-negative experiment-c48 experiment-c48-negative experiment-c49 experiment-c49-review experiment-c410-plan experiment-c410-inventory experiment-c410-prepare experiment-c410-materialize experiment-c4 experiment-c4-fuzzy experiment-c4-resolve experiment-p2 experiment-p3 experiment-p12 experiment-v1 experiment-audit experiment-audit-summary experiment-audit-metrics experiment-gold-v2 experiment-gold-v2-review experiment-gold-v2-scope-review experiment-gold-v2-apply-recommendations experiment-gold-v2-finalize experiment-dual-scope-metrics
 
 # Show help
 help:
@@ -75,6 +75,8 @@ help:
 	@echo "  experiment-c49-review 汇总 C4.9 双审阅 CSV（REVIEW=<csv>）"
 	@echo "  experiment-c410-plan 验证真实语料 split 并生成 C4.9 matrix（CORPUS=<json>）"
 	@echo "  experiment-c410-inventory 扫描私有文档文件夹并生成分组候选（DOC_ROOT=<dir>）"
+	@echo "  experiment-c410-prepare 从 inventory 去重/过滤生成可编辑选材表（INVENTORY=<csv>）"
+	@echo "  experiment-c410-materialize 将人工确认选材表转为 corpus JSON（SELECTION=<csv> CORPUS=<json>）"
 	@echo "  experiment-c4     运行 C4-Lite 三值同事实聚类实验"
 	@echo "  experiment-c4-fuzzy 运行 C4-Lite schema-drift fallback 聚类实验"
 	@echo "  experiment-c4-resolve 对一个 C4 cluster 执行安全传播裁决（RUN=...）"
@@ -441,7 +443,19 @@ experiment-c410-plan:
 # Usage: make experiment-c410-inventory DOC_ROOT=/path/to/private/documents [OUTPUT=<private-output-dir>] [EXTS=pdf,docx,md] [MAX_FILES=0]
 experiment-c410-inventory:
 	@test -n "$(DOC_ROOT)" || (echo "Usage: make experiment-c410-inventory DOC_ROOT=/path/to/private/documents"; exit 2)
-	python3 scripts/experiments/inventory_winner_corpus.py --source-dir "$(DOC_ROOT)" $(if $(OUTPUT),--output-dir "$(OUTPUT)") $(if $(EXTS),--extensions "$(EXTS)") $(if $(MAX_FILES),--max-files "$(MAX_FILES)")
+	python3 scripts/experiments/inventory_winner_corpus.py --source-dir "$(DOC_ROOT)" $(if $(OUTPUT),--output-dir "$(OUTPUT)") $(if $(EXTS),--extensions "$(EXTS)") $(if $(MAX_FILES),--max-files "$(MAX_FILES)") $(if $(OVERWRITE),--overwrite)
+
+# Usage: make experiment-c410-prepare INVENTORY=$HOME/weknora-private-corpus/inventory/document_inventory.csv OUTPUT=$HOME/weknora-private-corpus/selection [MIN_BYTES=1024] [EXTS=pdf,docx,doc] [OVERWRITE=1]
+experiment-c410-prepare:
+	@test -n "$(INVENTORY)" || (echo "Usage: make experiment-c410-prepare INVENTORY=/path/to/document_inventory.csv OUTPUT=/private/selection"; exit 2)
+	@test -n "$(OUTPUT)" || (echo "Usage: make experiment-c410-prepare INVENTORY=/path/to/document_inventory.csv OUTPUT=/private/selection"; exit 2)
+	python3 scripts/experiments/prepare_winner_corpus_selection.py --inventory "$(INVENTORY)" --output-dir "$(OUTPUT)" $(if $(MIN_BYTES),--min-bytes "$(MIN_BYTES)") $(if $(EXTS),--extensions "$(EXTS)") $(if $(OVERWRITE),--overwrite)
+
+# Usage: make experiment-c410-materialize SELECTION=$HOME/weknora-private-corpus/selection/corpus_selection.csv CORPUS=$HOME/weknora-private-corpus/my_winner_corpus.json [NAME=winner_lifecycle_real_pilot] [VARIANT=c2-rules] [OVERWRITE=1]
+experiment-c410-materialize:
+	@test -n "$(SELECTION)" || (echo "Usage: make experiment-c410-materialize SELECTION=/private/corpus_selection.csv CORPUS=/private/my_winner_corpus.json"; exit 2)
+	@test -n "$(CORPUS)" || (echo "Usage: make experiment-c410-materialize SELECTION=/private/corpus_selection.csv CORPUS=/private/my_winner_corpus.json"; exit 2)
+	python3 scripts/experiments/materialize_winner_corpus_selection.py --selection "$(SELECTION)" --output "$(CORPUS)" $(if $(NAME),--name "$(NAME)") $(if $(DESCRIPTION),--description "$(DESCRIPTION)") $(if $(VARIANT),--variant "$(VARIANT)") $(if $(MIN_BYTES),--min-bytes "$(MIN_BYTES)") $(if $(ALLOW_MISSING),--allow-missing-documents) $(if $(ALLOW_SOURCE_REUSE),--allow-source-reuse) $(if $(OVERWRITE),--overwrite)
 
 experiment-c4:
 	python3 scripts/experiments/run_claims_eval.py \
