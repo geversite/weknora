@@ -172,11 +172,11 @@ MemGPT 将操作系统的分页思想引入 LLM 记忆管理 \cite{packer2023}�
 
 研究内容一的整体流程如图~\ref{fig:cascade} 所示。
 
-% 图 4：两阶段级联检测与裁决闭环流程图（AI 生成）
+% 图 4：多文档冲突检测与消解全流程（AI 生成；按冲突检测 V2 真实架构的提示词，需重新生成）
 \begin{figure}[htbp]
   \centering
   \includegraphics[width=0.98\textwidth]{cascade-pipeline}
-  \caption{两阶段级联冲突检测与"检测—裁决—检索"闭环}
+  \caption{多文档知识冲突的声明级检测与事实级消解全流程}
   \label{fig:cascade}
 \end{figure}
 
