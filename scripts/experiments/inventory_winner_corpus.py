@@ -41,6 +41,13 @@ DATE_PATTERN = re.compile(
     r"(?<!\d)(?P<year>19\d{2}|20\d{2})[._/\-年\s]+(?P<month>0?[1-9]|1[0-2])"
     r"(?:[._/\-月\s]+(?P<day>0?[1-9]|[12]\d|3[01]))?(?:日)?(?!\d)"
 )
+# Existing enterprise files often encode a date as `20260325` rather than
+# `2026-03-25`. This is still only a filename triage hint, but recognizing the
+# unambiguous YYYYMMDD form prevents version candidates from being needlessly
+# fragmented. Two-digit forms such as `26.05` remain intentionally ignored.
+COMPACT_DATE_PATTERN = re.compile(
+    r"(?<!\d)(?P<year>19\d{2}|20\d{2})(?P<month>0[1-9]|1[0-2])(?P<day>0[1-9]|[12]\d|3[01])(?!\d)"
+)
 
 
 class InventoryError(RuntimeError):
@@ -89,27 +96,30 @@ def version_hint(stem: str) -> str:
 
 
 def date_hint(stem: str) -> str:
-    match = DATE_PATTERN.search(stem)
-    if not match:
-        return ""
-    year = int(match.group("year"))
-    month = int(match.group("month"))
-    day_text = match.group("day")
-    if day_text:
-        day = int(day_text)
-        try:
-            dt.date(year, month, day)
-        except ValueError:
-            return ""
-        return f"{year:04d}-{month:02d}-{day:02d}"
-    return f"{year:04d}-{month:02d}"
+    for pattern in (DATE_PATTERN, COMPACT_DATE_PATTERN):
+        match = pattern.search(stem)
+        if not match:
+            continue
+        year = int(match.group("year"))
+        month = int(match.group("month"))
+        day_text = match.group("day")
+        if day_text:
+            day = int(day_text)
+            try:
+                dt.date(year, month, day)
+            except ValueError:
+                return ""
+            return f"{year:04d}-{month:02d}-{day:02d}"
+        return f"{year:04d}-{month:02d}"
+    return ""
 
 
 def family_candidate(stem: str, relative_path: str) -> str:
     value = stem.lower()
     for pattern in VERSION_PATTERNS:
         value = pattern.sub(" ", value)
-    value = DATE_PATTERN.sub(" ", value)
+    for pattern in (DATE_PATTERN, COMPACT_DATE_PATTERN):
+        value = pattern.sub(" ", value)
     # Keep Unicode letters/digits, so Chinese filename groups remain useful;
     # fold all punctuation and whitespace into a stable underscore separator.
     parts: list[str] = []
@@ -279,6 +289,7 @@ This inventory contains filenames, paths, sizes, timestamps and SHA-256 digests 
 
 - A filename `V2` or `2025-06` is not sufficient evidence by itself. C3/C4.6 only trusts explicit issuer/date/version labels in the document title/header.
 - Do not upload this whole inventory blindly: C4.9 cases need deliberate fact-family labels and expected conflict pairs.
+- `rtf` is visible for inventory completeness, but the current server-side file-import allowlist does not accept it; convert a selected RTF source to a supported format before materializing a live case.
 - Keep licensed/private documents and generated inventory output outside Git.
 """
     path.write_text(text, encoding="utf-8")

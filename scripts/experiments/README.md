@@ -1,7 +1,7 @@
 # 脚本化 C1 实验环境
 
 本目录是冲突检测 V2 的**研究实验入口**。它通过真实的 WeKnora HTTP API 创建临时实验 KB、
-注入 Markdown、等待 Asynq 任务完成，并只读导出 PostgreSQL 中的 `claims`、
+注入 Markdown 或上传经人工选择的文件、等待 Asynq 任务完成，并只读导出 PostgreSQL 中的 `claims`、
 `knowledge_conflicts`、`disputed_facts`、处理 spans 与 dead letters。
 
 它不依赖前端 UI，也不会直接向 `claims` 或 `knowledge_conflicts` 写入数据。
@@ -24,7 +24,7 @@ HTTP API → Knowledge 创建 → Asynq manual:process → chunking
 相比反复通过 UI 上传文件，manual Markdown 注入能固定原始文本、文档顺序和 chunk 配置，
 避免 DocReader 的格式转换成为 C1/C2 算法实验的混杂变量。
 
-文件上传 / DocReader 端到端行为应保留为少量独立 smoke test，而不是每次研究 run 的入口。
+对于 C1/C2 的可控 Markdown 消融，仍建议使用 manual API，避免 DocReader 格式转换成为混杂变量。对于 C4.10 已人工审核的真实 `pdf/doc/docx` 小样本，场景可显式设置 `ingest_mode=file`；运行器会调用同一份真实 multipart 文件 API，并等待正常的 DocReader → Asynq → claim/detect 链路。它不是未审文件夹的一键批量上传入口。
 
 ## 一次性准备
 
@@ -478,20 +478,38 @@ make experiment-c410-inventory \
 version/date hints 和 `family_candidates.csv`；不导出正文，也不调用模型、API、Asynq 或数据库。filename hints
 只能帮助分组，正式 issuer/date/version evidence 必须人工核对原始 title/header。
 
-筛选版本族后，C4.10 再验证一个带 development/holdout split 的 corpus manifest，并生成
-C4.9-compatible scenarios/matrices 与两份 blind reviewer sheet：
+对于真实文件夹，下一步不应手工处理全部文件。先从盘点生成**去重、非占位文件的可编辑选材表**：
 
 ```bash
-mkdir -p "$CORPUS_ROOT/docs"
-cp testdata/winner_lifecycle_corpus/corpus.sample.json "$CORPUS_ROOT/my_winner_corpus.json"
+make experiment-c410-prepare \
+  INVENTORY="$CORPUS_ROOT/inventory/document_inventory.csv" \
+  OUTPUT="$CORPUS_ROOT/selection"
+```
+
+它输出 `corpus_selection.csv`、`directory_triage.csv` 和 `same_filename_families.csv`。默认排除 duplicate hash
+以及小于 1024 bytes 的 canonical 文件；原 inventory 仍完整保留。打开 `corpus_selection.csv` 后，只对少量真正
+相关的来源填写 `include=yes`、同一 `case_id` / `fact_family_id`、split、expected outcome、conflict partner、以及
+**从文档 title/header 人工确认**的 `metadata_title` 和证据位置。该步骤不读取正文。
+
+填写完成后，无需手写 JSON：
+
+```bash
+make experiment-c410-materialize \
+  SELECTION="$CORPUS_ROOT/selection/corpus_selection.csv" \
+  CORPUS="$CORPUS_ROOT/my_winner_corpus.json" \
+  NAME=winner_lifecycle_real_pilot
 
 make experiment-c410-plan \
   CORPUS="$CORPUS_ROOT/my_winner_corpus.json" \
   OUTPUT="$CORPUS_ROOT/generated-plan"
 ```
 
-它会拒绝同一 `fact_family_id` 或同一 document path 跨 development/holdout 重用。真实文档可放在仓库外的
-受控路径；`experiments/corpus_plans/` 已被 Git 忽略。完整数据格式、双审阅协议和论文门槛见
+materializer 只接受已验证的显式标注；会拒绝跨 split 的 fact/source 泄漏、binary 文件误走 manual、未确认 metadata、
+无 conflict pair、正例少于 3 sources 或多个 winner。`pdf/doc/docx` 会生成 `ingest_mode=file`，因此运行
+C4.9 matrix 时 `run_claims_eval.py` 通过真实 multipart API 上传**仅选中的**文件，等待 DocReader / Asynq，且在
+上传前核验 inventory 中保存的 SHA-256。它不会把二进制文件当 Markdown 直接读取。
+
+真实文档可放在仓库外的受控路径；`experiments/corpus_plans/` 已被 Git 忽略。完整数据格式、双审阅协议和论文门槛见
 [C4.10 真实版本语料与双审阅协议](../../testdata/winner_lifecycle_corpus/README.md)。
 
 ### C4-Lite 事实级聚类
@@ -672,6 +690,27 @@ experiments/runs/<timestamp>-<scenario>-<variant>-<commit>/
 
 `gold_doc` 只在需要调用现有 `testdata/claims_eval/evaluate.py` 时填写。隔离回归场景可以
 省略它，运行器仍会导出 claims/conflicts 并检查预期的文档对。
+
+### 已人工选定的 PDF/DOC/DOCX 来源
+
+默认 `ingest_mode` 是 `manual`，仅适用于 `.md/.markdown/.txt/.html/.htm`。对真实二进制文件必须显式写
+`"ingest_mode": "file"`，例如：
+
+```json
+{
+  "id": "revision_v3",
+  "path": "/private/corpus/policy_v3.pdf",
+  "title": "发布机构：某单位；生效日期：2026年3月25日；版本号：V3.0",
+  "ingest_mode": "file",
+  "source_sha256": "<inventory 中的 64 位 SHA-256>"
+}
+```
+
+`file` 模式以流式 multipart 请求调用 `POST /knowledge-bases/:id/knowledge/file`，再等待正常的
+DocReader → Asynq → claim extraction → conflict detection。它不会把 PDF/DOC/DOCX 字节当作 UTF-8 Markdown
+读取；运行前会核验 `source_sha256`（若提供）以阻止已标注来源静默漂移。为让 C3/C4.6 得到可审计 metadata，
+`title` 必须由人工从原始 title/header 核实后写成显式 `发布机构/生效日期/版本号` 标签；文件名或目录名本身不构成
+该证据。运行器会保留原扩展名并用该 title 作为实验知识显示名，因此 title 不应含换行或路径分隔符。
 
 `forbidden_conflict_document_pairs` 是可选的闭集负例断言。若任何该文档对出现 raw
 `knowledge_conflicts` 行，run 会保留全部证据、标记为 `completed_with_forbidden_conflicts`，并

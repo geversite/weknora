@@ -27,10 +27,13 @@ import copy
 import csv
 import datetime as dt
 import hashlib
+import http.client
 import io
 import json
+import mimetypes
 import os
 import re
+import secrets
 import shlex
 import shutil
 import subprocess
@@ -113,6 +116,148 @@ def slice_runes(content: str, start_raw: str | int | None, end_raw: str | int | 
     return "".join(runes[start:min(end, len(runes))])
 
 
+# `manual` remains the default for the historical Markdown scenarios.  A
+# PDF/DOC/DOCX source is intentionally never decoded through that route:
+# the scenario must opt into the real multipart file/DocReader path instead.
+MANUAL_TEXT_EXTENSIONS = {".md", ".markdown", ".txt", ".html", ".htm"}
+BINARY_FILE_EXTENSIONS = {".pdf", ".doc", ".docx"}
+# Keep this explicit and aligned with internal/application/service/knowledge_util.go.
+# Inventory may list RTF for triage, but this backend's file-import endpoint does
+# not accept RTF, so it must be converted outside the experiment first.
+SUPPORTED_FILE_UPLOAD_EXTENSIONS = {
+    ".pdf", ".txt", ".docx", ".doc", ".epub", ".html", ".htm", ".mhtml", ".md", ".markdown",
+    ".png", ".jpg", ".jpeg", ".gif", ".csv", ".xlsx", ".xls", ".pptx", ".ppt", ".json",
+    ".mp3", ".wav", ".m4a", ".flac", ".ogg",
+}
+VALID_INGEST_MODES = {"manual", "file"}
+SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+
+
+def scenario_document_path(document: dict[str, Any]) -> Path:
+    raw = str(document.get("path", "")).strip()
+    path = Path(raw).expanduser()
+    return path.resolve() if path.is_absolute() else (ROOT / path).resolve()
+
+
+def normalize_document_ingest_mode(document: dict[str, Any], source: Path) -> str:
+    raw_mode = str(document.get("ingest_mode", "")).strip().lower()
+    suffix = source.suffix.lower()
+    if not raw_mode:
+        if suffix not in MANUAL_TEXT_EXTENSIONS:
+            raise ExperimentError(
+                f"场景文档 {document.get('id', '')} 的扩展名为 {suffix or '(无)'}，"
+                "请显式设置 ingest_mode=file（真实文件上传/DocReader）或确认它是可安全手工读取的文本。",
+            )
+        raw_mode = "manual"
+    if raw_mode not in VALID_INGEST_MODES:
+        raise ExperimentError(
+            f"场景文档 {document.get('id', '')} ingest_mode 必须为 manual 或 file，实际为 {raw_mode!r}",
+        )
+    if raw_mode == "manual" and suffix not in MANUAL_TEXT_EXTENSIONS:
+        raise ExperimentError(
+            f"场景文档 {document.get('id', '')} 的 {suffix or '(无扩展名)'} 不能使用 manual；"
+            "请改为 ingest_mode=file，避免把二进制/未知格式当作 Markdown 读取。",
+        )
+    if raw_mode == "file" and not suffix:
+        raise ExperimentError(f"场景文档 {document.get('id', '')} 的 file 上传路径缺少文件扩展名: {source}")
+    if raw_mode == "file" and suffix not in SUPPORTED_FILE_UPLOAD_EXTENSIONS:
+        raise ExperimentError(
+            f"场景文档 {document.get('id', '')} 的 {suffix} 不受当前文件上传 API 支持；"
+            "请先转换为 pdf/doc/docx/md/txt 等受支持格式，或不要选入该 C4.10 case。",
+        )
+    document["ingest_mode"] = raw_mode
+    return raw_mode
+
+
+def declared_source_sha256(document: dict[str, Any]) -> str:
+    digest = str(document.get("source_sha256", "")).strip().lower()
+    if digest and not SHA256_RE.fullmatch(digest):
+        raise ExperimentError(
+            f"场景文档 {document.get('id', '')} source_sha256 必须是 64 位十六进制 SHA-256。",
+        )
+    return digest
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        while block := handle.read(1024 * 1024):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def validate_source_digest(document: dict[str, Any], source: Path) -> str:
+    declared = declared_source_sha256(document)
+    if not declared:
+        return ""
+    observed = sha256_file(source)
+    if observed != declared:
+        raise ExperimentError(
+            f"场景文档 {document.get('id', '')} 的源文件 SHA-256 已变化；"
+            "请重新执行 C4.10 inventory/selection，避免把漂移后的文件混入已标注 corpus。",
+        )
+    return observed
+
+
+def upload_file_name(document: dict[str, Any], source: Path) -> str:
+    """Build a DocReader-safe name while retaining C3 metadata in the title.
+
+    The public file endpoint uses `fileName` as both the displayed knowledge
+    title and the parser's file name.  For a C4.6 real-file case we therefore
+    append the source suffix to the human-verified `title` metadata rather than
+    losing the parser extension.  An explicit upload_file_name remains
+    available for unusual files, but it must keep the original extension.
+    """
+    configured = str(document.get("upload_file_name", "")).strip()
+    title = str(document.get("title") or source.stem).strip()
+    name = configured or title
+    suffix = source.suffix
+    if not name:
+        raise ExperimentError(f"场景文档 {document.get('id', '')} 的 file 上传缺少 title/file name")
+    if not name.lower().endswith(suffix.lower()):
+        name += suffix
+    if Path(name).name != name or any(char in name for char in ("\x00", "\r", "\n", "/", "\\")):
+        raise ExperimentError(
+            f"场景文档 {document.get('id', '')} 的 upload_file_name/title 不能包含路径或换行。",
+        )
+    if len(name.encode("utf-8")) > 240:
+        raise ExperimentError(
+            f"场景文档 {document.get('id', '')} 的 upload_file_name UTF-8 长度超过 240 字节；"
+            "请缩短 title 中的 metadata 证据。",
+        )
+    if Path(name).suffix.lower() != suffix.lower():
+        raise ExperimentError(
+            f"场景文档 {document.get('id', '')} 的 upload_file_name 必须保留 {suffix} 扩展名。",
+        )
+    return name
+
+
+def file_upload_form_fields(document: dict[str, Any], file_name: str, channel: str) -> dict[str, str]:
+    fields = {"fileName": file_name, "channel": channel, "on_conflict": "reject"}
+    metadata = document.get("metadata")
+    if metadata is not None:
+        if not isinstance(metadata, dict) or not all(isinstance(key, str) and isinstance(value, str) for key, value in metadata.items()):
+            raise ExperimentError(f"场景文档 {document.get('id', '')} metadata 必须是 string:string 对象")
+        fields["metadata"] = json.dumps(metadata, ensure_ascii=False)
+    process_config = document.get("process_config")
+    if process_config is not None:
+        if not isinstance(process_config, dict):
+            raise ExperimentError(f"场景文档 {document.get('id', '')} process_config 必须是对象")
+        fields["process_config"] = json.dumps(process_config, ensure_ascii=False)
+    enable_multimodel = document.get("enable_multimodel")
+    if enable_multimodel is not None:
+        if not isinstance(enable_multimodel, bool):
+            raise ExperimentError(f"场景文档 {document.get('id', '')} enable_multimodel 必须是布尔值")
+        fields["enable_multimodel"] = "true" if enable_multimodel else "false"
+    return fields
+
+
+def multipart_header_value(value: str) -> str:
+    # Defend the client-side envelope itself from a title/filename containing a
+    # CRLF. The server still validates its own inputs independently.
+    return value.replace("\r", " ").replace("\n", " ").replace("\\", "\\\\").replace('"', '\\"')
+
+
 class APIClient:
     def __init__(self, base_url: str, api_key: str | None):
         self.base_url = base_url.rstrip("/")
@@ -130,6 +275,100 @@ class APIClient:
 
     def delete(self, path: str) -> Any:
         return self._request("DELETE", self.api_url + path, unwrap=True)
+
+    def post_file(
+        self,
+        path: str,
+        source: Path,
+        fields: dict[str, str],
+        *,
+        file_name: str,
+        timeout_seconds: int,
+    ) -> Any:
+        """Stream one selected source through the public multipart file API.
+
+        This intentionally uses only the standard library and sends a single
+        file at a time, avoiding an in-memory copy of a PDF/DOCX.  The caller
+        has already selected a narrow human-reviewed case; this is not a bulk
+        upload shortcut for an unreviewed source folder.
+        """
+        if not self.api_key:
+            raise ExperimentError("缺少 WEKNORA_API_KEY；实验写入 API 需要 API key")
+        if timeout_seconds <= 0:
+            raise ExperimentError("文件上传 timeout_seconds 必须为正数")
+        if not source.is_file():
+            raise ExperimentError(f"待上传文件不存在: {source}")
+        url = self.api_url + path
+        parsed = urllib.parse.urlsplit(url)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            raise ExperimentError(f"不支持的 WeKnora 文件上传 URL: {url}")
+        try:
+            port = parsed.port
+        except ValueError as exc:
+            raise ExperimentError(f"WeKnora 文件上传 URL 端口非法: {url}") from exc
+
+        boundary = "----WeKnoraExperiment" + secrets.token_hex(16)
+        field_parts: list[bytes] = []
+        for name, value in fields.items():
+            field_parts.append(
+                (
+                    f"--{boundary}\r\n"
+                    f'Content-Disposition: form-data; name="{multipart_header_value(str(name))}"\r\n\r\n'
+                ).encode("utf-8")
+                + str(value).encode("utf-8")
+                + b"\r\n"
+            )
+        mime_type = mimetypes.guess_type(str(source))[0] or "application/octet-stream"
+        file_header = (
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="file"; filename="{multipart_header_value(file_name)}"\r\n'
+            f"Content-Type: {mime_type}\r\n\r\n"
+        ).encode("utf-8")
+        closing = f"\r\n--{boundary}--\r\n".encode("ascii")
+        content_length = sum(len(part) for part in field_parts) + len(file_header) + source.stat().st_size + len(closing)
+        request_target = urllib.parse.urlunsplit(("", "", parsed.path or "/", parsed.query, ""))
+        connection_cls = http.client.HTTPSConnection if parsed.scheme == "https" else http.client.HTTPConnection
+        connection = connection_cls(parsed.hostname, port=port, timeout=timeout_seconds)
+        try:
+            connection.putrequest("POST", request_target)
+            connection.putheader("Accept", "application/json")
+            connection.putheader("X-API-Key", self.api_key)
+            connection.putheader("Content-Type", f"multipart/form-data; boundary={boundary}")
+            connection.putheader("Content-Length", str(content_length))
+            connection.endheaders()
+            for part in field_parts:
+                connection.send(part)
+            connection.send(file_header)
+            with source.open("rb") as handle:
+                while block := handle.read(1024 * 1024):
+                    connection.send(block)
+            connection.send(closing)
+            response = connection.getresponse()
+            text = response.read().decode("utf-8", errors="replace")
+            return self._decode_response("POST", url, response.status, text, unwrap=True)
+        except (OSError, http.client.HTTPException) as exc:
+            raise ExperimentError(f"无法连接 WeKnora 服务 {self.base_url}: {exc}") from exc
+        finally:
+            connection.close()
+
+    def _decode_response(self, method: str, url: str, status: int, text: str, *, unwrap: bool) -> Any:
+        if status < 200 or status >= 300:
+            raise ExperimentError(
+                f"HTTP {status}: {method} {urllib.parse.urlparse(url).path}: {text[:3000]}",
+            )
+        try:
+            response_json = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise ExperimentError(
+                f"{method} {urllib.parse.urlparse(url).path} 返回非 JSON: {text[:500]}",
+            ) from exc
+        if not unwrap:
+            return response_json
+        if isinstance(response_json, dict) and response_json.get("success") is False:
+            raise ExperimentError(f"{method} {urllib.parse.urlparse(url).path} 返回失败: {response_json}")
+        if isinstance(response_json, dict) and "data" in response_json:
+            return response_json["data"]
+        return response_json
 
     def _request(
         self,
@@ -153,24 +392,12 @@ class APIClient:
         try:
             with urllib.request.urlopen(request, timeout=30) as response:
                 text = response.read().decode("utf-8", errors="replace")
+                return self._decode_response(method, url, response.status, text, unwrap=unwrap)
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")[:3000]
             raise ExperimentError(f"HTTP {exc.code}: {method} {urllib.parse.urlparse(url).path}: {detail}") from exc
         except urllib.error.URLError as exc:
             raise ExperimentError(f"无法连接 WeKnora 服务 {self.base_url}: {exc.reason}") from exc
-
-        try:
-            response_json = json.loads(text)
-        except json.JSONDecodeError as exc:
-            raise ExperimentError(f"{method} {urllib.parse.urlparse(url).path} 返回非 JSON: {text[:500]}") from exc
-
-        if not unwrap:
-            return response_json
-        if isinstance(response_json, dict) and response_json.get("success") is False:
-            raise ExperimentError(f"{method} {urllib.parse.urlparse(url).path} 返回失败: {response_json}")
-        if isinstance(response_json, dict) and "data" in response_json:
-            return response_json["data"]
-        return response_json
 
 
 class PostgresExporter:
@@ -356,9 +583,11 @@ def load_scenario(path: Path) -> dict[str, Any]:
         if doc_id in document_ids:
             raise ExperimentError(f"场景中存在重复文档 id: {doc_id}")
         document_ids.add(doc_id)
-        source = ROOT / str(document["path"])
+        source = scenario_document_path(document)
         if not source.is_file():
             raise ExperimentError(f"场景引用的文档不存在: {source}")
+        normalize_document_ingest_mode(document, source)
+        declared_source_sha256(document)
 
     expected = validate_scenario_document_pairs(
         scenario, "expected_conflict_document_pairs", document_ids,
@@ -1329,6 +1558,8 @@ def run_experiment(args: argparse.Namespace) -> int:
         "base_url": client.base_url,
         "ingest_channel": experiment_channel(run_id),
         "knowledge_ids": {},
+        "document_ingest": {},
+        "source_integrity": {},
         "database_export_mode": PostgresExporter().describe_mode(),
     }
     json_dump(output_dir / "manifest.json", manifest)
@@ -1338,7 +1569,12 @@ def run_experiment(args: argparse.Namespace) -> int:
             "run_id": run_id,
             "template_kb_id": args.template_kb_id,
             "documents": [
-                {"id": doc["id"], "path": doc["path"], "gold_doc": doc.get("gold_doc")}
+                {
+                    "id": doc["id"],
+                    "path": doc["path"],
+                    "ingest_mode": doc.get("ingest_mode", "manual"),
+                    "gold_doc": doc.get("gold_doc"),
+                }
                 for doc in scenario["documents"]
             ],
             "variant": args.variant,
@@ -1404,30 +1640,57 @@ def run_experiment(args: argparse.Namespace) -> int:
         json_dump(output_dir / "manifest.json", manifest)
 
         claim_counts: dict[str, int] = {}
-        documents_by_id = {str(doc["id"]): doc for doc in scenario["documents"]}
         for document in scenario["documents"]:
             doc_id = str(document["id"])
-            source_path = ROOT / str(document["path"])
-            content = source_path.read_text(encoding="utf-8")
+            source_path = scenario_document_path(document)
+            ingest_mode = normalize_document_ingest_mode(document, source_path)
+            declared_digest = declared_source_sha256(document)
+            observed_digest = validate_source_digest(document, source_path)
             title = str(document.get("title") or source_path.stem)
-            knowledge = client.post(
-                f"/knowledge-bases/{kb_id}/knowledge/manual",
-                {
-                    "title": title,
-                    "content": content,
-                    "status": "publish",
-                    "channel": manifest["ingest_channel"],
-                },
-            )
+            upload_detail: dict[str, Any] = {
+                "ingest_mode": ingest_mode,
+                "source_bytes": source_path.stat().st_size,
+            }
+            if declared_digest:
+                upload_detail["source_sha256"] = observed_digest
+            if ingest_mode == "manual":
+                content = source_path.read_text(encoding="utf-8")
+                knowledge = client.post(
+                    f"/knowledge-bases/{kb_id}/knowledge/manual",
+                    {
+                        "title": title,
+                        "content": content,
+                        "status": "publish",
+                        "channel": manifest["ingest_channel"],
+                    },
+                )
+            else:
+                file_name = upload_file_name(document, source_path)
+                knowledge = client.post_file(
+                    f"/knowledge-bases/{kb_id}/knowledge/file",
+                    source_path,
+                    file_upload_form_fields(document, file_name, str(manifest["ingest_channel"])),
+                    file_name=file_name,
+                    timeout_seconds=args.file_upload_timeout_seconds,
+                )
+                upload_detail["uploaded_file_name"] = file_name
             if not isinstance(knowledge, dict) or not knowledge.get("id"):
                 raise ExperimentError(f"上传 {doc_id} 返回缺少 knowledge id")
             knowledge_id = str(knowledge["id"])
             manifest["knowledge_ids"][doc_id] = knowledge_id
+            manifest["document_ingest"][doc_id] = upload_detail
+            if declared_digest:
+                manifest["source_integrity"][doc_id] = {
+                    "declared_sha256": declared_digest,
+                    "observed_sha256": observed_digest,
+                    "verified": True,
+                }
             json_dump(output_dir / "manifest.json", manifest)
             json_dump(output_dir / "uploads.json", {
                 "run_id": run_id,
                 "knowledge_base_id": kb_id,
                 "documents": manifest["knowledge_ids"],
+                "document_ingest": manifest["document_ingest"],
             })
 
             wait_for_parse(
@@ -1730,6 +1993,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output", default="", help="Run artifact directory; default is experiments/runs/<run-id>")
     parser.add_argument("--run-id", default="", help="Stable custom run ID")
     parser.add_argument("--timeout-seconds", type=int, default=300, help="Per-document parse timeout")
+    parser.add_argument("--file-upload-timeout-seconds", type=int, default=180, help="Per-file multipart upload timeout for ingest_mode=file")
     parser.add_argument("--claim-timeout-seconds", type=int, default=300, help="Per-document claims wait timeout")
     parser.add_argument("--conflict-timeout-seconds", type=int, default=180, help="Wait for expected conflict document pairs")
     parser.add_argument("--poll-seconds", type=float, default=2.0, help="Polling interval")
