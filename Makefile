@@ -1,4 +1,4 @@
-.PHONY: help build run test clean docker-build-app docker-build-docreader docker-build-frontend docker-build-all docker-run migrate-up migrate-down docker-restart docker-stop start-all stop-all start-ollama stop-ollama build-images build-images-app build-images-docreader build-images-frontend clean-images check-env list-containers pull-images show-platform dev-start dev-stop dev-restart dev-logs dev-status dev-app dev-frontend docs install-swagger build-lite run-lite package-lite experiment-check experiment-c1 experiment-c2-rules experiment-c2-batch experiment-c2-compare experiment-c3 experiment-c46 experiment-c46-negative experiment-c47 experiment-c47-negative experiment-c48 experiment-c48-negative experiment-c49 experiment-c49-review experiment-c410-plan experiment-c410-inventory experiment-c410-prepare experiment-c410-materialize experiment-c4 experiment-c4-fuzzy experiment-c4-resolve experiment-p2 experiment-p3 experiment-p12 experiment-v1 experiment-audit experiment-audit-summary experiment-audit-metrics experiment-gold-v2 experiment-gold-v2-review experiment-gold-v2-scope-review experiment-gold-v2-apply-recommendations experiment-gold-v2-finalize experiment-dual-scope-metrics
+.PHONY: help build run test clean docker-build-app docker-build-docreader docker-build-frontend docker-build-all docker-run migrate-up migrate-down docker-restart docker-stop start-all stop-all start-ollama stop-ollama build-images build-images-app build-images-docreader build-images-frontend clean-images check-env list-containers pull-images show-platform dev-start dev-stop dev-restart dev-logs dev-status dev-app dev-frontend docs install-swagger build-lite run-lite package-lite experiment-check experiment-c1 experiment-c2-rules experiment-c2-batch experiment-c2-compare experiment-c3 experiment-c46 experiment-c46-negative experiment-c47 experiment-c47-negative experiment-c48 experiment-c48-negative experiment-c49 experiment-c49-review experiment-c410-plan experiment-c410-inventory experiment-c410-prepare experiment-c410-materialize experiment-c410-docreader-fixture experiment-c410-docreader-smoke experiment-c410-docreader-lifecycle experiment-c4 experiment-c4-fuzzy experiment-c4-resolve experiment-p2 experiment-p3 experiment-p12 experiment-v1 experiment-audit experiment-audit-summary experiment-audit-metrics experiment-gold-v2 experiment-gold-v2-review experiment-gold-v2-scope-review experiment-gold-v2-apply-recommendations experiment-gold-v2-finalize experiment-dual-scope-metrics
 
 # Show help
 help:
@@ -77,6 +77,9 @@ help:
 	@echo "  experiment-c410-inventory 扫描私有文档文件夹并生成分组候选（DOC_ROOT=<dir>）"
 	@echo "  experiment-c410-prepare 从 inventory 去重/过滤生成可编辑选材表（INVENTORY=<csv>）"
 	@echo "  experiment-c410-materialize 将人工确认选材表转为 corpus JSON（SELECTION=<csv> CORPUS=<json>）"
+	@echo "  experiment-c410-docreader-fixture 校验内置 synthetic PDF/DOCX fixture"
+	@echo "  experiment-c410-docreader-smoke 运行内置 3 文件真实 DocReader smoke"
+	@echo "  experiment-c410-docreader-lifecycle 运行内置 binary C4.6/C4.7/C4.8 matrix"
 	@echo "  experiment-c4     运行 C4-Lite 三值同事实聚类实验"
 	@echo "  experiment-c4-fuzzy 运行 C4-Lite schema-drift fallback 聚类实验"
 	@echo "  experiment-c4-resolve 对一个 C4 cluster 执行安全传播裁决（RUN=...）"
@@ -456,6 +459,18 @@ experiment-c410-materialize:
 	@test -n "$(SELECTION)" || (echo "Usage: make experiment-c410-materialize SELECTION=/private/corpus_selection.csv CORPUS=/private/my_winner_corpus.json"; exit 2)
 	@test -n "$(CORPUS)" || (echo "Usage: make experiment-c410-materialize SELECTION=/private/corpus_selection.csv CORPUS=/private/my_winner_corpus.json"; exit 2)
 	python3 scripts/experiments/materialize_winner_corpus_selection.py --selection "$(SELECTION)" --output "$(CORPUS)" $(if $(NAME),--name "$(NAME)") $(if $(DESCRIPTION),--description "$(DESCRIPTION)") $(if $(VARIANT),--variant "$(VARIANT)") $(if $(MIN_BYTES),--min-bytes "$(MIN_BYTES)") $(if $(ALLOW_MISSING),--allow-missing-documents) $(if $(ALLOW_SOURCE_REUSE),--allow-source-reuse) $(if $(OVERWRITE),--overwrite)
+
+# Usage: make experiment-c410-docreader-fixture
+experiment-c410-docreader-fixture:
+	python3 scripts/experiments/generate_docreader_fixture.py --verify
+
+# Usage: make experiment-c410-docreader-smoke [OUTPUT=experiments/runs/<run>] [FILE_UPLOAD_TIMEOUT=300]
+experiment-c410-docreader-smoke:
+	python3 scripts/experiments/run_claims_eval.py --scenario testdata/winner_lifecycle_corpus/docreader_fixture/scenarios/ordered_triplet.json --variant c2-rules $(if $(OUTPUT),--output "$(OUTPUT)") $(if $(FILE_UPLOAD_TIMEOUT),--file-upload-timeout-seconds "$(FILE_UPLOAD_TIMEOUT)")
+
+# Usage: make experiment-c410-docreader-lifecycle [REPLICATES=1] [OUTPUT=experiments/comparisons/<run>]
+experiment-c410-docreader-lifecycle:
+	python3 scripts/experiments/run_winner_lifecycle_eval.py --matrix testdata/winner_lifecycle_corpus/docreader_fixture/winner_lifecycle_matrix.json --replicates "$(if $(REPLICATES),$(REPLICATES),1)" $(if $(OUTPUT),--output-dir "$(OUTPUT)")
 
 experiment-c4:
 	python3 scripts/experiments/run_claims_eval.py \

@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "name": "c410_docreader_fixture_metadata_tie_no_proposal",
+  "description": "Controlled same-issuer identical date/version tie; proposal must abstain.",
+  "min_claims_per_document": 1,
+  "documents": [
+    {
+      "id": "fixture_tie_a",
+      "path": "testdata/winner_lifecycle_corpus/docreader_fixture/docs/fixture_tie_a.docx",
+      "title": "Issuer: Meridian Test Finance; Effective Date: 2037-01-10; Version: V1.0",
+      "ingest_mode": "file",
+      "source_sha256": "d6c780a4c92aa25bab905fa564a247fab4dcdb152007022f948ec8bcb21771fe",
+      "source_document_id": "fixture_tie_a",
+      "source_relative_path": "testdata/winner_lifecycle_corpus/docreader_fixture/docs/fixture_tie_a.docx",
+      "metadata_evidence_location": "Controlled fixture scenario title"
+    },
+    {
+      "id": "fixture_tie_b",
+      "path": "testdata/winner_lifecycle_corpus/docreader_fixture/docs/fixture_tie_b.pdf",
+      "title": "Issuer: Meridian Test Finance; Effective Date: 2037-01-10; Version: V1.0",
+      "ingest_mode": "file",
+      "source_sha256": "d818d1cdeeb738b9ec986f009013e4d05c0a3246c86500393b39c75ea2c4460b",
+      "source_document_id": "fixture_tie_b",
+      "source_relative_path": "testdata/winner_lifecycle_corpus/docreader_fixture/docs/fixture_tie_b.pdf",
+      "metadata_evidence_location": "Controlled fixture scenario title"
+    }
+  ],
+  "expected_conflict_document_pairs": [
+    {
+      "id": "METADATA_TIE",
+      "left": "fixture_tie_a",
+      "right": "fixture_tie_b"
+    }
+  ],
+  "expected_disputed_fact_count": 1,
+  "expected_disputed_fact_anchor_kinds": {
+    "claim_key": 1
+  },
+  "expected_disputed_fact_winner_count": 0
+}

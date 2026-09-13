@@ -10,6 +10,34 @@
 - 每个 case 是一个预期只聚成一个 `DisputedFact` 的事实家族；复杂多事实文档应拆成多个 case，或明确扩大
   `expected_disputed_fact_count` 并接受更复杂的标注协议。
 
+## 0. 没有可用真实文档时：先运行 synthetic binary fixture
+
+若现有真实文档质量不适合做首轮实验，可先使用仓库内置的
+[`docreader_fixture/`](./docreader_fixture/)。它包含 5 个 PDF、4 个 DOCX，以及 1 个可采纳正例和 3 个
+fail-closed no-proposal 负例；每个文件只包含一条受控的虚构额度事实，避免大型真实文档的多事实噪声。
+
+先校验 fixture 文件未被改变：
+
+```bash
+make experiment-c410-docreader-fixture
+```
+
+然后直接跑三文件的真实 multipart / DocReader smoke：
+
+```bash
+make experiment-c410-docreader-smoke
+```
+
+它会创建临时实验 KB、上传 fixture 的 PDF/DOCX、等待 DocReader/Asynq/claim/conflict 链路，并验证 C4.6
+是否提出唯一 V3 winner；它**不会**执行 adoption/reopen 或改动你的真实 KB。若 smoke 通过，再可运行：
+
+```bash
+make experiment-c410-docreader-lifecycle REPLICATES=1
+```
+
+后者在新临时 KB 中执行 1 个 adopt→reopen 正例以及 3 个拒绝 winner 的负例。此 fixture 仅用于 binary-file
+integration/regression test；不能替代真实 corpus、双审阅或 holdout，也不能报告为真实业务文档准确率。
+
 ## 1. 什么时候达到论文可写程度？
 
 可以**现在开始写论文草稿**的引言、问题定义、架构、C1/C2 成本消融和 C4.6–C4.9 controlled evidence；但在

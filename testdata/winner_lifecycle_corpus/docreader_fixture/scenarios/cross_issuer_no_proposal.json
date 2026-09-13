@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "name": "c410_docreader_fixture_cross_issuer_no_proposal",
+  "description": "Controlled conflict with different explicit issuers; no global winner may be proposed.",
+  "min_claims_per_document": 1,
+  "documents": [
+    {
+      "id": "fixture_cross_issuer_a",
+      "path": "testdata/winner_lifecycle_corpus/docreader_fixture/docs/fixture_cross_issuer_a.docx",
+      "title": "Issuer: North Test Finance; Effective Date: 2033-01-10; Version: V1.0",
+      "ingest_mode": "file",
+      "source_sha256": "939ee010f43034e417744f26608ce8e22a0f20ddc4ab6490ac1ff97d4ce060dc",
+      "source_document_id": "fixture_cross_issuer_a",
+      "source_relative_path": "testdata/winner_lifecycle_corpus/docreader_fixture/docs/fixture_cross_issuer_a.docx",
+      "metadata_evidence_location": "Controlled fixture scenario title"
+    },
+    {
+      "id": "fixture_cross_issuer_b",
+      "path": "testdata/winner_lifecycle_corpus/docreader_fixture/docs/fixture_cross_issuer_b.pdf",
+      "title": "Issuer: South Test Finance; Effective Date: 2034-01-10; Version: V2.0",
+      "ingest_mode": "file",
+      "source_sha256": "885421c491cc79d4f5d99c4be27c02358a477e9c57cf2723166403140bfc343a",
+      "source_document_id": "fixture_cross_issuer_b",
+      "source_relative_path": "testdata/winner_lifecycle_corpus/docreader_fixture/docs/fixture_cross_issuer_b.pdf",
+      "metadata_evidence_location": "Controlled fixture scenario title"
+    }
+  ],
+  "expected_conflict_document_pairs": [
+    {
+      "id": "CROSS_ISSUER",
+      "left": "fixture_cross_issuer_a",
+      "right": "fixture_cross_issuer_b"
+    }
+  ],
+  "expected_disputed_fact_count": 1,
+  "expected_disputed_fact_anchor_kinds": {
+    "claim_key": 1
+  },
+  "expected_disputed_fact_winner_count": 0
+}

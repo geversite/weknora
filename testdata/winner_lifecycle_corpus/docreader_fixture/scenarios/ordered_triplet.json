@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "name": "c410_docreader_fixture_ordered_triplet",
+  "description": "Controlled same-issuer PDF/DOCX triplet; V3 is the only strict metadata maximum.",
+  "min_claims_per_document": 1,
+  "documents": [
+    {
+      "id": "fixture_ordered_v2",
+      "path": "testdata/winner_lifecycle_corpus/docreader_fixture/docs/fixture_ordered_v2.docx",
+      "title": "Issuer: Meridian Test Finance; Effective Date: 2031-06-10; Version: V2.0",
+      "ingest_mode": "file",
+      "source_sha256": "3a3827da775c5ce6a32aef727b64a33968b440e0d0fc3cf0e336b77a8f18ea9d",
+      "source_document_id": "fixture_ordered_v2",
+      "source_relative_path": "testdata/winner_lifecycle_corpus/docreader_fixture/docs/fixture_ordered_v2.docx",
+      "metadata_evidence_location": "Controlled fixture scenario title"
+    },
+    {
+      "id": "fixture_ordered_v1",
+      "path": "testdata/winner_lifecycle_corpus/docreader_fixture/docs/fixture_ordered_v1.pdf",
+      "title": "Issuer: Meridian Test Finance; Effective Date: 2031-01-10; Version: V1.0",
+      "ingest_mode": "file",
+      "source_sha256": "dd509e85c44d1b79ccc9eab3a162f36b8eef28fb65d4e738a588f233e6c5eaae",
+      "source_document_id": "fixture_ordered_v1",
+      "source_relative_path": "testdata/winner_lifecycle_corpus/docreader_fixture/docs/fixture_ordered_v1.pdf",
+      "metadata_evidence_location": "Controlled fixture scenario title"
+    },
+    {
+      "id": "fixture_ordered_v3",
+      "path": "testdata/winner_lifecycle_corpus/docreader_fixture/docs/fixture_ordered_v3.pdf",
+      "title": "Issuer: Meridian Test Finance; Effective Date: 2032-01-10; Version: V3.0",
+      "ingest_mode": "file",
+      "source_sha256": "979ef517cdd57b30673c54329473575388c4010cb7d167766ec833130a2613ce",
+      "source_document_id": "fixture_ordered_v3",
+      "source_relative_path": "testdata/winner_lifecycle_corpus/docreader_fixture/docs/fixture_ordered_v3.pdf",
+      "metadata_evidence_location": "Controlled fixture scenario title"
+    }
+  ],
+  "expected_conflict_document_pairs": [
+    {
+      "id": "ORDERED_V2_V1",
+      "left": "fixture_ordered_v2",
+      "right": "fixture_ordered_v1"
+    },
+    {
+      "id": "ORDERED_V3_V1",
+      "left": "fixture_ordered_v3",
+      "right": "fixture_ordered_v1"
+    },
+    {
+      "id": "ORDERED_V3_V2",
+      "left": "fixture_ordered_v3",
+      "right": "fixture_ordered_v2"
+    }
+  ],
+  "expected_disputed_fact_count": 1,
+  "expected_disputed_fact_anchor_kinds": {
+    "claim_key": 1
+  },
+  "expected_disputed_fact_winner_count": 1,
+  "expected_disputed_fact_winners": [
+    {
+      "id": "ordered_triplet_winner",
+      "winner_document": "fixture_ordered_v3",
+      "min_confidence": 0.0
+    }
+  ]
+}

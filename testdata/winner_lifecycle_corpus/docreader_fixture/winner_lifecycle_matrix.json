@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "name": "c410_docreader_fixture_matrix",
+  "description": "Synthetic binary-file C4.10 integration fixture. All cases are controlled policy labels; replicates are independent executions and do not claim provider RNG seed control.",
+  "variant": "c2-rules",
+  "cases": [
+    {
+      "id": "ordered_triplet",
+      "scenario": "testdata/winner_lifecycle_corpus/docreader_fixture/scenarios/ordered_triplet.json",
+      "expected_outcome": "adopt_reopen",
+      "expected_winner_document": "fixture_ordered_v3",
+      "adoption_cycles": 1,
+      "variant": "c2-rules"
+    },
+    {
+      "id": "cross_issuer_no_proposal",
+      "scenario": "testdata/winner_lifecycle_corpus/docreader_fixture/scenarios/cross_issuer_no_proposal.json",
+      "expected_outcome": "no_proposal",
+      "expected_winner_document": "",
+      "adoption_cycles": 0,
+      "variant": "c2-rules"
+    },
+    {
+      "id": "date_version_disagreement_no_proposal",
+      "scenario": "testdata/winner_lifecycle_corpus/docreader_fixture/scenarios/date_version_disagreement_no_proposal.json",
+      "expected_outcome": "no_proposal",
+      "expected_winner_document": "",
+      "adoption_cycles": 0,
+      "variant": "c2-rules"
+    },
+    {
+      "id": "metadata_tie_no_proposal",
+      "scenario": "testdata/winner_lifecycle_corpus/docreader_fixture/scenarios/metadata_tie_no_proposal.json",
+      "expected_outcome": "no_proposal",
+      "expected_winner_document": "",
+      "adoption_cycles": 0,
+      "variant": "c2-rules"
+    }
+  ]
+}

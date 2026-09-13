@@ -5,3 +5,8 @@
 # acceptance/contract envelope tests.
 *.go text eol=lf
 cli/acceptance/testdata/**/*.json text eol=lf
+
+# The C4.10 fixture PDFs use fixed-width xref entries, including required
+# trailing spaces. Keep these generated binary fixtures out of text whitespace
+# checks and line-ending conversion.
+testdata/winner_lifecycle_corpus/docreader_fixture/docs/*.pdf binary

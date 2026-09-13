@@ -459,6 +459,33 @@ make experiment-c49-review REVIEW=experiments/comparisons/<c49-run>/winner_lifec
 泛化或人类准确率。review summary 也不会把空白、uncertain 或 reviewer disagreement 偷偷计为正确。详见
 [C4.9 生命周期重复实验技术设计](../../docs/冲突检测V2-C4.9-生命周期重复实验技术设计.md)。
 
+### C4.10 synthetic PDF/DOCX fixture（先验通路检查）
+
+若真实文档暂时不适合作为研究样本，先不用自己的文件夹。仓库内置了 9 份极小、虚构的 PDF/DOCX，覆盖：
+
+```text
+同 issuer 三版本唯一 winner（PDF + DOCX，乱序上传）
+cross issuer → no proposal
+date/version direction disagreement → no proposal
+same date/version tie → no proposal
+```
+
+先检查 fixture 哈希，再跑真实文件上传 / DocReader smoke：
+
+```bash
+make experiment-c410-docreader-fixture
+make experiment-c410-docreader-smoke
+```
+
+smoke 只执行检测和 proposal，所有内容均在新临时 KB 中；它不会执行 adoption/reopen。需要继续验证完整
+C4.6/C4.7/C4.8 binary-file lifecycle 时再执行：
+
+```bash
+make experiment-c410-docreader-lifecycle REPLICATES=1
+```
+
+这些是 controlled synthetic integration fixtures，绝不能作为真实语料、人工审阅或外部泛化指标。
+
 ### C4.10 真实语料 corpus / holdout plan
 
 若真实文档已集中在一个目录，先不移动、不上传，做 filename/hash inventory：

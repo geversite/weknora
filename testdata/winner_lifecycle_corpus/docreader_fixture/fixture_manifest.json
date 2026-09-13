@@ -1,0 +1,74 @@
+{
+  "schema_version": 1,
+  "fixture_version": 1,
+  "generator": "scripts/experiments/generate_docreader_fixture.py",
+  "source_document_count": 9,
+  "source_documents": [
+    {
+      "id": "fixture_ordered_v1",
+      "path": "testdata/winner_lifecycle_corpus/docreader_fixture/docs/fixture_ordered_v1.pdf",
+      "format": "pdf",
+      "bytes": 685,
+      "sha256": "dd509e85c44d1b79ccc9eab3a162f36b8eef28fb65d4e738a588f233e6c5eaae"
+    },
+    {
+      "id": "fixture_ordered_v2",
+      "path": "testdata/winner_lifecycle_corpus/docreader_fixture/docs/fixture_ordered_v2.docx",
+      "format": "docx",
+      "bytes": 1066,
+      "sha256": "3a3827da775c5ce6a32aef727b64a33968b440e0d0fc3cf0e336b77a8f18ea9d"
+    },
+    {
+      "id": "fixture_ordered_v3",
+      "path": "testdata/winner_lifecycle_corpus/docreader_fixture/docs/fixture_ordered_v3.pdf",
+      "format": "pdf",
+      "bytes": 685,
+      "sha256": "979ef517cdd57b30673c54329473575388c4010cb7d167766ec833130a2613ce"
+    },
+    {
+      "id": "fixture_cross_issuer_a",
+      "path": "testdata/winner_lifecycle_corpus/docreader_fixture/docs/fixture_cross_issuer_a.docx",
+      "format": "docx",
+      "bytes": 1066,
+      "sha256": "939ee010f43034e417744f26608ce8e22a0f20ddc4ab6490ac1ff97d4ce060dc"
+    },
+    {
+      "id": "fixture_cross_issuer_b",
+      "path": "testdata/winner_lifecycle_corpus/docreader_fixture/docs/fixture_cross_issuer_b.pdf",
+      "format": "pdf",
+      "bytes": 685,
+      "sha256": "885421c491cc79d4f5d99c4be27c02358a477e9c57cf2723166403140bfc343a"
+    },
+    {
+      "id": "fixture_direction_date_newer",
+      "path": "testdata/winner_lifecycle_corpus/docreader_fixture/docs/fixture_direction_date_newer.pdf",
+      "format": "pdf",
+      "bytes": 685,
+      "sha256": "4305edfa470cd99ab1b5b1b857e23fefd6f27b5b3bff80249f692e641eb1c116"
+    },
+    {
+      "id": "fixture_direction_version_newer",
+      "path": "testdata/winner_lifecycle_corpus/docreader_fixture/docs/fixture_direction_version_newer.docx",
+      "format": "docx",
+      "bytes": 1066,
+      "sha256": "c5801edf4131862525324dcb4ec5971012fde8016321294f315ce881fec67d2a"
+    },
+    {
+      "id": "fixture_tie_a",
+      "path": "testdata/winner_lifecycle_corpus/docreader_fixture/docs/fixture_tie_a.docx",
+      "format": "docx",
+      "bytes": 1066,
+      "sha256": "d6c780a4c92aa25bab905fa564a247fab4dcdb152007022f948ec8bcb21771fe"
+    },
+    {
+      "id": "fixture_tie_b",
+      "path": "testdata/winner_lifecycle_corpus/docreader_fixture/docs/fixture_tie_b.pdf",
+      "format": "pdf",
+      "bytes": 685,
+      "sha256": "d818d1cdeeb738b9ec986f009013e4d05c0a3246c86500393b39c75ea2c4460b"
+    }
+  ],
+  "corpus": "testdata/winner_lifecycle_corpus/docreader_fixture/corpus.json",
+  "matrix": "testdata/winner_lifecycle_corpus/docreader_fixture/winner_lifecycle_matrix.json",
+  "note": "Synthetic fixture generation only; no HTTP/model/Asynq/PostgreSQL operation was performed."
+}
