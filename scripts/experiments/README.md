@@ -461,23 +461,25 @@ make experiment-c49-review REVIEW=experiments/comparisons/<c49-run>/winner_lifec
 
 ### C4.10 synthetic PDF/DOCX fixture（先验通路检查）
 
-若真实文档暂时不适合作为研究样本，先不用自己的文件夹。仓库内置了 9 份极小、虚构的 PDF/DOCX，覆盖：
+若真实文档暂时不适合作为研究样本，先不用自己的文件夹。仓库内置了 9 份极小、虚构的 DOCX 核心文件和 1 份独立 PDF，覆盖：
 
 ```text
-同 issuer 三版本唯一 winner（PDF + DOCX，乱序上传）
+同 issuer 三版本唯一 winner（3 DOCX，乱序上传）
 cross issuer → no proposal
 date/version direction disagreement → no proposal
 same date/version tie → no proposal
+单 PDF → DocReader / claim ingress smoke
 ```
 
-先检查 fixture 哈希，再跑真实文件上传 / DocReader smoke：
+先检查 fixture 哈希，再依次跑严格 DOCX fact/winner smoke 和独立 PDF parse/claim smoke：
 
 ```bash
 make experiment-c410-docreader-fixture
 make experiment-c410-docreader-smoke
+make experiment-c410-docreader-pdf-smoke
 ```
 
-smoke 只执行检测和 proposal，所有内容均在新临时 KB 中；它不会执行 adoption/reopen。需要继续验证完整
+两个 smoke 都只执行检测和 proposal，所有内容均在新临时 KB 中；它们不会执行 adoption/reopen。需要继续验证完整
 C4.6/C4.7/C4.8 binary-file lifecycle 时再执行：
 
 ```bash

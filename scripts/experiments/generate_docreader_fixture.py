@@ -24,7 +24,7 @@ from xml.sax.saxutils import escape as xml_escape
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_OUTPUT = ROOT / "testdata/winner_lifecycle_corpus/docreader_fixture"
-FIXTURE_VERSION = 1
+FIXTURE_VERSION = 2
 
 
 class FixtureError(RuntimeError):
@@ -149,67 +149,84 @@ def write_docx(path: Path, lines: list[str]) -> None:
 
 
 def fixture_specs() -> list[dict[str, str]]:
-    """Return one-fact controlled documents spanning proposal and abstention paths."""
+    """Return controlled one-fact documents spanning proposal and abstention paths.
+
+    The core lifecycle fixture deliberately uses the Chinese sentence already
+    proven in the C4 exact-cluster regression. The first mixed PDF/DOCX run
+    showed that an LLM may translate one English predicate as “单笔最高融资限额”
+    and another as “单张上限”, splitting fact anchors despite identical source
+    wording. Keeping the core fixture Chinese and DOCX-only isolates C4 policy
+    behavior from that cross-format semantic-normalization variance. A separate
+    PDF claim smoke still exercises the binary PDF/DocReader ingress.
+    """
     return [
         {
             "id": "fixture_ordered_v1",
-            "format": "pdf",
-            "title": "Issuer: Meridian Test Finance; Effective Date: 2031-01-10; Version: V1.0",
-            "body": "The maximum financing limit for one domestic invoice is 100 CNY.",
+            "format": "docx",
+            "title": "发布机构：天穹测试财团；生效日期：2148年1月1日；版本号：V1.0",
+            "body": "国内出差餐费补贴每日标准为 100 元。",
         },
         {
             "id": "fixture_ordered_v2",
             "format": "docx",
-            "title": "Issuer: Meridian Test Finance; Effective Date: 2031-06-10; Version: V2.0",
-            "body": "The maximum financing limit for one domestic invoice is 150 CNY.",
+            "title": "发布机构：天穹测试财团；生效日期：2148年6月1日；版本号：V2.0",
+            "body": "国内出差餐费补贴每日标准为 150 元。",
         },
         {
             "id": "fixture_ordered_v3",
-            "format": "pdf",
-            "title": "Issuer: Meridian Test Finance; Effective Date: 2032-01-10; Version: V3.0",
-            "body": "The maximum financing limit for one domestic invoice is 200 CNY.",
+            "format": "docx",
+            "title": "发布机构：天穹测试财团；生效日期：2149年1月1日；版本号：V3.0",
+            "body": "国内出差餐费补贴每日标准为 200 元。",
         },
         {
             "id": "fixture_cross_issuer_a",
             "format": "docx",
-            "title": "Issuer: North Test Finance; Effective Date: 2033-01-10; Version: V1.0",
-            "body": "The maximum financing limit for one domestic invoice is 300 CNY.",
+            "title": "发布机构：北辰测试财团；生效日期：2150年1月1日；版本号：V1.0",
+            "body": "国内出差餐费补贴每日标准为 300 元。",
         },
         {
             "id": "fixture_cross_issuer_b",
-            "format": "pdf",
-            "title": "Issuer: South Test Finance; Effective Date: 2034-01-10; Version: V2.0",
-            "body": "The maximum financing limit for one domestic invoice is 400 CNY.",
+            "format": "docx",
+            "title": "发布机构：南辰测试财团；生效日期：2151年1月1日；版本号：V2.0",
+            "body": "国内出差餐费补贴每日标准为 400 元。",
         },
         {
             "id": "fixture_direction_date_newer",
-            "format": "pdf",
-            "title": "Issuer: Meridian Test Finance; Effective Date: 2036-01-10; Version: V1.0",
-            "body": "The maximum financing limit for one domestic invoice is 500 CNY.",
+            "format": "docx",
+            "title": "发布机构：天穹测试财团；生效日期：2153年1月1日；版本号：V1.0",
+            "body": "国内出差餐费补贴每日标准为 500 元。",
         },
         {
             "id": "fixture_direction_version_newer",
             "format": "docx",
-            "title": "Issuer: Meridian Test Finance; Effective Date: 2035-01-10; Version: V2.0",
-            "body": "The maximum financing limit for one domestic invoice is 600 CNY.",
+            "title": "发布机构：天穹测试财团；生效日期：2152年1月1日；版本号：V2.0",
+            "body": "国内出差餐费补贴每日标准为 600 元。",
         },
         {
             "id": "fixture_tie_a",
             "format": "docx",
-            "title": "Issuer: Meridian Test Finance; Effective Date: 2037-01-10; Version: V1.0",
-            "body": "The maximum financing limit for one domestic invoice is 700 CNY.",
+            "title": "发布机构：天穹测试财团；生效日期：2154年1月1日；版本号：V1.0",
+            "body": "国内出差餐费补贴每日标准为 700 元。",
         },
         {
             "id": "fixture_tie_b",
+            "format": "docx",
+            "title": "发布机构：天穹测试财团；生效日期：2154年1月1日；版本号：V1.0",
+            "body": "国内出差餐费补贴每日标准为 800 元。",
+        },
+        {
+            "id": "fixture_pdf_claim_smoke",
             "format": "pdf",
-            "title": "Issuer: Meridian Test Finance; Effective Date: 2037-01-10; Version: V1.0",
-            "body": "The maximum financing limit for one domestic invoice is 800 CNY.",
+            "title": "Issuer: Meridian Test Finance; Effective Date: 2155-01-10; Version: V1.0",
+            "body": "The maximum financing limit for one domestic invoice is 900 CNY.",
         },
     ]
 
 
 def write_source_document(path: Path, source_format: str, body: str) -> None:
-    lines = ["Synthetic financing rule", body]
+    # One fact only: headings or explanatory prose create avoidable extraction
+    # choices in a fixture intended to isolate claim-key and lifecycle behavior.
+    lines = [body]
     if source_format == "pdf":
         write_pdf(path, lines)
     elif source_format == "docx":
@@ -253,16 +270,16 @@ def build_corpus(output: Path, sources: dict[str, dict[str, Any]]) -> dict[str, 
         "schema_version": 1,
         "name": "c410_docreader_fixture",
         "description": (
-            "Fictional controlled PDF/DOCX fixture for C4.10 real multipart/DocReader integration. "
+            "Fictional controlled DOCX lifecycle fixture plus a standalone PDF claim smoke for C4.10 real multipart/DocReader integration. "
             "It is not a real-document corpus, a human-label study, or external-generalization evidence."
         ),
         "variant": "c2-rules",
         "cases": [
             {
                 "id": "ordered_triplet",
-                "fact_family_id": "fixture_invoice_limit_ordered",
+                "fact_family_id": "fixture_meal_allowance_ordered",
                 "split": "development",
-                "description": "Controlled same-issuer PDF/DOCX triplet; V3 is the only strict metadata maximum.",
+                "description": "Controlled same-issuer DOCX triplet; V3 is the only strict metadata maximum.",
                 "expected_outcome": "adopt_reopen",
                 "expected_winner_document": "fixture_ordered_v3",
                 "adoption_cycles": 1,
@@ -279,7 +296,7 @@ def build_corpus(output: Path, sources: dict[str, dict[str, Any]]) -> dict[str, 
             },
             {
                 "id": "cross_issuer_no_proposal",
-                "fact_family_id": "fixture_invoice_limit_cross_issuer",
+                "fact_family_id": "fixture_meal_allowance_cross_issuer",
                 "split": "development",
                 "description": "Controlled conflict with different explicit issuers; no global winner may be proposed.",
                 "expected_outcome": "no_proposal",
@@ -294,7 +311,7 @@ def build_corpus(output: Path, sources: dict[str, dict[str, Any]]) -> dict[str, 
             },
             {
                 "id": "date_version_disagreement_no_proposal",
-                "fact_family_id": "fixture_invoice_limit_direction_disagreement",
+                "fact_family_id": "fixture_meal_allowance_direction_disagreement",
                 "split": "development",
                 "description": "Controlled same-issuer conflict whose date and version directions disagree; proposal must abstain.",
                 "expected_outcome": "no_proposal",
@@ -309,7 +326,7 @@ def build_corpus(output: Path, sources: dict[str, dict[str, Any]]) -> dict[str, 
             },
             {
                 "id": "metadata_tie_no_proposal",
-                "fact_family_id": "fixture_invoice_limit_metadata_tie",
+                "fact_family_id": "fixture_meal_allowance_metadata_tie",
                 "split": "development",
                 "description": "Controlled same-issuer identical date/version tie; proposal must abstain.",
                 "expected_outcome": "no_proposal",
@@ -329,9 +346,15 @@ def build_corpus(output: Path, sources: dict[str, dict[str, Any]]) -> dict[str, 
 def write_readme(path: Path) -> None:
     text = """# C4.10 synthetic DocReader fixture
 
-This directory contains nine **fictional**, deterministic PDF/DOCX files. They are intentionally tiny: every case has one controlled financing-limit fact, while issuer/date/version metadata is supplied through the scenario title in exactly the same way the real file runner carries human-verified metadata. The body text is deliberately ASCII English so the generated PDFs require no host-specific CJK font; C3 also supports the explicit English `Issuer` / `Effective Date` / `Version` labels used here.
+This directory contains ten **fictional**, deterministic binary documents. The core lifecycle set uses nine tiny Chinese DOCX files containing the exact single-fact sentence already validated by the C4 exact-cluster regression:
 
-It is useful for checking the newly added binary-file route:
+```text
+国内出差餐费补贴每日标准为 <value> 元。
+```
+
+The previous mixed PDF/DOCX English fixture let the model normalize the same English predicate inconsistently (for example, `单笔最高融资限额` vs `单张上限`). The core C4.6/C4.7/C4.8 test is therefore intentionally DOCX-only: it isolates fact-level clustering and winner policy from cross-format semantic-normalization variance. A separate minimal ASCII-English PDF remains for an independent PDF → DocReader → claim smoke.
+
+Issuer/date/version metadata is supplied through the scenario title, exactly as the real file runner carries human-verified metadata. The fixture is useful for checking:
 
 ```text
 multipart HTTP file upload → DocReader → Asynq → claims → conflicts → C4.6 proposal
@@ -341,10 +364,11 @@ It is **not** a real corpus, a substitute for real-document review, a human-labe
 
 ## Contents
 
-- `docs/`: 5 PDFs and 4 DOCX files; no private content.
-- `corpus.json`: C4.10 corpus manifest for the four controlled cases.
-- `scenarios/`: direct `run_claims_eval.py` scenarios.
-- `winner_lifecycle_matrix.json`: one positive adopt/reopen case and three fail-closed no-proposal cases.
+- `docs/`: 9 DOCX core lifecycle files and 1 standalone PDF claim-smoke file; no private content.
+- `corpus.json`: C4.10 corpus manifest for the four DOCX-controlled cases.
+- `scenarios/ordered_triplet.json`: strict three-DOCX C4.6 winner smoke.
+- `scenarios/pdf_claim_smoke.json`: one-PDF parse/claim smoke without fact-cluster assertions.
+- `winner_lifecycle_matrix.json`: one DOCX positive adopt/reopen case and three DOCX fail-closed no-proposal cases.
 - `fixture_manifest.json`: source hashes and generation metadata.
 
 ## Recommended run order
@@ -352,18 +376,26 @@ It is **not** a real corpus, a substitute for real-document review, a human-labe
 First validate the generated bytes locally:
 
 ```bash
-make experiment-c410-docreader-fixture-check
+make experiment-c410-docreader-fixture
 ```
 
-Then run only the three-file positive DocReader smoke test against a live configured app:
+Then run the strict three-DOCX fact/winner smoke against a live configured app:
 
 ```bash
 make experiment-c410-docreader-smoke
 ```
 
-This creates a fresh temporary KB and executes detection/proposal only; it does not adopt or disable any source chunks.
+A passing smoke creates a fresh temporary KB and verifies all three raw document pairs, one `claim_key`-anchored `DisputedFact`, and one V3 proposal. It does not adopt or disable source chunks.
 
-After that succeeds, run the controlled binary-file lifecycle matrix once:
+Run the independent PDF format smoke next:
+
+```bash
+make experiment-c410-docreader-pdf-smoke
+```
+
+That command requires the fixture PDF to parse and yield at least one claim, but deliberately does not assert cross-format clustering. It is a parser/ingress test, not an accuracy metric.
+
+After the strict DOCX smoke succeeds, run the full controlled lifecycle matrix once:
 
 ```bash
 make experiment-c410-docreader-lifecycle REPLICATES=1
@@ -377,7 +409,7 @@ The fixture can be regenerated deterministically with:
 python3 scripts/experiments/generate_docreader_fixture.py --output-dir testdata/winner_lifecycle_corpus/docreader_fixture --overwrite
 ```
 
-Do not report its results as a real-corpus metric. Use it only to verify the file/DocReader integration before selecting a small reviewed real-document development set.
+Do not report its results as a real-corpus metric. Use it only to verify binary-file/DocReader integration before selecting a small reviewed real-document development set.
 """
     path.write_text(text, encoding="utf-8")
 
@@ -395,6 +427,14 @@ def generate(output: Path, *, overwrite: bool) -> dict[str, Any]:
     generated_sources: list[dict[str, Any]] = []
     for spec in fixture_specs():
         source_path = docs_dir / f"{spec['id']}.{spec['format']}"
+        if overwrite:
+            # A fixture revision may deliberately switch an ID from PDF to
+            # DOCX (or the reverse). Remove only this generator-owned sibling
+            # extension, never a caller-provided arbitrary directory tree.
+            for suffix in ("pdf", "docx"):
+                sibling = docs_dir / f"{spec['id']}.{suffix}"
+                if sibling != source_path and sibling.is_file():
+                    sibling.unlink()
         write_source_document(source_path, spec["format"], spec["body"])
         digest = sha256_file(source_path)
         source = {
@@ -423,6 +463,18 @@ def generate(output: Path, *, overwrite: bool) -> dict[str, Any]:
         scenario_path = scenarios_dir / f"{case['id']}.json"
         json_dump(scenario_path, scenario_for_case(str(corpus["name"]), case))
         scenario_paths[str(case["id"])] = portable_path(scenario_path)
+    pdf_source = source_records["fixture_pdf_claim_smoke"]
+    json_dump(scenarios_dir / "pdf_claim_smoke.json", {
+        "schema_version": 1,
+        "name": "c410_docreader_fixture_pdf_claim_smoke",
+        "description": (
+            "One fictional ASCII PDF. Require DocReader/file ingress and claim extraction only; "
+            "cross-format clustering is intentionally not asserted here."
+        ),
+        "min_claims_per_document": 1,
+        "documents": [pdf_source],
+        "expected_conflict_document_pairs": [],
+    })
     matrix = {
         "schema_version": 1,
         "name": "c410_docreader_fixture_matrix",
@@ -513,8 +565,8 @@ def main() -> int:
             return 0
         manifest = generate(output, overwrite=bool(args.overwrite))
         print(f"C4.10 DocReader fixture generated: {output}")
-        print(f"  source documents: {manifest['source_document_count']} (PDF/DOCX only)")
-        print("  cases: 4 (1 adopt_reopen + 3 no_proposal)")
+        print(f"  source documents: {manifest['source_document_count']} (9 DOCX core + 1 PDF smoke)")
+        print("  lifecycle cases: 4 (1 adopt_reopen + 3 no_proposal)")
         print("  document body/API/model/database: not accessed")
         return 0
     except FixtureError as exc:

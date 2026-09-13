@@ -1,71 +1,78 @@
 {
   "schema_version": 1,
-  "fixture_version": 1,
+  "fixture_version": 2,
   "generator": "scripts/experiments/generate_docreader_fixture.py",
-  "source_document_count": 9,
+  "source_document_count": 10,
   "source_documents": [
     {
       "id": "fixture_ordered_v1",
-      "path": "testdata/winner_lifecycle_corpus/docreader_fixture/docs/fixture_ordered_v1.pdf",
-      "format": "pdf",
-      "bytes": 685,
-      "sha256": "dd509e85c44d1b79ccc9eab3a162f36b8eef28fb65d4e738a588f233e6c5eaae"
+      "path": "testdata/winner_lifecycle_corpus/docreader_fixture/docs/fixture_ordered_v1.docx",
+      "format": "docx",
+      "bytes": 1072,
+      "sha256": "cb37dec087d898b1f5bf3a6126e7bdaa244130aaa2f04d2cfda7f6b67c2ca301"
     },
     {
       "id": "fixture_ordered_v2",
       "path": "testdata/winner_lifecycle_corpus/docreader_fixture/docs/fixture_ordered_v2.docx",
       "format": "docx",
-      "bytes": 1066,
-      "sha256": "3a3827da775c5ce6a32aef727b64a33968b440e0d0fc3cf0e336b77a8f18ea9d"
+      "bytes": 1072,
+      "sha256": "a7d4850c3a25a77d490c19ebff748d3b0cb2ca3ee4bba31f4f50f27204226429"
     },
     {
       "id": "fixture_ordered_v3",
-      "path": "testdata/winner_lifecycle_corpus/docreader_fixture/docs/fixture_ordered_v3.pdf",
-      "format": "pdf",
-      "bytes": 685,
-      "sha256": "979ef517cdd57b30673c54329473575388c4010cb7d167766ec833130a2613ce"
+      "path": "testdata/winner_lifecycle_corpus/docreader_fixture/docs/fixture_ordered_v3.docx",
+      "format": "docx",
+      "bytes": 1071,
+      "sha256": "db94b6162bb7e66efa7693d595a99f06c90c96953f0a38bce0dce6b166f518f0"
     },
     {
       "id": "fixture_cross_issuer_a",
       "path": "testdata/winner_lifecycle_corpus/docreader_fixture/docs/fixture_cross_issuer_a.docx",
       "format": "docx",
-      "bytes": 1066,
-      "sha256": "939ee010f43034e417744f26608ce8e22a0f20ddc4ab6490ac1ff97d4ce060dc"
+      "bytes": 1072,
+      "sha256": "840317a5f4858cadde5876a94a4527a26a07b9ae1db19f7a51f1c8a46c4eefeb"
     },
     {
       "id": "fixture_cross_issuer_b",
-      "path": "testdata/winner_lifecycle_corpus/docreader_fixture/docs/fixture_cross_issuer_b.pdf",
-      "format": "pdf",
-      "bytes": 685,
-      "sha256": "885421c491cc79d4f5d99c4be27c02358a477e9c57cf2723166403140bfc343a"
+      "path": "testdata/winner_lifecycle_corpus/docreader_fixture/docs/fixture_cross_issuer_b.docx",
+      "format": "docx",
+      "bytes": 1072,
+      "sha256": "ed2f5dc39e70b2f93620499075437b244318a82c7a48c3aca8bc4811718c71f7"
     },
     {
       "id": "fixture_direction_date_newer",
-      "path": "testdata/winner_lifecycle_corpus/docreader_fixture/docs/fixture_direction_date_newer.pdf",
-      "format": "pdf",
-      "bytes": 685,
-      "sha256": "4305edfa470cd99ab1b5b1b857e23fefd6f27b5b3bff80249f692e641eb1c116"
+      "path": "testdata/winner_lifecycle_corpus/docreader_fixture/docs/fixture_direction_date_newer.docx",
+      "format": "docx",
+      "bytes": 1072,
+      "sha256": "53073f1917eb224c80ec4fbf21c7229890f5569ea9d7273ccba1cb1d9b22401e"
     },
     {
       "id": "fixture_direction_version_newer",
       "path": "testdata/winner_lifecycle_corpus/docreader_fixture/docs/fixture_direction_version_newer.docx",
       "format": "docx",
-      "bytes": 1066,
-      "sha256": "c5801edf4131862525324dcb4ec5971012fde8016321294f315ce881fec67d2a"
+      "bytes": 1072,
+      "sha256": "de114994178234f2f48a9922dc73248fd42b252b242ad79389c55f4229de7ec0"
     },
     {
       "id": "fixture_tie_a",
       "path": "testdata/winner_lifecycle_corpus/docreader_fixture/docs/fixture_tie_a.docx",
       "format": "docx",
-      "bytes": 1066,
-      "sha256": "d6c780a4c92aa25bab905fa564a247fab4dcdb152007022f948ec8bcb21771fe"
+      "bytes": 1072,
+      "sha256": "c97c0c097b60fe0777b38208137ebd33f4202a5dfb750e24a37d54522e516db9"
     },
     {
       "id": "fixture_tie_b",
-      "path": "testdata/winner_lifecycle_corpus/docreader_fixture/docs/fixture_tie_b.pdf",
+      "path": "testdata/winner_lifecycle_corpus/docreader_fixture/docs/fixture_tie_b.docx",
+      "format": "docx",
+      "bytes": 1072,
+      "sha256": "ebd60cf36701ca423c7f147eaaef29a333defb47f19ffd7ca0fd5d7a1a568093"
+    },
+    {
+      "id": "fixture_pdf_claim_smoke",
+      "path": "testdata/winner_lifecycle_corpus/docreader_fixture/docs/fixture_pdf_claim_smoke.pdf",
       "format": "pdf",
-      "bytes": 685,
-      "sha256": "d818d1cdeeb738b9ec986f009013e4d05c0a3246c86500393b39c75ea2c4460b"
+      "bytes": 645,
+      "sha256": "fe1364cbd94e0771a604c1952f4738af9cffa0c343b77b68f37c0cc7afbd853a"
     }
   ],
   "corpus": "testdata/winner_lifecycle_corpus/docreader_fixture/corpus.json",

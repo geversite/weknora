@@ -1,37 +1,37 @@
 {
   "schema_version": 1,
   "name": "c410_docreader_fixture_ordered_triplet",
-  "description": "Controlled same-issuer PDF/DOCX triplet; V3 is the only strict metadata maximum.",
+  "description": "Controlled same-issuer DOCX triplet; V3 is the only strict metadata maximum.",
   "min_claims_per_document": 1,
   "documents": [
     {
       "id": "fixture_ordered_v2",
       "path": "testdata/winner_lifecycle_corpus/docreader_fixture/docs/fixture_ordered_v2.docx",
-      "title": "Issuer: Meridian Test Finance; Effective Date: 2031-06-10; Version: V2.0",
+      "title": "发布机构：天穹测试财团；生效日期：2148年6月1日；版本号：V2.0",
       "ingest_mode": "file",
-      "source_sha256": "3a3827da775c5ce6a32aef727b64a33968b440e0d0fc3cf0e336b77a8f18ea9d",
+      "source_sha256": "a7d4850c3a25a77d490c19ebff748d3b0cb2ca3ee4bba31f4f50f27204226429",
       "source_document_id": "fixture_ordered_v2",
       "source_relative_path": "testdata/winner_lifecycle_corpus/docreader_fixture/docs/fixture_ordered_v2.docx",
       "metadata_evidence_location": "Controlled fixture scenario title"
     },
     {
       "id": "fixture_ordered_v1",
-      "path": "testdata/winner_lifecycle_corpus/docreader_fixture/docs/fixture_ordered_v1.pdf",
-      "title": "Issuer: Meridian Test Finance; Effective Date: 2031-01-10; Version: V1.0",
+      "path": "testdata/winner_lifecycle_corpus/docreader_fixture/docs/fixture_ordered_v1.docx",
+      "title": "发布机构：天穹测试财团；生效日期：2148年1月1日；版本号：V1.0",
       "ingest_mode": "file",
-      "source_sha256": "dd509e85c44d1b79ccc9eab3a162f36b8eef28fb65d4e738a588f233e6c5eaae",
+      "source_sha256": "cb37dec087d898b1f5bf3a6126e7bdaa244130aaa2f04d2cfda7f6b67c2ca301",
       "source_document_id": "fixture_ordered_v1",
-      "source_relative_path": "testdata/winner_lifecycle_corpus/docreader_fixture/docs/fixture_ordered_v1.pdf",
+      "source_relative_path": "testdata/winner_lifecycle_corpus/docreader_fixture/docs/fixture_ordered_v1.docx",
       "metadata_evidence_location": "Controlled fixture scenario title"
     },
     {
       "id": "fixture_ordered_v3",
-      "path": "testdata/winner_lifecycle_corpus/docreader_fixture/docs/fixture_ordered_v3.pdf",
-      "title": "Issuer: Meridian Test Finance; Effective Date: 2032-01-10; Version: V3.0",
+      "path": "testdata/winner_lifecycle_corpus/docreader_fixture/docs/fixture_ordered_v3.docx",
+      "title": "发布机构：天穹测试财团；生效日期：2149年1月1日；版本号：V3.0",
       "ingest_mode": "file",
-      "source_sha256": "979ef517cdd57b30673c54329473575388c4010cb7d167766ec833130a2613ce",
+      "source_sha256": "db94b6162bb7e66efa7693d595a99f06c90c96953f0a38bce0dce6b166f518f0",
       "source_document_id": "fixture_ordered_v3",
-      "source_relative_path": "testdata/winner_lifecycle_corpus/docreader_fixture/docs/fixture_ordered_v3.pdf",
+      "source_relative_path": "testdata/winner_lifecycle_corpus/docreader_fixture/docs/fixture_ordered_v3.docx",
       "metadata_evidence_location": "Controlled fixture scenario title"
     }
   ],

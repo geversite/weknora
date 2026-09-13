@@ -13,8 +13,8 @@
 ## 0. 没有可用真实文档时：先运行 synthetic binary fixture
 
 若现有真实文档质量不适合做首轮实验，可先使用仓库内置的
-[`docreader_fixture/`](./docreader_fixture/)。它包含 5 个 PDF、4 个 DOCX，以及 1 个可采纳正例和 3 个
-fail-closed no-proposal 负例；每个文件只包含一条受控的虚构额度事实，避免大型真实文档的多事实噪声。
+[`docreader_fixture/`](./docreader_fixture/)。它包含 9 个 DOCX 核心生命周期文件、1 个独立 PDF parse/claim
+smoke 文件，以及 1 个可采纳正例和 3 个 fail-closed no-proposal 负例；每个文件只包含一条受控的虚构事实，避免大型真实文档的多事实噪声。
 
 先校验 fixture 文件未被改变：
 
@@ -28,8 +28,14 @@ make experiment-c410-docreader-fixture
 make experiment-c410-docreader-smoke
 ```
 
-它会创建临时实验 KB、上传 fixture 的 PDF/DOCX、等待 DocReader/Asynq/claim/conflict 链路，并验证 C4.6
-是否提出唯一 V3 winner；它**不会**执行 adoption/reopen 或改动你的真实 KB。若 smoke 通过，再可运行：
+它会创建临时实验 KB、上传三份 DOCX、等待 DocReader/Asynq/claim/conflict 链路，并验证 C4.6
+是否提出唯一 V3 winner；它**不会**执行 adoption/reopen 或改动你的真实 KB。随后可单独验证 PDF 入口：
+
+```bash
+make experiment-c410-docreader-pdf-smoke
+```
+
+若两项 smoke 均通过，再可运行：
 
 ```bash
 make experiment-c410-docreader-lifecycle REPLICATES=1

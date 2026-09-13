@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "name": "c410_docreader_fixture_pdf_claim_smoke",
+  "description": "One fictional ASCII PDF. Require DocReader/file ingress and claim extraction only; cross-format clustering is intentionally not asserted here.",
+  "min_claims_per_document": 1,
+  "documents": [
+    {
+      "id": "fixture_pdf_claim_smoke",
+      "path": "testdata/winner_lifecycle_corpus/docreader_fixture/docs/fixture_pdf_claim_smoke.pdf",
+      "title": "Issuer: Meridian Test Finance; Effective Date: 2155-01-10; Version: V1.0",
+      "ingest_mode": "file",
+      "source_sha256": "fe1364cbd94e0771a604c1952f4738af9cffa0c343b77b68f37c0cc7afbd853a",
+      "source_document_id": "fixture_pdf_claim_smoke",
+      "source_relative_path": "testdata/winner_lifecycle_corpus/docreader_fixture/docs/fixture_pdf_claim_smoke.pdf",
+      "metadata_evidence_location": "Controlled fixture scenario title"
+    }
+  ],
+  "expected_conflict_document_pairs": []
+}
