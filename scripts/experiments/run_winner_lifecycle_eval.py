@@ -651,6 +651,12 @@ def main() -> int:
                     f"[c4.9] {'PASS' if record['passed'] else 'FAIL'} {case['id']} r{replicate}: "
                     f"raw={record['raw_conflict_count']} clusters={record['disputed_fact_count']}"
                 )
+                if not record["passed"] and record.get("issues"):
+                    # Keep the console actionable for a one-command research
+                    # run. The full subprocess log/artifact remains available,
+                    # but the first issues often identify an upload/schema
+                    # guard immediately (for example duplicate fileName).
+                    print("[c4.9]   issues:", " | ".join(str(issue) for issue in record["issues"][:3]))
                 json_dump(output_dir / "matrix_results.json", records)
 
         summary = summarize(records, matrix, args.replicates)

@@ -199,19 +199,43 @@ def validate_source_digest(document: dict[str, Any], source: Path) -> str:
     return observed
 
 
+def upload_file_identity(document: dict[str, Any]) -> str:
+    """Return a filename-safe, stable identity for one scenario document.
+
+    C3 reads only its allowlisted issuer/date/version labels. A trailing unknown
+    identity segment is therefore safe metadata-wise, while preventing a tie
+    case from sending two files with exactly the same `fileName` to the public
+    upload endpoint (which correctly rejects same-name files in one KB).
+    """
+    raw = str(document.get("id", "")).strip() or "document"
+    readable = "".join(char if char.isalnum() or char in {"-", "_", "."} else "-" for char in raw)
+    readable = re.sub(r"[-_.]{2,}", "-", readable).strip("-.")[:36] or "document"
+    digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:8]
+    return f"{readable}-{digest}"
+
+
 def upload_file_name(document: dict[str, Any], source: Path) -> str:
-    """Build a DocReader-safe name while retaining C3 metadata in the title.
+    """Build a unique DocReader-safe name while retaining C3 metadata labels.
 
     The public file endpoint uses `fileName` as both the displayed knowledge
-    title and the parser's file name.  For a C4.6 real-file case we therefore
-    append the source suffix to the human-verified `title` metadata rather than
-    losing the parser extension.  An explicit upload_file_name remains
-    available for unusual files, but it must keep the original extension.
+    title and the parser's file name. For a C4.6 real-file case we retain the
+    human-verified title labels and source extension. When a scenario has not
+    supplied an explicit `upload_file_name`, append an ignored, stable document
+    identity segment before the extension. This is essential for a legitimate
+    metadata tie: two distinct sources can share exactly the same issuer/date/
+    version title, but the API must still receive two distinct filenames.
     """
     configured = str(document.get("upload_file_name", "")).strip()
     title = str(document.get("title") or source.stem).strip()
-    name = configured or title
     suffix = source.suffix
+    if configured:
+        name = configured
+    else:
+        if title.lower().endswith(suffix.lower()):
+            title = title[:-len(suffix)]
+        # C3 ignores the non-allowlisted 文档标识 field but keeps the preceding
+        # issuer/effective-date/version segments intact after title splitting.
+        name = f"{title}；文档标识：{upload_file_identity(document)}{suffix}"
     if not name:
         raise ExperimentError(f"场景文档 {document.get('id', '')} 的 file 上传缺少 title/file name")
     if not name.lower().endswith(suffix.lower()):

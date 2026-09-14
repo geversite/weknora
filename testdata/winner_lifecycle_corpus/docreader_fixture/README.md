@@ -8,7 +8,9 @@ This directory contains ten **fictional**, deterministic binary documents. The c
 
 The previous mixed PDF/DOCX English fixture let the model normalize the same English predicate inconsistently (for example, `单笔最高融资限额` vs `单张上限`). The core C4.6/C4.7/C4.8 test is therefore intentionally DOCX-only: it isolates fact-level clustering and winner policy from cross-format semantic-normalization variance. A separate minimal ASCII-English PDF remains for an independent PDF → DocReader → claim smoke.
 
-Issuer/date/version metadata is supplied through the scenario title, exactly as the real file runner carries human-verified metadata. The fixture is useful for checking:
+Issuer/date/version metadata is supplied through the scenario title, exactly as the real file runner carries human-verified metadata. The runner appends a stable non-semantic document identity to the uploaded filename when needed, so the two tie documents can retain identical authority/date/version metadata without triggering the API's same-filename rejection. C3 ignores that identity field.
+
+The fixture is useful for checking:
 
 ```text
 multipart HTTP file upload → DocReader → Asynq → claims → conflicts → C4.6 proposal

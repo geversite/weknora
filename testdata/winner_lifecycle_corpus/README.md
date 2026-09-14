@@ -142,7 +142,9 @@ metadata_evidence_location=<封面/页码/标题行等可复核位置>
 
 `*` 仅表示这份来源与同 case 的**每一份**来源都应有 conflict；不确定时必须逐个填写 partner。`metadata_title`
 不是让脚本从文件名拼接：它必须是人工从原始 title/header 复核的显式证据。对于 `no_proposal`，也应填写已核实的
-metadata title/证据位置（包括“确实缺失”或“不同 issuer”等负例理由），不能只凭文件名推断。
+metadata title/证据位置（包括“确实缺失”或“不同 issuer”等负例理由），不能只凭文件名推断。即使两个 tie 来源的
+issuer/date/version 完全相同，也无需在 `metadata_title` 人为编造差异；文件运行器会自动追加不参与 C3 解析的稳定
+`文档标识` 段，确保 API 接收唯一 file name。
 
 CSV 填好后，把它转为 JSON；过程仍不会读取正文或访问服务：
 

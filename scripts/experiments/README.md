@@ -739,7 +739,9 @@ experiments/runs/<timestamp>-<scenario>-<variant>-<commit>/
 DocReader → Asynq → claim extraction → conflict detection。它不会把 PDF/DOC/DOCX 字节当作 UTF-8 Markdown
 读取；运行前会核验 `source_sha256`（若提供）以阻止已标注来源静默漂移。为让 C3/C4.6 得到可审计 metadata，
 `title` 必须由人工从原始 title/header 核实后写成显式 `发布机构/生效日期/版本号` 标签；文件名或目录名本身不构成
-该证据。运行器会保留原扩展名并用该 title 作为实验知识显示名，因此 title 不应含换行或路径分隔符。
+该证据。运行器会保留原扩展名，并在未显式设置 `upload_file_name` 时追加非语义的 `；文档标识：<document_id>`，
+避免 metadata tie 的两个不同来源因同名上传被 API 拒绝；C3 会忽略该未知标签，仍只读取 issuer/date/version。
+若自行提供 `upload_file_name`，则必须保证同一实验 KB 内每份文件名唯一。
 
 `forbidden_conflict_document_pairs` 是可选的闭集负例断言。若任何该文档对出现 raw
 `knowledge_conflicts` 行，run 会保留全部证据、标记为 `completed_with_forbidden_conflicts`，并
