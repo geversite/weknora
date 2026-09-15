@@ -102,6 +102,7 @@ def normalize_case(raw_case: Any, inherited_variant: str, allow_missing_document
     family_id = str(raw_case.get("fact_family_id", "")).strip()
     split = str(raw_case.get("split", "")).strip()
     outcome = str(raw_case.get("expected_outcome", "")).strip()
+    case_type = str(raw_case.get("case_type", "")).strip()
     if not case_id or not family_id:
         raise CorpusError("每个 corpus case 必须有 id 和 fact_family_id")
     if split not in VALID_SPLITS:
@@ -222,6 +223,7 @@ def normalize_case(raw_case: Any, inherited_variant: str, allow_missing_document
         "split": split,
         "variant": variant,
         "description": str(raw_case.get("description", "")).strip(),
+        "case_type": case_type,
         "documents": documents,
         "expected_conflict_document_pairs": pairs,
         "expected_disputed_fact_count": expected_fact_count,
@@ -275,6 +277,9 @@ def scenario_for_case(corpus: dict[str, Any], case: dict[str, Any]) -> dict[str,
         "schema_version": 1,
         "name": f"{corpus['name']}_{case['id']}",
         "description": case["description"] or f"C4.10 corpus case {case['id']} ({case['split']})",
+        "fact_family_id": case["fact_family_id"],
+        "split": case["split"],
+        "case_type": case.get("case_type", ""),
         "min_claims_per_document": 1,
         "documents": case["documents"],
         "expected_conflict_document_pairs": case["expected_conflict_document_pairs"],
@@ -305,6 +310,9 @@ def matrix_for_cases(corpus: dict[str, Any], scenario_paths: dict[str, Path], ca
         "cases": [
             {
                 "id": case["id"],
+                "fact_family_id": case["fact_family_id"],
+                "split": case["split"],
+                "case_type": case.get("case_type", ""),
                 "scenario": str(scenario_paths[case["id"]]),
                 "expected_outcome": case["expected_outcome"],
                 "expected_winner_document": case["expected_winner_document"],
@@ -318,10 +326,12 @@ def matrix_for_cases(corpus: dict[str, Any], scenario_paths: dict[str, Path], ca
 
 def write_reviewer_sheets(output: Path, cases: list[dict[str, Any]]) -> None:
     blind_fields = [
-        "case_id", "fact_family_id", "split", "document_ids", "document_paths", "document_titles",
+        "case_id", "fact_family_id", "split", "case_type", "document_ids", "document_paths", "document_titles",
         "reviewer_label", "reviewer_winner_document", "reviewer_evidence", "reviewer_note",
     ]
-    gold_fields = blind_fields[:6] + [
+    # Keep the gold sheet's original role-specific columns; case_type expands
+    # the shared metadata prefix from six to seven fields.
+    gold_fields = blind_fields[:7] + [
         "gold_expected_outcome", "gold_expected_winner_document", "gold_adoption_cycles",
         "reviewer_1_label", "reviewer_1_winner_document", "reviewer_1_evidence", "reviewer_1_note",
         "reviewer_2_label", "reviewer_2_winner_document", "reviewer_2_evidence", "reviewer_2_note",
@@ -333,6 +343,7 @@ def write_reviewer_sheets(output: Path, cases: list[dict[str, Any]]) -> None:
             "case_id": case["id"],
             "fact_family_id": case["fact_family_id"],
             "split": case["split"],
+            "case_type": case.get("case_type", ""),
             "document_ids": ";".join(doc["id"] for doc in case["documents"]),
             "document_paths": ";".join(doc["path"] for doc in case["documents"]),
             "document_titles": " | ".join(doc["title"] for doc in case["documents"]),

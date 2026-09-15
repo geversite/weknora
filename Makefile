@@ -1,4 +1,4 @@
-.PHONY: help build run test clean docker-build-app docker-build-docreader docker-build-frontend docker-build-all docker-run migrate-up migrate-down docker-restart docker-stop start-all stop-all start-ollama stop-ollama build-images build-images-app build-images-docreader build-images-frontend clean-images check-env list-containers pull-images show-platform dev-start dev-stop dev-restart dev-logs dev-status dev-app dev-frontend docs install-swagger build-lite run-lite package-lite experiment-check experiment-c1 experiment-c2-rules experiment-c2-batch experiment-c2-compare experiment-c3 experiment-c46 experiment-c46-negative experiment-c47 experiment-c47-negative experiment-c48 experiment-c48-negative experiment-c49 experiment-c49-review experiment-c410-plan experiment-c410-inventory experiment-c410-prepare experiment-c410-materialize experiment-c410-docreader-fixture experiment-c410-docreader-smoke experiment-c410-docreader-pdf-smoke experiment-c410-docreader-lifecycle experiment-c4 experiment-c4-fuzzy experiment-c4-resolve experiment-p2 experiment-p3 experiment-p12 experiment-v1 experiment-audit experiment-audit-summary experiment-audit-metrics experiment-gold-v2 experiment-gold-v2-review experiment-gold-v2-scope-review experiment-gold-v2-apply-recommendations experiment-gold-v2-finalize experiment-dual-scope-metrics
+.PHONY: help build run test clean docker-build-app docker-build-docreader docker-build-frontend docker-build-all docker-run migrate-up migrate-down docker-restart docker-stop start-all stop-all start-ollama stop-ollama build-images build-images-app build-images-docreader build-images-frontend clean-images check-env list-containers pull-images show-platform dev-start dev-stop dev-restart dev-logs dev-status dev-app dev-frontend docs install-swagger build-lite run-lite package-lite experiment-check experiment-c1 experiment-c2-rules experiment-c2-batch experiment-c2-compare experiment-c3 experiment-c46 experiment-c46-negative experiment-c47 experiment-c47-negative experiment-c48 experiment-c48-negative experiment-c49 experiment-c49-review experiment-c410-plan experiment-c410-inventory experiment-c410-prepare experiment-c410-materialize experiment-c410-docreader-fixture experiment-c410-docreader-smoke experiment-c410-docreader-pdf-smoke experiment-c410-docreader-lifecycle experiment-c410-synthetic-corpus experiment-c410-fact-eval experiment-c4 experiment-c4-fuzzy experiment-c4-resolve experiment-p2 experiment-p3 experiment-p12 experiment-v1 experiment-audit experiment-audit-summary experiment-audit-metrics experiment-gold-v2 experiment-gold-v2-review experiment-gold-v2-scope-review experiment-gold-v2-apply-recommendations experiment-gold-v2-finalize experiment-dual-scope-metrics
 
 # Show help
 help:
@@ -81,6 +81,8 @@ help:
 	@echo "  experiment-c410-docreader-smoke 运行内置 3 文件 DOCX fact/winner smoke"
 	@echo "  experiment-c410-docreader-pdf-smoke 运行内置单 PDF parse/claim smoke"
 	@echo "  experiment-c410-docreader-lifecycle 运行内置 DOCX C4.6/C4.7/C4.8 matrix"
+	@echo "  experiment-c410-synthetic-corpus 生成 split-safe synthetic DOCX policy corpus（OUTPUT=<dir>）"
+	@echo "  experiment-c410-fact-eval 汇总 matrix 的事实家族 winner/baseline 指标（MATRIX_RUN=<dir>）"
 	@echo "  experiment-c4     运行 C4-Lite 三值同事实聚类实验"
 	@echo "  experiment-c4-fuzzy 运行 C4-Lite schema-drift fallback 聚类实验"
 	@echo "  experiment-c4-resolve 对一个 C4 cluster 执行安全传播裁决（RUN=...）"
@@ -476,6 +478,16 @@ experiment-c410-docreader-pdf-smoke:
 # Usage: make experiment-c410-docreader-lifecycle [REPLICATES=1] [OUTPUT=experiments/comparisons/<run>]
 experiment-c410-docreader-lifecycle:
 	python3 scripts/experiments/run_winner_lifecycle_eval.py --matrix testdata/winner_lifecycle_corpus/docreader_fixture/winner_lifecycle_matrix.json --replicates "$(if $(REPLICATES),$(REPLICATES),1)" $(if $(OUTPUT),--output-dir "$(OUTPUT)")
+
+# Usage: make experiment-c410-synthetic-corpus OUTPUT=$HOME/weknora-private-corpus/synthetic-policy [DEV_FAMILIES=12] [HOLDOUT_FAMILIES=12] [VARIANT=c2-rules] [OVERWRITE=1]
+experiment-c410-synthetic-corpus:
+	@test -n "$(OUTPUT)" || (echo "Usage: make experiment-c410-synthetic-corpus OUTPUT=$$HOME/weknora-private-corpus/synthetic-policy"; exit 2)
+	python3 scripts/experiments/generate_winner_policy_corpus.py --output-dir "$(OUTPUT)" $(if $(DEV_FAMILIES),--development-families "$(DEV_FAMILIES)") $(if $(HOLDOUT_FAMILIES),--holdout-families "$(HOLDOUT_FAMILIES)") $(if $(VARIANT),--variant "$(VARIANT)") $(if $(OVERWRITE),--overwrite)
+
+# Usage: make experiment-c410-fact-eval MATRIX_RUN=experiments/comparisons/<matrix-run> [SPLIT=all|development|holdout] [OUTPUT=<dir>] [ALLOW_FAILED=1] [OVERWRITE=1]
+experiment-c410-fact-eval:
+	@test -n "$(MATRIX_RUN)" || (echo "Usage: make experiment-c410-fact-eval MATRIX_RUN=experiments/comparisons/<matrix-run>"; exit 2)
+	python3 scripts/experiments/score_winner_fact_families.py --matrix-run "$(MATRIX_RUN)" $(if $(SPLIT),--split "$(SPLIT)") $(if $(OUTPUT),--output-dir "$(OUTPUT)") $(if $(ALLOW_FAILED),--allow-failed) $(if $(OVERWRITE),--overwrite)
 
 experiment-c4:
 	python3 scripts/experiments/run_claims_eval.py \

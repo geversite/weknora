@@ -46,6 +46,7 @@ ADOPTION_RUNNER = ROOT / "scripts/experiments/run_winner_adoption.py"
 REOPEN_RUNNER = ROOT / "scripts/experiments/run_winner_reopen.py"
 VALID_OUTCOMES = {"adopt_reopen", "no_proposal"}
 VALID_VARIANTS = {"v1", "c1", "c2-rules", "c2-batch"}
+VALID_SPLITS = {"", "development", "holdout"}
 
 
 class LifecycleEvaluationError(RuntimeError):
@@ -118,6 +119,13 @@ def read_matrix(path: Path) -> dict[str, Any]:
         if not scenario or not scenario_path.is_file():
             raise LifecycleEvaluationError(f"matrix case {case_id} scenario 不存在: {scenario}")
         winner = str(raw_case.get("expected_winner_document", "")).strip()
+        fact_family_id = str(raw_case.get("fact_family_id", "")).strip()
+        split = str(raw_case.get("split", "")).strip()
+        case_type = str(raw_case.get("case_type", "")).strip()
+        if split not in VALID_SPLITS:
+            raise LifecycleEvaluationError(
+                f"matrix case {case_id} split 必须为 development/holdout（或留空），实际为 {split!r}",
+            )
         cycles = raw_case.get("adoption_cycles", 0)
         if outcome == "adopt_reopen":
             if not winner:
@@ -130,6 +138,9 @@ def read_matrix(path: Path) -> dict[str, Any]:
             cycles = 0
         normalized.append({
             "id": case_id,
+            "fact_family_id": fact_family_id,
+            "split": split,
+            "case_type": case_type,
             "scenario": str(scenario_path),
             "scenario_display": scenario,
             "expected_outcome": outcome,
@@ -405,6 +416,9 @@ def execute_case(
     clusters = as_int(metrics.get("observed_disputed_fact_count")) if isinstance(metrics, dict) else 0
     record = {
         "case_id": case["id"],
+        "fact_family_id": case.get("fact_family_id", ""),
+        "split": case.get("split", ""),
+        "case_type": case.get("case_type", ""),
         "replicate": replicate,
         "expected_outcome": case["expected_outcome"],
         "expected_winner_document": case["expected_winner_document"],
@@ -468,6 +482,7 @@ def summarize(records: list[dict[str, Any]], matrix: dict[str, Any], replicates:
         "matrix_name": matrix["name"],
         "replicates_requested": replicates,
         "case_definitions": len(matrix["cases"]),
+        "fact_family_definitions": len({str(item.get("fact_family_id") or item["id"]) for item in matrix["cases"]}),
         "case_executions": len(records),
         "passed_case_executions": sum(1 for item in records if item.get("passed")),
         "failed_case_executions": sum(1 for item in records if not item.get("passed")),
@@ -510,6 +525,7 @@ def write_summary_markdown(path: Path, matrix_id: str, matrix: dict[str, Any], s
         "# C4.9 winner lifecycle replicate matrix", "",
         f"- matrix run: `{matrix_id}`",
         f"- matrix: `{matrix['name']}`",
+        f"- fact-family definitions: `{summary.get('fact_family_definitions', summary['case_definitions'])}`",
         f"- independent replicates: `{summary['replicates_requested']}` (provider RNG seed is not controlled)",
         f"- pass rate: `{summary['passed_case_executions']}/{summary['case_executions']}`", "",
         "## Controlled policy metrics", "",
@@ -545,7 +561,7 @@ def write_summary_markdown(path: Path, matrix_id: str, matrix: dict[str, Any], s
 
 def write_review_csv(path: Path, records: list[dict[str, Any]]) -> None:
     fields = [
-        "case_id", "replicate", "scenario", "expected_outcome", "expected_winner_document",
+        "case_id", "fact_family_id", "split", "case_type", "replicate", "scenario", "expected_outcome", "expected_winner_document",
         "observed_winner_documents", "raw_conflict_count", "disputed_fact_count", "automation_pass",
         "artifact_dir", "reviewer_1_label", "reviewer_1_note", "reviewer_2_label", "reviewer_2_note",
         "adjudicated_label", "adjudicated_note",
@@ -558,6 +574,9 @@ def write_review_csv(path: Path, records: list[dict[str, Any]]) -> None:
             winners = ";".join(str(row.get("winner_document", "")) for row in item.get("winner_proposals", []))
             writer.writerow({
                 "case_id": item["case_id"],
+                "fact_family_id": item.get("fact_family_id", ""),
+                "split": item.get("split", ""),
+                "case_type": item.get("case_type", ""),
                 "replicate": item["replicate"],
                 "scenario": item["scenario"],
                 "expected_outcome": item["expected_outcome"],

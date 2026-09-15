@@ -48,6 +48,33 @@ integration/regression test；不能替代真实 corpus、双审阅或 holdout�
 `proposal precision/recall=1.0/1.0`、`lifecycle cycles=3/3`；独立 PDF claim smoke 为 `claims=1`。完整范围与限制见
 [`C4.10 Synthetic DocReader 二进制集成评估报告`](../../docs/冲突检测V2-C4.10-Synthetic-DocReader集成评估报告.md)。
 
+### 0.1 扩展 synthetic policy corpus（不使用真实文档）
+
+若需要比 4-case fixture 更广的 controlled policy coverage，可生成一个私有的、确定性 DOCX corpus：
+
+```bash
+CORPUS_ROOT="$HOME/weknora-private-corpus/synthetic-policy-v1"
+
+make experiment-c410-synthetic-corpus \
+  OUTPUT="$CORPUS_ROOT"
+
+make experiment-c410-plan \
+  CORPUS="$CORPUS_ROOT/corpus.json" \
+  OUTPUT="$CORPUS_ROOT/plan"
+```
+
+默认是 12 development + 12 holdout fact families、12 个 `adopt_reopen` 和 12 个 `no_proposal` case、64 份 DOCX。
+`fact_family_catalog.csv` 说明每个 case 的 metadata topology。先用 development 运行一次并冻结规则；再运行 holdout
+3 independent replicates，并使用：
+
+```bash
+make experiment-c410-fact-eval MATRIX_RUN="$CORPUS_ROOT/runs/holdout-r3"
+```
+
+生成 C4.6 与 `latest_upload` / `date_only` / `version_only` / `raw_c3_local_vote` 的事实家族级对照。生成语料的事实 subject
+在两个 split 间不复用，但句法框架刻意简单，因此它仍只是 controlled synthetic policy evaluation。完整规范见
+[`C4.10 扩展 Synthetic Policy 语料技术设计`](../../docs/冲突检测V2-C4.10-扩展SyntheticPolicy技术设计.md)。
+
 ## 1. 什么时候达到论文可写程度？
 
 可以**现在开始写论文草稿**的引言、问题定义、架构、C1/C2 成本消融和 C4.6–C4.9 controlled evidence；但在

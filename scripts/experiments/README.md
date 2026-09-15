@@ -492,6 +492,52 @@ make experiment-c410-docreader-lifecycle REPLICATES=1
 
 这些是 controlled synthetic integration fixtures，绝不能作为真实语料、人工审阅或外部泛化指标。
 
+### C4.10 扩展 synthetic policy corpus（development / holdout）
+
+若当前目标是扩展**受控 policy coverage**而不是清洗真实文档，可自动生成 12 development + 12 holdout 的虚构 DOCX
+事实家族（默认 64 个 source 文件）：
+
+```bash
+CORPUS_ROOT="$HOME/weknora-private-corpus/synthetic-policy-v1"
+
+make experiment-c410-synthetic-corpus \
+  OUTPUT="$CORPUS_ROOT"
+
+make experiment-c410-plan \
+  CORPUS="$CORPUS_ROOT/corpus.json" \
+  OUTPUT="$CORPUS_ROOT/plan"
+```
+
+生成器覆盖同 issuer winner、乱序上传、date-only、version-only、cross issuer、mixed issuer、metadata missing、
+direction disagreement、tie 与 interval overlap。每个 case 是一个明确的 fact family；development/holdout 不复用
+subject、family ID 或 document path。它仍保留刻意简单的受控句法，不能称为现实语义泛化。默认 24 个 families；若需要
+30-family controlled pilot，可传 `DEV_FAMILIES=15 HOLDOUT_FAMILIES=15`（每个 split 最多 20）。
+
+先只跑 development 一次；修复问题并冻结代码/模型/metadata policy 后才跑 holdout：
+
+```bash
+python3 scripts/experiments/run_winner_lifecycle_eval.py \
+  --matrix "$CORPUS_ROOT/plan/winner_lifecycle_matrix.development.json" \
+  --replicates 1 \
+  --output-dir "$CORPUS_ROOT/runs/development-r1"
+
+python3 scripts/experiments/run_winner_lifecycle_eval.py \
+  --matrix "$CORPUS_ROOT/plan/winner_lifecycle_matrix.holdout.json" \
+  --replicates 3 \
+  --output-dir "$CORPUS_ROOT/runs/holdout-r3"
+```
+
+对任一完成的 matrix，生成 fact-family 级 baseline 报告：
+
+```bash
+make experiment-c410-fact-eval \
+  MATRIX_RUN="$CORPUS_ROOT/runs/holdout-r3"
+```
+
+它输出 C4.6、`latest_upload`、`date_only`、`version_only`、`raw_c3_local_vote` 的 execution-level 与
+strict-all-replicates fact-family 指标、replicate stability、cluster 形状和 cascade 成本。完整设计见
+[C4.10 扩展 Synthetic Policy 语料技术设计](../../docs/冲突检测V2-C4.10-扩展SyntheticPolicy技术设计.md)。
+
 ### C4.10 真实语料 corpus / holdout plan
 
 若真实文档已集中在一个目录，先不移动、不上传，做 filename/hash inventory：
