@@ -44,6 +44,10 @@ make experiment-c410-docreader-lifecycle REPLICATES=1
 后者在新临时 KB 中执行 1 个 adopt→reopen 正例以及 3 个拒绝 winner 的负例。此 fixture 仅用于 binary-file
 integration/regression test；不能替代真实 corpus、双审阅或 holdout，也不能报告为真实业务文档准确率。
 
+已记录的真实服务结果（2026-09-15）：DOCX lifecycle matrix 3 independent replicates 为 `12/12`，
+`proposal precision/recall=1.0/1.0`、`lifecycle cycles=3/3`；独立 PDF claim smoke 为 `claims=1`。完整范围与限制见
+[`C4.10 Synthetic DocReader 二进制集成评估报告`](../../docs/冲突检测V2-C4.10-Synthetic-DocReader集成评估报告.md)。
+
 ## 1. 什么时候达到论文可写程度？
 
 可以**现在开始写论文草稿**的引言、问题定义、架构、C1/C2 成本消融和 C4.6–C4.9 controlled evidence；但在

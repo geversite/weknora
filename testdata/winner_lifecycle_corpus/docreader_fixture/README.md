@@ -18,6 +18,10 @@ multipart HTTP file upload → DocReader → Asynq → claims → conflicts → 
 
 It is **not** a real corpus, a substitute for real-document review, a human-label study, or evidence of external generalization.
 
+## Recorded real-service result
+
+On 2026-09-15, the DOCX lifecycle matrix completed 3 independent replicates with `12/12` passing case executions, controlled proposal precision/recall `1.0 / 1.0`, and lifecycle cycles `3/3`. A separate PDF claim smoke completed with `claims=1`. See [the C4.10 integration report](../../../docs/冲突检测V2-C4.10-Synthetic-DocReader集成评估报告.md) for exact run identifiers and scope limitations.
+
 ## Contents
 
 - `docs/`: 9 DOCX core lifecycle files and 1 standalone PDF claim-smoke file; no private content.

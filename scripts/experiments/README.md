@@ -486,6 +486,10 @@ C4.6/C4.7/C4.8 binary-file lifecycle 时再执行：
 make experiment-c410-docreader-lifecycle REPLICATES=1
 ```
 
+已记录的真实服务结果：DOCX lifecycle fixture 3 independent replicates 为 `12/12`，
+`proposal precision/recall=1.0/1.0`、`lifecycle cycles=3/3`；独立 PDF claim smoke 为 `claims=1`。详情见
+[C4.10 Synthetic DocReader 二进制集成评估报告](../../docs/冲突检测V2-C4.10-Synthetic-DocReader集成评估报告.md)。
+
 这些是 controlled synthetic integration fixtures，绝不能作为真实语料、人工审阅或外部泛化指标。
 
 ### C4.10 真实语料 corpus / holdout plan
