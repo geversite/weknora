@@ -223,7 +223,15 @@ def validate_detector(
     case: dict[str, Any],
     detector_step: dict[str, Any],
     issues: list[str],
-) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None, bool]:
+    """Validate detector evidence and report whether proposal policy is scoreable.
+
+    Action verification later in execute_case may fail independently of a
+    complete detector artifact. The policy confusion matrix must therefore use
+    this explicit detector-evaluable flag rather than treating an absent
+    proposal list from a failed negative case as a correct abstention.
+    """
+    issue_count_before = len(issues)
     manifest = read_artifact(detector_dir / "manifest.json", issues, "detector manifest")
     metrics = read_artifact(detector_dir / "metrics.json", issues, "detector metrics")
     if detector_step.get("exit_code") != 0:
@@ -231,7 +239,7 @@ def validate_detector(
     if not manifest or manifest.get("status") != "completed":
         issues.append(f"detector manifest status={manifest.get('status') if manifest else None}, expected completed")
     if not metrics:
-        return manifest, metrics
+        return manifest, metrics, False
     if metrics.get("missing_expected_conflict_document_pairs"):
         issues.append("detector missed expected conflict document pair(s)")
     if metrics.get("observed_forbidden_conflict_pairs"):
@@ -253,7 +261,7 @@ def validate_detector(
             issues.append(f"winner document expected={case['expected_winner_document']}, observed={winners}")
     elif winners:
         issues.append(f"no-proposal case unexpectedly produced winner(s): {winners}")
-    return manifest, metrics
+    return manifest, metrics, len(issues) == issue_count_before
 
 
 def validate_adoption(artifact: dict[str, Any] | None, issues: list[str], cycle: int) -> str:
@@ -338,7 +346,7 @@ def execute_case(
         "--run-id", run_id, "--output", str(detector_dir),
     ]
     steps.append(invoke("detector", detector_command, case_dir / "detector_output.txt", env))
-    manifest, metrics = validate_detector(detector_dir, case, steps[-1], issues)
+    manifest, metrics, detector_policy_evaluable = validate_detector(detector_dir, case, steps[-1], issues)
 
     action_artifacts: list[dict[str, Any]] = []
     if metrics is not None and steps[-1].get("exit_code") == 0:
@@ -429,9 +437,10 @@ def execute_case(
         "detector_dir": str(detector_dir),
         "detector_manifest_status": manifest.get("status") if isinstance(manifest, dict) else "",
         "detector_exit_code": steps[0].get("exit_code"),
+        "detector_policy_evaluable": detector_policy_evaluable,
         "raw_conflict_count": raw_conflicts,
         "disputed_fact_count": clusters,
-        "dead_letter_count": as_int(metrics.get("dead_letter_count")) if isinstance(metrics, dict) else 0,
+        "dead_letter_count": as_int(metrics.get("dead_letter_count")) if isinstance(metrics, dict) else None,
         "winner_proposals": winners if isinstance(winners, list) else [],
         "action_artifacts": action_artifacts,
         "steps": steps,
@@ -449,35 +458,53 @@ def ratio(numerator: int, denominator: int) -> float | None:
 def summarize(records: list[dict[str, Any]], matrix: dict[str, Any], replicates: int) -> dict[str, Any]:
     expected_positive = [item for item in records if item["expected_outcome"] == "adopt_reopen"]
     expected_negative = [item for item in records if item["expected_outcome"] == "no_proposal"]
+    evaluable_records = [item for item in records if item.get("detector_policy_evaluable")]
+    unevaluable_records = [item for item in records if not item.get("detector_policy_evaluable")]
     tp = fp = fn = tn = 0
     cycle_expected = cycle_passed = 0
     raw_counts: list[int] = []
-    dead_letter_counts: list[int] = []
+    known_dead_letter_counts: list[int] = []
+    unknown_dead_letter_count = 0
     for item in records:
-        winners = item.get("winner_proposals", [])
-        predicted = bool(winners)
-        correct_winner = predicted and len(winners) == 1 and \
-            str(winners[0].get("winner_document", "")) == item["expected_winner_document"]
+        # Lifecycle side-effect coverage is separate from detector proposal
+        # scoring. A detector can be valid while a later adoption/reopen check
+        # fails, and a missing detector artifact must never look like a clean
+        # no-proposal negative.
         if item["expected_outcome"] == "adopt_reopen":
-            if correct_winner:
-                tp += 1
-            else:
-                fn += 1
-                if predicted:
-                    fp += 1
             expected = int(item["adoption_cycles_expected"])
             cycle_expected += expected
             cycle_passed += sum(
                 1 for artifact in item.get("action_artifacts", [])
                 if artifact.get("passed")
             )
-        elif predicted:
-            fp += 1
-        else:
-            tn += 1
+
+        if item.get("detector_policy_evaluable"):
+            winners = item.get("winner_proposals", [])
+            predicted = bool(winners)
+            correct_winner = predicted and len(winners) == 1 and \
+                str(winners[0].get("winner_document", "")) == item["expected_winner_document"]
+            if item["expected_outcome"] == "adopt_reopen":
+                if correct_winner:
+                    tp += 1
+                else:
+                    fn += 1
+                    if predicted:
+                        fp += 1
+            elif predicted:
+                fp += 1
+            else:
+                tn += 1
+
         if item.get("raw_conflict_count"):
             raw_counts.append(int(item["raw_conflict_count"]))
-        dead_letter_counts.append(as_int(item.get("dead_letter_count")))
+        if item.get("dead_letter_count") is None:
+            unknown_dead_letter_count += 1
+        else:
+            known_dead_letter_counts.append(as_int(item.get("dead_letter_count")))
+
+    conditional_precision = ratio(tp, tp + fp)
+    conditional_recall = ratio(tp, tp + fn)
+    proposal_complete = len(evaluable_records) == len(records)
     return {
         "matrix_name": matrix["name"],
         "replicates_requested": replicates,
@@ -490,13 +517,25 @@ def summarize(records: list[dict[str, Any]], matrix: dict[str, Any], replicates:
         "proposal_policy_matrix": {
             "expected_positive": len(expected_positive),
             "expected_no_proposal": len(expected_negative),
+            "evaluable_execution_count": len(evaluable_records),
+            "unevaluable_execution_count": len(unevaluable_records),
+            "complete": proposal_complete,
             "true_positive": tp,
             "true_negative": tn,
             "false_positive": fp,
             "false_negative": fn,
-            "precision": ratio(tp, tp + fp),
-            "recall": ratio(tp, tp + fn),
-            "note": "Controlled scenario policy metric; not a real-corpus or human-review accuracy estimate.",
+            # A complete matrix can retain the historic simple fields. For an
+            # incomplete matrix, null prevents a failed no-proposal detector
+            # from being silently counted as a correct TN.
+            "precision": conditional_precision if proposal_complete else None,
+            "recall": conditional_recall if proposal_complete else None,
+            "conditional_precision": conditional_precision,
+            "conditional_recall": conditional_recall,
+            "note": (
+                "Controlled scenario policy metric; not a real-corpus or human-review accuracy estimate. "
+                "precision/recall are null when one or more detector executions are unevaluable; "
+                "conditional_* is shown only for the completed detector subset."
+            ),
         },
         "lifecycle_cycles": {
             "expected": cycle_expected,
@@ -511,10 +550,15 @@ def summarize(records: list[dict[str, Any]], matrix: dict[str, Any], replicates:
             "note": "Raw chunk-pair count may vary between independent executions; fact-level assertions are the primary unit.",
         },
         "dead_letter_count": {
-            "observations": len(dead_letter_counts),
-            "total": sum(dead_letter_counts),
-            "max": max(dead_letter_counts) if dead_letter_counts else None,
-            "all_zero": all(value == 0 for value in dead_letter_counts),
+            "observations": len(known_dead_letter_counts),
+            "unknown_observations": unknown_dead_letter_count,
+            "total": sum(known_dead_letter_counts),
+            "max": max(known_dead_letter_counts) if known_dead_letter_counts else None,
+            "all_zero": (
+                bool(known_dead_letter_counts)
+                and unknown_dead_letter_count == 0
+                and all(value == 0 for value in known_dead_letter_counts)
+            ),
         },
         "seed_control": "none; independent replicates only",
     }
@@ -562,7 +606,7 @@ def write_summary_markdown(path: Path, matrix_id: str, matrix: dict[str, Any], s
 def write_review_csv(path: Path, records: list[dict[str, Any]]) -> None:
     fields = [
         "case_id", "fact_family_id", "split", "case_type", "replicate", "scenario", "expected_outcome", "expected_winner_document",
-        "observed_winner_documents", "raw_conflict_count", "disputed_fact_count", "automation_pass",
+        "observed_winner_documents", "raw_conflict_count", "disputed_fact_count", "detector_policy_evaluable", "automation_pass",
         "artifact_dir", "reviewer_1_label", "reviewer_1_note", "reviewer_2_label", "reviewer_2_note",
         "adjudicated_label", "adjudicated_note",
     ]
@@ -584,6 +628,7 @@ def write_review_csv(path: Path, records: list[dict[str, Any]]) -> None:
                 "observed_winner_documents": winners,
                 "raw_conflict_count": item["raw_conflict_count"],
                 "disputed_fact_count": item["disputed_fact_count"],
+                "detector_policy_evaluable": "yes" if item.get("detector_policy_evaluable") else "no",
                 "automation_pass": "yes" if item.get("passed") else "no",
                 "artifact_dir": item["detector_dir"],
                 "reviewer_1_label": "",
@@ -689,7 +734,15 @@ def main() -> int:
 
         print(f"C4.9 lifecycle matrix complete: {output_dir}")
         print(f"  case executions: {summary['passed_case_executions']}/{summary['case_executions']}")
-        print(f"  controlled proposal precision/recall: {summary['proposal_policy_matrix']['precision']} / {summary['proposal_policy_matrix']['recall']}")
+        policy = summary["proposal_policy_matrix"]
+        if policy["complete"]:
+            print(f"  controlled proposal precision/recall: {policy['precision']} / {policy['recall']}")
+        else:
+            print(
+                "  controlled proposal precision/recall: INCOMPLETE "
+                f"(evaluable={policy['evaluable_execution_count']}/{summary['case_executions']}; "
+                f"conditional={policy['conditional_precision']} / {policy['conditional_recall']})"
+            )
         print(f"  lifecycle cycles: {summary['lifecycle_cycles']['fully_passing_case_cycles']}/{summary['lifecycle_cycles']['expected']}")
         return 0 if summary["failed_case_executions"] == 0 else 2
     except LifecycleEvaluationError as exc:
