@@ -368,10 +368,12 @@ HTTP `409` / no mutation。C4.6 proposal 在 reopen 后保留，winner chunk 始
 
 ---
 
-## 12. C4.9：lifecycle independent replicate matrix（已实现，待运行）
+## 12. C4.9：lifecycle independent replicate matrix（已冻结，controlled evidence）
 
 C4.9 的 controlled policy matrix 见
-[C4.9 生命周期重复实验技术设计](冲突检测V2-C4.9-生命周期重复实验技术设计.md)。它顺序驱动
+[C4.9 生命周期重复实验技术设计](冲突检测V2-C4.9-生命周期重复实验技术设计.md)。正式 5-case × 3 matrix 已完成
+`15/15` case executions、`9/9` lifecycle cycles；2026-09-16 后验查询确认 15 个 detector artifacts 的
+`dead_letter_count=0`。评估报告见 [C4.9 Winner Lifecycle 多 Replicate 评估报告](冲突检测V2-C4.9-生命周期重复实验评估报告.md)。它顺序驱动
 C4.6 proposal、C4.7 durable adoption 和 C4.8 reopen，并对 ordered/out-of-order triplet、cross issuer、
 date/version direction disagreement、tie 做独立 replicate。每次执行使用 fresh temporary KB 和真实
 HTTP/Asynq/PostgreSQL 路径。
@@ -385,8 +387,9 @@ make experiment-c49 REPLICATES=3
 ```
 
 C4.10 已提供真实语料的 fact-family development/holdout split guard、scenario/matrix generator 和双 blind
-reviewer sheets；详见 [C4.10 真实版本语料与双审阅协议](../testdata/winner_lifecycle_corpus/README.md)。它不
-引入新的自动裁决或 wiki side effect。
+reviewer sheets；同时已完成 24-family controlled synthetic development/holdout policy evaluation（development 12/12；
+holdout R=3 为 36/36）。详见 [C4.10 真实版本语料与双审阅协议](../testdata/winner_lifecycle_corpus/README.md) 和
+[C4.10 扩展 Synthetic Policy 评估报告](冲突检测V2-C4.10-扩展SyntheticPolicy评估报告.md)。它不引入新的自动裁决或 wiki side effect。
 
 ---
 
@@ -399,8 +402,9 @@ reviewer sheets；详见 [C4.10 真实版本语料与双审阅协议](../testdat
 3. 一个 raw chunk pair 若自身含多条矛盾事实，当前旧格式仍只携带一个 final verdict，C4 无法
    从中无损拆分；未来应在 candidate / verdict 层持久化细粒度 claim evidence；
 4. C4.7/C4.8 已冻结 exact `claim_key` 的显式 proposal adoption 与同一 durable adoption 的 precise
-   revoke/reopen。C4.9 的 15/15 controlled policy replicate matrix 已通过，待 dead-letter 后验确认，且它
-   不能替代真实语料/双审阅 holdout。C4.10 的 corpus/holdout protocol 已就绪但尚未接入真实数据。
+   revoke/reopen。C4.9 的 15/15 controlled policy replicate matrix、9/9 cycles 和 15 × dead_letter=0 已冻结，且它
+   不能替代真实语料/双审阅 holdout。C4.10 已完成 synthetic binary integration 与 24-family controlled
+   development/holdout policy evaluation，但仍未接入真实外部数据。
    `fuzzy_slot` / `document_singleton` / `chunk_pair` 的 adoption/reopen、winner 并列、wiki 写回和 agent
    叙事整合仍未实现。reopen 后可以重新走 C4.7 的显式采纳，但没有自动再采纳。所有 winner 行为仍必须
    使用全局 winner，而不是 raw A/B 方向。

@@ -456,8 +456,9 @@ make experiment-c49-review REVIEW=experiments/comparisons/<c49-run>/winner_lifec
 ```
 
 默认 controlled policy matrix 的 P/R 只能描述已标注场景的 policy/integration correctness，不能称为真实语料
-泛化或人类准确率。review summary 也不会把空白、uncertain 或 reviewer disagreement 偷偷计为正确。详见
-[C4.9 生命周期重复实验技术设计](../../docs/冲突检测V2-C4.9-生命周期重复实验技术设计.md)。
+泛化或人类准确率。review summary 也不会把空白、uncertain 或 reviewer disagreement 偷偷计为正确。正式默认 matrix
+已完成 `15/15`、`9/9` lifecycle cycles，并由后验查询确认 `15 × dead_letter_count=0`；详见
+[C4.9 Winner Lifecycle 多 Replicate 评估报告](../../docs/冲突检测V2-C4.9-生命周期重复实验评估报告.md)。
 
 ### C4.10 synthetic PDF/DOCX fixture（先验通路检查）
 
