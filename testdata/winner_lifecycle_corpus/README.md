@@ -71,9 +71,12 @@ make experiment-c410-plan \
 make experiment-c410-fact-eval MATRIX_RUN="$CORPUS_ROOT/runs/holdout-r3"
 ```
 
-生成 C4.6 与 `latest_upload` / `date_only` / `version_only` / `raw_c3_local_vote` 的事实家族级对照。生成语料的事实 subject
-在两个 split 间不复用，但句法框架刻意简单，因此它仍只是 controlled synthetic policy evaluation。完整规范见
-[`C4.10 扩展 Synthetic Policy 语料技术设计`](../../docs/冲突检测V2-C4.10-扩展SyntheticPolicy技术设计.md)。
+生成 C4.6 与 `latest_upload` / `date_only` / `version_only` / `raw_c3_local_vote` 的事实家族级对照。默认 corpus 已在
+真实服务上完成 development `12/12` 与 holdout `36/36`（3 independent replicates）；完整 holdout 的 C4.6 accuracy/unsafe 为
+`1.000 / 0`，raw C3 local vote 为 `0.833 / 2`。生成语料的事实 subject 在两个 split 间不复用，但句法框架刻意简单，因此它
+仍只是 controlled synthetic policy evaluation。完整规范与结果见
+[`C4.10 扩展 Synthetic Policy 技术设计`](../../docs/冲突检测V2-C4.10-扩展SyntheticPolicy技术设计.md) 和
+[`C4.10 扩展 Synthetic Policy 评估报告`](../../docs/冲突检测V2-C4.10-扩展SyntheticPolicy评估报告.md)。
 
 ## 1. 什么时候达到论文可写程度？
 

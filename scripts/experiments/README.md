@@ -535,8 +535,13 @@ make experiment-c410-fact-eval \
 ```
 
 它输出 C4.6、`latest_upload`、`date_only`、`version_only`、`raw_c3_local_vote` 的 execution-level 与
-strict-all-replicates fact-family 指标、replicate stability、cluster 形状和 cascade 成本。完整设计见
-[C4.10 扩展 Synthetic Policy 语料技术设计](../../docs/冲突检测V2-C4.10-扩展SyntheticPolicy技术设计.md)。
+strict-all-replicates fact-family 指标、replicate stability、cluster 形状和 cascade 成本。默认 corpus 的真实服务结果为：
+
+development `12/12`，完整 holdout `12 families × 3 = 36/36`、`18/18` lifecycle cycles、有效 detector dead letters 为零。
+在该构造 policy holdout 上，C4.6 fact-family accuracy 为 `1.000` / unsafe actions `0`；raw C3 local vote 为 `0.833` / `2`，
+date-only/version-only 为 `0.667` / `3`，latest-upload 为 `0.167` / `6`。完整设计与范围见
+[C4.10 扩展 Synthetic Policy 语料技术设计](../../docs/冲突检测V2-C4.10-扩展SyntheticPolicy技术设计.md) 和
+[C4.10 扩展 Synthetic Policy 评估报告](../../docs/冲突检测V2-C4.10-扩展SyntheticPolicy评估报告.md)。
 
 ### C4.10 真实语料 corpus / holdout plan
 
