@@ -79,7 +79,15 @@ The build runs:
 latexmk -pdf -shell-escape -interaction=nonstopmode main.tex
 ```
 
-Without pre-rendered PDFs, `svg` invokes Inkscape under shell escape. If the venue forbids shell escape, run `make figures CONVERT_PDF=1` first; `main.tex` automatically prefers `figures/<name>.pdf` when present.
+Without pre-rendered PDFs, `svg` invokes Inkscape under shell escape. If the venue or build environment forbids shell escape, first render and stage PDFs, then disable the flag explicitly; `main.tex` automatically prefers `figures/<name>.pdf` when present:
+
+```bash
+make figures \\
+  FIGURE_SOURCE="$HOME/weknora-paper-assets/conflict-v2-figures" \\
+  CONVERT_PDF=1
+
+make pdf SHELL_ESCAPE=0
+```
 
 ## 4. Before venue submission
 
