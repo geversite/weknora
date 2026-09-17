@@ -1,0 +1,335 @@
+% WeKnora Conflict Detection V2 -- IEEE conference-format manuscript draft.
+% Build from this directory:
+%   make figures FIGURE_SOURCE=$HOME/weknora-paper-assets/conflict-v2-figures
+%   make pdf
+% The default author block is anonymous. Update it only after selecting a venue.
+
+\documentclass[conference]{IEEEtran}
+
+\usepackage{cite}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{svg}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{url}
+\usepackage{array}
+\usepackage{balance}
+
+\hypersetup{hidelinks}
+\svgpath{{figures/}}
+
+\newcommand{\sys}{\textsc{WeKnora}}
+\newcommand{\claimkey}{\textit{claim key}}
+\newcommand{\disputedfact}{\textit{DisputedFact}}
+\newcommand{\proposal}{\textit{winner proposal}}
+\newcommand{\adoption}{\textit{adoption}}
+\newcommand{\reopen}{\textit{reopen}}
+\newcommand{\rawconflict}{\textit{raw conflict}}
+
+% Prefer a staged PDF if it exists; otherwise let the svg package invoke
+% Inkscape under -shell-escape. See paper/ieee/README.md for both paths.
+\newcommand{\conflictfigure}[2]{%
+  \IfFileExists{figures/#1.pdf}{%
+    \includegraphics[#2]{figures/#1.pdf}%
+  }{%
+    \includesvg[#2]{figures/#1}%
+  }%
+}
+
+\newif\ifanonymous
+\anonymoustrue
+% \anonymousfalse % Enable only for a camera-ready version.
+
+\title{From Chunk-Pair Conflicts to Reversible Fact-Level Governance in Versioned Knowledge Bases}
+
+\ifanonymous
+\author{\IEEEauthorblockN{Anonymous Author(s)}
+\IEEEauthorblockA{Paper under anonymous review}}
+\else
+\author{\IEEEauthorblockN{Author Name}
+\IEEEauthorblockA{Department / Institution\\
+City, Country\\
+email@example.edu}}
+\fi
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Versioned knowledge bases are commonly maintained through chunk retrieval and chunk-pair conflict detection. Yet an individual conflict pair cannot naturally represent a dispute shared by multiple sources, nor can its local A/B direction be safely promoted to a global governance action. We present \sys{} Conflict Detection V2, a fact-level conflict-governance prototype for versioned, multi-source knowledge bases. The system extracts atomic claims with source quotes, combines exact claim keys with semantic fallback candidates, and applies a rule-plus-grounded-LLM cascade for conflict adjudication. Raw chunk-pair conflicts are projected into \disputedfact{}s. A global \proposal{} is produced only when every source carries explicit and mutually consistent issuer, date, and version evidence. Proposals are advisory: \adoption{} requires an explicit snapshot-bound request, while a durable record enables a precise \reopen{} operation. In a live environment with HTTP APIs, DocReader, Asynq, PostgreSQL, and configured models, C2-B4 reduced LLM calls from 48 to 9 relative to C1. A controlled lifecycle matrix completed 15/15 case executions and 9/9 adoption--reopen cycles with zero dead letters across 15 detector artifacts. In an expanded synthetic development/holdout policy corpus, the held-out matrix completed 36/36 executions and 18/18 lifecycle cycles. The global proposal policy achieved 1.000 controlled fact-family accuracy with zero unsafe actions, while simple recency and local-vote baselines produced unsafe proposals. These findings establish controlled integration and safety evidence, not real-document generalization, human-review accuracy, or seed-controlled causal claims.
+\end{abstract}
+
+\begin{IEEEkeywords}
+knowledge-base governance, conflict detection, claim extraction, fact clustering, versioned documents, reversible decisions
+\end{IEEEkeywords}
+
+\section{Introduction}
+\label{sec:introduction}
+
+Knowledge bases continuously absorb new documents, revised policies, manuals, and pages. A single business rule may consequently appear in several sources with different values, dates, scopes, or status. Most retrieval-oriented systems can surface such sources together, but they provide little structure for deciding whether the disagreement is one repeated fact-level dispute or several independent conflicts. A chunk-pair representation is particularly problematic when three or more sources disagree: it multiplies pairwise alerts and obscures the single fact a reviewer actually needs to examine.
+
+A second problem is safety. A local pair may suggest that source $A$ is newer than $B$, but this does not imply that $A$ is the global winner among $A$, $B$, and $C$. Sources can have different issuers, missing metadata, overlapping date intervals, tied versions, or inconsistent date/version directions. Turning a local direction directly into a chunk-disable action risks hiding a still-relevant source. This problem is related to multi-source truth discovery and data fusion, which study conflicting observations and source reliability \cite{yin2008truth,li2016truthsurvey,dong2013datafusion,dong2014knowledgevault}; however, versioned document governance requires a distinct safety boundary. The system should not silently declare a document value to be a real-world truth, nor should a probabilistic or pairwise judgment automatically mutate the knowledge base.
+
+We present \sys{} Conflict Detection V2, a research prototype for fact-level, reversible conflict governance. Figure~\ref{fig:architecture} summarizes the design. The system extracts claims with evidence quotes, generates candidates through an exact \claimkey{} channel and a semantic fallback channel, and adjudicates conflicts using a conservative rule-plus-grounded-LLM cascade. It then clusters raw chunk-pair conflicts into \disputedfact{}s. A global \proposal{} is emitted only if all sources in a cluster satisfy explicit issuer/date/version consistency conditions. The proposal is advisory; a subsequent \adoption{} must explicitly echo a current proposal snapshot. A durable record captures the affected members and chunks, so a \reopen{} can restore exactly the recorded targets.
+
+Our contributions are as follows:
+\begin{enumerate}
+    \item \textbf{Claim-aware candidate generation and cascade adjudication.} We integrate atomic claim extraction, exact claim-key candidates, uncovered-chunk fallback, conservative rules, and grounded batch LLM verification.
+    \item \textbf{Fact-level conflict projection.} We project raw chunk-pair conflicts into \disputedfact{}s using exact and deliberately conservative fallback anchors.
+    \item \textbf{Explicit and reversible winner governance.} We separate advisory global proposals from snapshot-bound adoption, and support durable, precise reopen rather than inferred rollback.
+    \item \textbf{Real-service controlled evaluation.} We report C2 cost ablation, C4 lifecycle safety experiments, binary DocReader integration, and a fact-family development/holdout policy evaluation with simple baselines.
+\end{enumerate}
+
+\begin{figure*}[t]
+    \centering
+    \conflictfigure{fig1_system_architecture}{width=0.98\textwidth}
+    \caption{\sys{} Conflict Detection V2. Claims are extracted from documents and Wiki pages, passed through exact and fallback candidate channels, adjudicated by C2, and projected from raw chunk-pair conflicts to fact-level \disputedfact{}s. C4.6 proposals are advisory; C4.7 adoption and C4.8 reopen are explicit, durable, and reversible.}
+    \label{fig:architecture}
+\end{figure*}
+
+\section{Problem Formulation and Safety Invariants}
+\label{sec:problem}
+
+\subsection{Claims, Raw Conflicts, and Disputed Facts}
+
+For a document chunk $x$, the system extracts an atomic claim
+\begin{equation}
+    c=(s,p,v,q,e),
+\end{equation}
+where $s$ is a subject, $p$ is a stable predicate, $v$ is a value, $q$ contains qualifiers, and $e$ is a quote traceable to source text. The normalized pair $(s,p)$ defines an exact \claimkey{}:
+\begin{equation}
+    key(c)=\operatorname{normalize}(s,p).
+\end{equation}
+
+A \rawconflict{} links two chunk or claim evidence items. It remains useful as detection evidence, but is not the final governance unit. A \disputedfact{} aggregates compatible raw members:
+\begin{equation}
+    f=(k,S,V,R),
+\end{equation}
+where $k$ is a fact anchor, $S$ is the source set, $V$ is the candidate-value set, and $R$ is the raw-member set. Exact claim keys are preferred; fuzzy-slot, document-singleton, and chunk-pair anchors are deliberately more conservative.
+
+\subsection{Global Winner Proposal}
+
+Let a source document $d\in S$ have a metadata snapshot
+\begin{equation}
+    m(d)=(issuer(d),date(d),version(d)).
+\end{equation}
+The system proposes a winner $d^*$ only if: (i) every source has a parseable metadata snapshot; (ii) all normalized issuers match; (iii) each available date/version signal is comparable and the directions agree when both exist; (iv) $d^*$ is strictly newer than every other source; and (v) the strict maximum is unique:
+\begin{equation}
+    \exists!d^*\in S,\quad \forall d\in S\setminus\{d^*\}:d^*\succ d.
+\end{equation}
+
+Missing metadata, issuer mismatch, interval overlap, version ties, and direction disagreement yield abstention. This differs from truth-discovery methods that estimate source reliability or select a likely truth across many observations \cite{yin2008truth,li2016truthsurvey}: our proposal is a constrained document-version governance recommendation, not an automated declaration of truth.
+
+\subsection{Explicit Adoption and Durable Reopen}
+
+A proposal has no side effect. An \adoption{} request must supply the \disputedfact{} identifier, expected winner, proposal version, proposal timestamp, source count, and an optional audit note. The server re-checks the proposal under a transaction, locks the fact, raw members, and chunks, and rejects stale or partial state with HTTP~409.
+
+A successful adoption sets member conflicts to \texttt{resolved\_global\_winner}, leaves winner chunks enabled, disables loser chunks, and writes a durable adoption record. A \reopen{} request must refer to the current active durable record and fact snapshot. It re-enables only the recorded targets that still match ownership and state preconditions; otherwise it fails closed. Figure~\ref{fig:lifecycle} illustrates why local pair direction is not used as a global action instruction.
+
+\begin{figure*}[t]
+    \centering
+    \conflictfigure{fig2_fact_lifecycle}{width=0.96\textwidth}
+    \caption{Three version sources may produce three raw pair conflicts but one \disputedfact{}. A global proposal requires all-source metadata consistency. Adoption and reopen are explicit operations; missing metadata, issuer mismatch, or ties lead to no proposal and no mutation.}
+    \label{fig:lifecycle}
+\end{figure*}
+
+\section{System Design}
+\label{sec:design}
+
+\subsection{C1: Claim Extraction and Dual-Channel Candidates}
+
+After document processing, a claim-extraction task persists claims containing subject, predicate, value, qualifiers, value normalization, and source quote. The exact channel pairs claims with the same key. A chunk is considered covered only when \emph{every} usable claim has a valid exact-key counterpart; otherwise it remains eligible for semantic HybridSearch fallback. This rule preserves recall when one chunk contains both an exact match and an unmatched fact.
+
+The extraction task acts as a barrier before document conflict detection. Thus, the processing order is document parsing $\rightarrow$ claim extraction $\rightarrow$ conflict detection, avoiding races in which a detector observes incomplete claims.
+
+\subsection{C2: Conservative Rules and Grounded LLM Adjudication}
+
+C2 classifies candidates as \texttt{no\_conflict}, direct \texttt{fact\_contradiction}, or \texttt{needs\_llm}. Exact keys with compatible units, equivalent qualifiers, and unequal numbers can be resolved directly. Ambiguous dates, text values, unequal qualifiers, incompatible units, and fallback candidates are passed to a grounded LLM prompt. Batch responses must contain a structured verdict and evidence quotes that can be located in the original chunks; malformed or ungrounded positive results are retried or verified through a single-pair path.
+
+This design is related to claim verification and NLI, where a claim is assessed against evidence \cite{thorne2018fever,wadden2020scifact,bowman2015snli,williams2018multinli}. Unlike conventional fact verification, the objective here is not to label a claim as objectively true or false. It is to create an auditable conflict record that can later be governed safely across document versions.
+
+\subsection{C4: Fact-Level Clustering}
+
+Every final raw conflict receives a fact anchor before persistence. The clusterer performs an idempotent upsert by $(tenant,KB,fact\_key)$ and maintains raw-member IDs, candidate values, source references, conflict counts, and pending counts. The conservative fallback anchors intentionally avoid unsafe cross-chunk merging when provenance is incomplete.
+
+\subsection{C3/C4.6: Pair Suggestions versus Global Proposals}
+
+C3 parses only explicit title/header issuer, effective-date, and version labels. It may attach a pair-level advisory direction, but C4.6 recomputes a proposal over the full source set of the \disputedfact{}. Hence, a directional suggestion on $A\leftrightarrow B$ cannot override source $C$ or conceal missing metadata. This distinction is particularly important for versioned sources whose local pair relations do not form a globally safe order.
+
+\subsection{C4.7/C4.8: Fail-Closed Lifecycle}
+
+The lifecycle makes uncertainty and reversibility first-class. Figure~\ref{fig:state-machine} shows that any missing proposal, stale snapshot, changed member topology, disabled-target mismatch, or absent active adoption enters an HTTP~409/no-mutation path. The design draws on provenance concerns about tracing output to source and derivation \cite{buneman2001whywhere} and on human-AI interaction principles that emphasize constrained automation and recoverability under uncertainty \cite{amershi2019guidelines}.
+
+\begin{figure*}[t]
+    \centering
+    \conflictfigure{fig5_fail_closed_state_machine}{width=0.97\textwidth}
+    \caption{Fail-closed state machine for advisory proposal, explicit adoption, and durable reopen. Every side effect is bounded by a current snapshot and a durable record; stale or incomplete conditions return HTTP~409 without mutation.}
+    \label{fig:state-machine}
+\end{figure*}
+
+\section{Implementation}
+\label{sec:implementation}
+
+The prototype is implemented in \sys{} using Go services, PostgreSQL, Redis/Asynq, DocReader, and public knowledge-base APIs. The implementation adds claim storage, conflict-detection run metrics, disputed-fact aggregation, proposal fields, and durable winner-adoption records. Experiment drivers create temporary knowledge bases through HTTP APIs, wait for real asynchronous processing, and use PostgreSQL only for read-only evidence export.
+
+The relevant governance endpoints are:
+\begin{verbatim}
+POST /knowledge-bases/:id/conflicts/clusters/rebuild
+POST /knowledge-bases/:id/conflicts/clusters/resolve
+POST /knowledge-bases/:id/conflicts/clusters/adopt-winner
+POST /knowledge-bases/:id/conflicts/clusters/reopen-winner
+\end{verbatim}
+
+No UI is required for the reported experiments. This makes temporary-KB creation, document ingestion, action verification, and artifact export reproducible from scripts.
+
+\section{Evaluation}
+\label{sec:evaluation}
+
+\subsection{Research Questions and Scope}
+
+We evaluate four questions:
+\begin{enumerate}
+    \item \textbf{RQ1:} Can claim-aware extraction and candidate generation run with auditable evidence in the live service?
+    \item \textbf{RQ2:} Can the C2 cascade reduce LLM cost without breaking scenario integrity?
+    \item \textbf{RQ3:} Can C4.6--C4.8 repeatedly execute proposal, adoption, reopen, and fail-closed guards?
+    \item \textbf{RQ4:} Does global all-source metadata checking avoid unsafe proposals made by simple local or single-signal baselines in a controlled fact-family holdout?
+\end{enumerate}
+
+All results below must be interpreted as controlled prototype evidence. The C1 audit is a development/calibration analysis; C4.9 is a controlled policy matrix; and C4.10 uses synthetic fixtures. We do not report these values as real-business-document accuracy or human-study results.
+
+\subsection{C1 Claim Extraction Audit}
+
+A human-audited development/calibration corpus yielded broad-maintenance precision/recall of 0.867647/0.842857 for a gold-v2 candidate scope. A narrower conflict-critical scope obtained recall 1.000 (15/15), while precision was not separately estimated. These values establish development-stage coverage evidence, not a final holdout estimate.
+
+\subsection{C2 Cost Ablation}
+
+Table~\ref{tab:c2-cost} reports real-service runs on the same C1 full scenario. C2-B4 reduces LLM calls from 48 to 9, total tokens from 48,762 to 28,528, and detection duration from 145,154 ms to 75,789 ms while preserving scenario integrity. Figure~\ref{fig:c2-cost} visualizes the comparison.
+
+\begin{table}[t]
+\caption{C2 cascade cost ablation on the same controlled C1 full scenario.}
+\label{tab:c2-cost}
+\centering
+\small
+\begin{tabular}{lrrrr}
+\toprule
+Variant & Candidates & LLM calls & Tokens & Duration (ms) \\
+\midrule
+C1 & 48 & 48 & 48,762 & 145,154 \\
+C2-Rules & 48 & 47 & 47,293 & 149,111 \\
+C2-B4 & 48 & 9 & 28,528 & 75,789 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure*}[t]
+    \centering
+    \conflictfigure{fig3_cascade_cost_ablation}{width=0.98\textwidth}
+    \caption{Real-service cost ablation on a fixed controlled scenario. Relative to C1, C2-B4 reduces LLM calls by 81.25\%, tokens by 41.50\%, and detection duration by 47.79\%.}
+    \label{fig:c2-cost}
+\end{figure*}
+
+\subsection{C4.9 Controlled Lifecycle Replicates}
+
+The C4.9 matrix contains five policy cases: an ordered triplet with two adoption--reopen cycles, an out-of-order triplet, cross-issuer abstention, date/version direction disagreement, and metadata tie. Each case was executed three times independently with fresh temporary knowledge bases.
+
+\begin{table}[t]
+\caption{C4.9 controlled lifecycle matrix.}
+\label{tab:c49}
+\centering
+\small
+\begin{tabular}{lr}
+\toprule
+Metric & Result \\
+\midrule
+Case executions & 15/15 \\
+Expected positive / no-proposal & 6 / 9 \\
+TP / TN / FP / FN & 6 / 9 / 0 / 0 \\
+Controlled precision / recall & 1.000 / 1.000 \\
+Adopt--reopen cycles & 9/9 \\
+Detector artifacts with zero dead letters & 15/15 \\
+Raw conflicts (min/max/mean) & 1 / 3 / 1.866667 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The metadata-tie case varied between one and two raw chunk-pair conflicts across runs, but all fact-level assertions passed. This motivates reporting \disputedfact{}-level outcomes rather than treating raw rows as independent evaluation instances. The matrix uses independent replicates rather than portable provider seeds.
+
+\subsection{C4.10 Binary Integration and Synthetic Holdout}
+
+A binary fixture first verified file ingress: a DOCX lifecycle fixture completed 12/12 cases and 3/3 cycles; a separate PDF fixture reached claim extraction with one claim. To avoid conflating cross-format semantic normalization with lifecycle policy, the expanded policy corpus uses controlled DOCX sources and evaluates PDF only as a file-ingress/claim smoke.
+
+The expanded corpus contains 12 development and 12 holdout fact families. Development runs were used only to validate the generator, metadata policy, and scorer. The frozen holdout contains 12 families with three independent executions each. All 36 detector artifacts were evaluable, all had zero dead letters, and all 18 adoption--reopen cycles completed.
+
+Table~\ref{tab:holdout} uses a strict fact-family metric: a family counts as correct only if all three of its independent executions are correct. ``Unsafe action'' denotes a proposal on a case whose gold policy is no-proposal. Figure~\ref{fig:holdout} visualizes the two primary columns.
+
+\begin{table*}[t]
+\caption{C4.10 controlled synthetic holdout at fact-family granularity (12 families, three independent executions per family).}
+\label{tab:holdout}
+\centering
+\small
+\begin{tabular}{lrrrrrrrr}
+\toprule
+Method & TP & TN & FP & FN & Precision & Recall & Accuracy & Unsafe actions \\
+\midrule
+C4.6 global proposal & 6 & 6 & 0 & 0 & 1.000 & 1.000 & 1.000 & 0 \\
+Latest upload & 2 & 0 & 10 & 4 & 0.167 & 0.333 & 0.167 & 6 \\
+Date only & 5 & 3 & 3 & 1 & 0.625 & 0.833 & 0.667 & 3 \\
+Version only & 5 & 3 & 3 & 1 & 0.625 & 0.833 & 0.667 & 3 \\
+Raw C3 local vote & 6 & 4 & 2 & 0 & 0.750 & 1.000 & 0.833 & 2 \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+\begin{figure*}[t]
+    \centering
+    \conflictfigure{fig4_holdout_baselines}{width=0.98\textwidth}
+    \caption{C4.10 controlled synthetic holdout. The global all-source proposal rule has zero unsafe actions under the constructed issuer, missing-metadata, direction-disagreement, tie, and interval-overlap cases. This is not a real-corpus or human-review accuracy estimate.}
+    \label{fig:holdout}
+\end{figure*}
+
+The latest-upload baseline necessarily chooses a source even for no-proposal cases and fails on intentionally out-of-order positives. Date-only and version-only baselines ignore one part of the metadata condition and can select an unsafe source under issuer or direction failures. Raw C3 local voting preserves pair directions but cannot require all cluster sources to be mutually consistent. The global rule abstains in these cases. This result is meaningful as a controlled safety-policy comparison, but its numerical values are shaped by the constructed topology and should not be generalized to arbitrary documents.
+
+On the completed holdout, all 84 candidate pairs were exact claim-key pairs and the rule layer directly resolved all 84 conflicts. Thus, this particular synthetic holdout should not be used to estimate LLM cost; the C2 ablation above is the relevant evidence for that question.
+
+\section{Related Work}
+\label{sec:related}
+
+\subsection{Truth Discovery and Data Fusion}
+
+Truth discovery and data fusion address conflicting observations from multiple sources by estimating reliability, dependencies, or candidate-value confidence \cite{yin2008truth,li2016truthsurvey,dong2013datafusion,dong2014knowledgevault}. In contrast, \sys{} does not learn a universal source-trust score or claim objective truth. It models a narrower operational question: whether a versioned-document cluster has enough explicit and mutually consistent metadata to issue an advisory governance proposal.
+
+\subsection{Fact Verification and Natural Language Inference}
+
+Fact-verification datasets such as FEVER and SciFact connect claims to supporting or refuting evidence \cite{thorne2018fever,wadden2020scifact}. NLI datasets provide foundational entailment/contradiction/neutral formulations and expose cross-genre difficulty \cite{bowman2015snli,williams2018multinli}. Our use of claims and quotes is compatible with these traditions, but the output is a multi-source governance object rather than an objective-veracity label for a single claim.
+
+\subsection{RAG and Knowledge Conflicts}
+
+RAG integrates generation with external non-parametric knowledge \cite{lewis2020rag}, while Self-RAG learns retrieval and critique behavior for factual generation \cite{asai2024selfrag}. ConflictBank studies misinformation, temporal, and semantic knowledge conflicts in LLM settings \cite{su2024conflictbank}. Our prototype is intentionally upstream of answer generation: it manages document-side conflicts, cluster-level abstention, and reversible retrieval-visible state rather than optimizing end-to-end QA correctness.
+
+\subsection{Provenance and Human-Governed Automation}
+
+Data provenance motivates retaining source, derivation, and recovery information \cite{buneman2001whywhere}. We instantiate this idea with source quotes, raw-member lists, metadata snapshots, and durable adoption records. Human-AI interaction work emphasizes communicating uncertainty and supporting correction \cite{amershi2019guidelines}; our contribution is not a UI study, but a back-end protocol that converts those principles into explicit-only actions and fail-closed guards.
+
+\section{Limitations and Threats to Validity}
+\label{sec:limitations}
+
+The prototype has several limitations. First, the C1 audit is a development/calibration analysis with incomplete dual-review coverage. Second, C4.9 and C4.10 are controlled policy experiments. The C4.10 holdout separates generated fact-family subjects, paths, and labels from development, but retains deliberately simple document syntax and metadata topology. It is therefore a held-out policy test, not a real-document semantic or authority-generalization benchmark.
+
+Third, PDF processing has been tested as binary ingress and claim extraction only; the paper does not claim a PDF--DOCX cross-format clustering benchmark. Fourth, provider random seeds are not portable across the configured model API, so the reported repetitions are independent executions rather than seed-controlled trials. Fifth, the current proposal rule uses explicit issuer/date/version evidence and does not represent organization hierarchies, jurisdiction, legal force, scope precedence, or arbitrary version semantics.
+
+Finally, one earlier synthetic holdout matrix execution became incomplete before writing a detector metrics artifact. It was retained and excluded rather than pooled with the completed matrix. A subsequent report-integrity fix marks unevaluable detector executions as incomplete and prevents an empty winner list from being counted as a correct no-proposal outcome. The completed holdout matrix reported here used 36/36 evaluable executions; this chronology should remain available in the artifact record.
+
+\section{Conclusion}
+\label{sec:conclusion}
+
+We presented \sys{} Conflict Detection V2, a fact-level conflict-governance prototype for versioned multi-source knowledge bases. The system transforms raw chunk-pair conflicts into \disputedfact{}s, issues global proposals only under all-source metadata consistency, and separates advisory proposals from explicit, snapshot-bound, durable, and reversible governance actions. Controlled real-service experiments demonstrate cost reductions for cascade adjudication, repeated lifecycle safety behavior, binary DocReader integration, and a fact-family policy comparison against simple baselines.
+
+The central conclusion is deliberately narrow: fact-level conflict governance can cluster evidence, abstain under unsafe metadata conditions, and execute reversible winner actions through a fail-closed protocol. Future work should evaluate licensed real versioned documents, independently annotated holdouts, organization-specific authority semantics, cross-format extraction drift, and user-facing review workflows.
+
+\balance
+\bibliographystyle{IEEEtran}
+\bibliography{references}
+
+\end{document}

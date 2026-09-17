@@ -1,0 +1,16 @@
+# LaTeX build products
+*.aux
+*.bbl
+*.blg
+*.fdb_latexmk
+*.fls
+*.log
+*.out
+*.synctex.gz
+*.toc
+main.pdf
+
+# Generated/staged paper figures remain local until a final submission package
+# explicitly chooses to vendor them.
+figures/*
+!figures/.gitkeep
