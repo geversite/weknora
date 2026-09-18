@@ -1,4 +1,4 @@
-.PHONY: help build run test clean docker-build-app docker-build-docreader docker-build-frontend docker-build-all docker-run migrate-up migrate-down docker-restart docker-stop start-all stop-all start-ollama stop-ollama build-images build-images-app build-images-docreader build-images-frontend clean-images check-env list-containers pull-images show-platform dev-start dev-stop dev-restart dev-logs dev-status dev-app dev-frontend docs install-swagger build-lite run-lite package-lite experiment-check experiment-c1 experiment-c2-rules experiment-c2-batch experiment-c2-compare experiment-c3 experiment-c46 experiment-c46-negative experiment-c47 experiment-c47-negative experiment-c48 experiment-c48-negative experiment-c49 experiment-c49-review experiment-c410-plan experiment-c410-inventory experiment-c410-prepare experiment-c410-materialize experiment-c410-docreader-fixture experiment-c410-docreader-smoke experiment-c410-docreader-pdf-smoke experiment-c410-docreader-lifecycle experiment-c410-synthetic-corpus experiment-c410-fact-eval experiment-c4 experiment-c4-fuzzy experiment-c4-resolve experiment-p2 experiment-p3 experiment-p12 experiment-v1 experiment-audit experiment-audit-summary experiment-audit-metrics experiment-gold-v2 experiment-gold-v2-review experiment-gold-v2-scope-review experiment-gold-v2-apply-recommendations experiment-gold-v2-finalize experiment-dual-scope-metrics paper-figures
+.PHONY: help build run test clean docker-build-app docker-build-docreader docker-build-frontend docker-build-all docker-run migrate-up migrate-down docker-restart docker-stop start-all stop-all start-ollama stop-ollama build-images build-images-app build-images-docreader build-images-frontend clean-images check-env list-containers pull-images show-platform dev-start dev-stop dev-restart dev-logs dev-status dev-app dev-frontend docs install-swagger build-lite run-lite package-lite experiment-check experiment-c1 experiment-c2-rules experiment-c2-batch experiment-c2-compare experiment-c3 experiment-c46 experiment-c46-negative experiment-c47 experiment-c47-negative experiment-c48 experiment-c48-negative experiment-c49 experiment-c49-review experiment-c410-plan experiment-c410-inventory experiment-c410-prepare experiment-c410-materialize experiment-c410-docreader-fixture experiment-c410-docreader-smoke experiment-c410-docreader-pdf-smoke experiment-c410-docreader-lifecycle experiment-c410-synthetic-corpus experiment-c410-fact-eval experiment-public-wikifactdiff-plan experiment-public-vitaminc-plan experiment-public-pair-eval experiment-public-pair-dry-run experiment-public-self-test experiment-c4 experiment-c4-fuzzy experiment-c4-resolve experiment-p2 experiment-p3 experiment-p12 experiment-v1 experiment-audit experiment-audit-summary experiment-audit-metrics experiment-gold-v2 experiment-gold-v2-review experiment-gold-v2-scope-review experiment-gold-v2-apply-recommendations experiment-gold-v2-finalize experiment-dual-scope-metrics paper-figures
 
 # Show help
 help:
@@ -83,6 +83,11 @@ help:
 	@echo "  experiment-c410-docreader-lifecycle 运行内置 DOCX C4.6/C4.7/C4.8 matrix"
 	@echo "  experiment-c410-synthetic-corpus 生成 split-safe synthetic DOCX policy corpus（OUTPUT=<dir>）"
 	@echo "  experiment-c410-fact-eval 汇总 matrix 的事实家族 winner/baseline 指标（MATRIX_RUN=<dir>）"
+	@echo "  experiment-public-wikifactdiff-plan 生成公开 WikiFactDiff 评测计划（PUBLIC_OUTPUT=<dir>）"
+	@echo "  experiment-public-vitaminc-plan 生成公开 VitaminC real-split 评测计划（PUBLIC_OUTPUT=<dir>）"
+	@echo "  experiment-public-pair-eval 运行已生成的公开 pair manifest（PUBLIC_MANIFEST=<json>）"
+	@echo "  experiment-public-pair-dry-run 校验公开 pair manifest，不访问服务（PUBLIC_MANIFEST=<json>）"
+	@echo "  experiment-public-self-test 离线校验公开数据适配、split 和评分完整性"
 	@echo "  experiment-c4     运行 C4-Lite 三值同事实聚类实验"
 	@echo "  experiment-c4-fuzzy 运行 C4-Lite schema-drift fallback 聚类实验"
 	@echo "  experiment-c4-resolve 对一个 C4 cluster 执行安全传播裁决（RUN=...）"
@@ -496,6 +501,34 @@ experiment-c410-synthetic-corpus:
 experiment-c410-fact-eval:
 	@test -n "$(MATRIX_RUN)" || (echo "Usage: make experiment-c410-fact-eval MATRIX_RUN=experiments/comparisons/<matrix-run>"; exit 2)
 	python3 scripts/experiments/score_winner_fact_families.py --matrix-run "$(MATRIX_RUN)" $(if $(SPLIT),--split "$(SPLIT)") $(if $(OUTPUT),--output-dir "$(OUTPUT)") $(if $(ALLOW_FAILED),--allow-failed) $(if $(OVERWRITE),--overwrite)
+
+# Public data adapters keep raw releases and generated documents outside Git.
+# WikiFactDiff may stream its public Hugging Face release; set WFD_INPUT for a
+# local JSON/JSONL export instead. DEV_PER_LABEL/HOLDOUT_PER_LABEL default in script.
+# Usage: make experiment-public-wikifactdiff-plan PUBLIC_OUTPUT=$HOME/weknora-public-data/wikifactdiff-v1 [WFD_INPUT=/data/wfd.jsonl] [DEV_PER_LABEL=10] [HOLDOUT_PER_LABEL=30]
+experiment-public-wikifactdiff-plan:
+	@test -n "$(PUBLIC_OUTPUT)" || (echo "Usage: make experiment-public-wikifactdiff-plan PUBLIC_OUTPUT=$$HOME/weknora-public-data/wikifactdiff-v1"; exit 2)
+	python3 scripts/experiments/prepare_public_wikifactdiff_eval.py --output-dir "$(PUBLIC_OUTPUT)" $(if $(WFD_INPUT),--input "$(WFD_INPUT)") $(if $(WFD_ARCHIVE_MEMBER),--archive-member "$(WFD_ARCHIVE_MEMBER)") $(if $(WFD_HF_DATASET),--hf-dataset "$(WFD_HF_DATASET)") $(if $(WFD_HF_CONFIG),--hf-config "$(WFD_HF_CONFIG)") $(if $(WFD_HF_REVISION),--hf-revision "$(WFD_HF_REVISION)") $(if $(DEV_PER_LABEL),--development-per-label "$(DEV_PER_LABEL)") $(if $(HOLDOUT_PER_LABEL),--holdout-per-label "$(HOLDOUT_PER_LABEL)") $(if $(PUBLIC_VARIANT),--variant "$(PUBLIC_VARIANT)") $(if $(WFD_MAX_SOURCE_RECORDS),--max-source-records "$(WFD_MAX_SOURCE_RECORDS)")
+
+# Usage: make experiment-public-vitaminc-plan VITAMINC_DEVELOPMENT=$HOME/weknora-public-data/vitaminc.zip VITAMINC_HOLDOUT=$HOME/weknora-public-data/vitaminc.zip PUBLIC_OUTPUT=$HOME/weknora-public-data/vitaminc-real-v1 [DEV_PER_LABEL=10] [HOLDOUT_PER_LABEL=30]
+experiment-public-vitaminc-plan:
+	@test -n "$(VITAMINC_DEVELOPMENT)" || (echo "Usage: make experiment-public-vitaminc-plan VITAMINC_DEVELOPMENT=<real-dev-json-or-zip> VITAMINC_HOLDOUT=<real-test-json-or-zip> PUBLIC_OUTPUT=<dir>"; exit 2)
+	@test -n "$(VITAMINC_HOLDOUT)" || (echo "Usage: make experiment-public-vitaminc-plan VITAMINC_DEVELOPMENT=<real-dev-json-or-zip> VITAMINC_HOLDOUT=<real-test-json-or-zip> PUBLIC_OUTPUT=<dir>"; exit 2)
+	@test -n "$(PUBLIC_OUTPUT)" || (echo "Usage: make experiment-public-vitaminc-plan ... PUBLIC_OUTPUT=$$HOME/weknora-public-data/vitaminc-real-v1"; exit 2)
+	python3 scripts/experiments/prepare_public_vitaminc_eval.py --development-input "$(VITAMINC_DEVELOPMENT)" --holdout-input "$(VITAMINC_HOLDOUT)" --output-dir "$(PUBLIC_OUTPUT)" $(if $(VITAMINC_DEVELOPMENT_MEMBER),--development-member "$(VITAMINC_DEVELOPMENT_MEMBER)") $(if $(VITAMINC_HOLDOUT_MEMBER),--holdout-member "$(VITAMINC_HOLDOUT_MEMBER)") $(if $(DEV_PER_LABEL),--development-per-label "$(DEV_PER_LABEL)") $(if $(HOLDOUT_PER_LABEL),--holdout-per-label "$(HOLDOUT_PER_LABEL)") $(if $(PUBLIC_VARIANT),--variant "$(PUBLIC_VARIANT)")
+
+# Usage: make experiment-public-pair-eval PUBLIC_MANIFEST=$HOME/weknora-public-data/<plan>/pair_eval_manifest.json [SPLIT=development|holdout|all] [PUBLIC_REPLICATES=1] [PUBLIC_MAX_CASES=10] [PUBLIC_OUTPUT=<dir>]
+experiment-public-pair-eval:
+	@test -n "$(PUBLIC_MANIFEST)" || (echo "Usage: make experiment-public-pair-eval PUBLIC_MANIFEST=<pair_eval_manifest.json>"; exit 2)
+	python3 scripts/experiments/run_public_pair_eval.py --manifest "$(PUBLIC_MANIFEST)" $(if $(SPLIT),--split "$(SPLIT)") $(if $(PUBLIC_REPLICATES),--replicates "$(PUBLIC_REPLICATES)") $(if $(PUBLIC_MAX_CASES),--max-cases "$(PUBLIC_MAX_CASES)") $(if $(PUBLIC_CONFLICT_TIMEOUT),--detector-conflict-timeout-seconds "$(PUBLIC_CONFLICT_TIMEOUT)") $(if $(PUBLIC_OUTPUT),--output-dir "$(PUBLIC_OUTPUT)")
+
+# Usage: make experiment-public-pair-dry-run PUBLIC_MANIFEST=$HOME/weknora-public-data/<plan>/pair_eval_manifest.json [SPLIT=development|holdout|all] [PUBLIC_MAX_CASES=10]
+experiment-public-pair-dry-run:
+	@test -n "$(PUBLIC_MANIFEST)" || (echo "Usage: make experiment-public-pair-dry-run PUBLIC_MANIFEST=<pair_eval_manifest.json>"; exit 2)
+	python3 scripts/experiments/run_public_pair_eval.py --manifest "$(PUBLIC_MANIFEST)" $(if $(SPLIT),--split "$(SPLIT)") $(if $(PUBLIC_REPLICATES),--replicates "$(PUBLIC_REPLICATES)") $(if $(PUBLIC_MAX_CASES),--max-cases "$(PUBLIC_MAX_CASES)") $(if $(PUBLIC_CONFLICT_TIMEOUT),--detector-conflict-timeout-seconds "$(PUBLIC_CONFLICT_TIMEOUT)") --dry-run
+
+experiment-public-self-test:
+	python3 scripts/experiments/test_public_benchmark_adapters.py
 
 experiment-c4:
 	python3 scripts/experiments/run_claims_eval.py \

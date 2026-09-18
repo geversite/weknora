@@ -544,6 +544,159 @@ date-only/version-only 为 `0.667` / `3`，latest-upload 为 `0.167` / `6`。完
 [C4.10 扩展 Synthetic Policy 语料技术设计](../../docs/冲突检测V2-C4.10-扩展SyntheticPolicy技术设计.md) 和
 [C4.10 扩展 Synthetic Policy 评估报告](../../docs/冲突检测V2-C4.10-扩展SyntheticPolicy评估报告.md)。
 
+### 公开数据集外部迁移评测（WikiFactDiff + VitaminC）
+
+公开评测用于补充当前的 controlled synthetic evidence，但两个数据集对应**不同任务**，不得合并为一个“总体准确率”：
+
+- **WikiFactDiff**：公开 Wikidata 两个时间快照的事实更新。适配器仅选严格的 `obsolete/forget → new/learn` replacement 作为 conflict 正例，并从显式 `static/keep` fact 构造完全相同文本的窄 no-conflict control；实际 release decision 会记录在 source manifest，未知词不猜测。它产出 C1/C2 pair transfer manifest，以及一个单独的两快照 C3/C4.6 advisory proposal manifest。后者把 `Publisher: Wikidata`、日期和版本**派生自数据集 release 的快照时间**，因此只检验 public temporal-fact / two-source proposal transfer，不检验原生文档 header、multi-authority abstention、C4.7 adoption 或 C4.8 reopen。
+- **VitaminC real split**：公开 Wikipedia revision 派生的 claim--evidence 样本。`REFUTES → conflict`、`SUPPORTS → no-conflict`，只评估 C1/C2 pair transfer；不为它伪造 C3/C4.6 winner metadata。
+
+两个适配器都会记录输入 SHA-256、上游 URL/config/revision（可获得时）、确定性 selection seed、结构性过滤理由、fact-family split 和完整/partial source scan 状态。它们只读公开数据并写入仓库外目录；不会访问 API、模型、Asynq 或数据库。**不要**把下载压缩包、派生正文或运行 artifacts 提交到 Git。
+
+先准备一个仓库外目录：
+
+```bash
+PUBLIC_ROOT="$HOME/weknora-public-data"
+mkdir -p "$PUBLIC_ROOT"
+chmod 700 "$PUBLIC_ROOT"
+```
+
+#### A. WikiFactDiff：公开时序事实 pair / two-snapshot proposal
+
+官方 Hugging Face release 可由 `datasets` 流式读取。adapter 默认固定在 dataset revision `bb17ffbff7b2d28e4cd12e251af3db50d7fa18ea`，并使用 dataset card 标为 recommended 的 `20210104-20230227_legacy` config；不使用 card 标为 “DO NOT USE IT” 的改进中间 config。首次缺包时：
+
+```bash
+python3 -m pip install --user datasets
+```
+
+生成固定的 10 positive + 10 negative development、30 + 30 holdout pair cases；同一批 replacement 同时生成 two-snapshot proposal cases：
+
+```bash
+WFD_ROOT="$PUBLIC_ROOT/wikifactdiff-20210104-20230227-legacy-v1"
+
+make experiment-public-wikifactdiff-plan \
+  PUBLIC_OUTPUT="$WFD_ROOT" \
+  DEV_PER_LABEL=10 \
+  HOLDOUT_PER_LABEL=30 \
+  PUBLIC_VARIANT=c2-rules
+```
+
+若已下载/导出 JSONL，则不需要 `datasets`，改为：
+
+```bash
+make experiment-public-wikifactdiff-plan \
+  PUBLIC_OUTPUT="$WFD_ROOT" \
+  WFD_INPUT="/path/to/wikifactdiff.jsonl" \
+  DEV_PER_LABEL=10 \
+  HOLDOUT_PER_LABEL=30 \
+  PUBLIC_VARIANT=c2-rules
+```
+
+先只运行 development 的 10-case smoke；`dry-run` 不触发服务：
+
+```bash
+make experiment-public-pair-dry-run \
+  PUBLIC_MANIFEST="$WFD_ROOT/pair_eval_manifest.json" \
+  SPLIT=development \
+  PUBLIC_MAX_CASES=10
+
+make experiment-public-pair-eval \
+  PUBLIC_MANIFEST="$WFD_ROOT/pair_eval_manifest.json" \
+  SPLIT=development \
+  PUBLIC_MAX_CASES=10 \
+  PUBLIC_OUTPUT="$WFD_ROOT/runs/pair-development-smoke"
+```
+
+检查 `metrics.json`、`report.md`、失败 case 的 `detector_command.log`。只允许根据 development 修复 adapter/配置；随后固定 commit、model configuration 和 `source_manifest.json`，再运行 untouched holdout。首轮建议每个 fact family 一次，避免把 provider 的独立执行误当作独立数据样本：
+
+```bash
+make experiment-public-pair-eval \
+  PUBLIC_MANIFEST="$WFD_ROOT/pair_eval_manifest.json" \
+  SPLIT=holdout \
+  PUBLIC_REPLICATES=1 \
+  PUBLIC_OUTPUT="$WFD_ROOT/runs/pair-holdout-r1"
+
+# 单独、预先由 selection_rank 固定的 10-family stability slice；不与 full holdout 池化。
+make experiment-public-pair-eval \
+  PUBLIC_MANIFEST="$WFD_ROOT/pair_eval_manifest.json" \
+  SPLIT=holdout \
+  PUBLIC_MAX_CASES=10 \
+  PUBLIC_REPLICATES=3 \
+  PUBLIC_OUTPUT="$WFD_ROOT/runs/pair-holdout-stability-r3"
+```
+
+C3/C4.6 public two-snapshot proposal transfer 也必须独立报告：
+
+```bash
+make experiment-public-pair-eval \
+  PUBLIC_MANIFEST="$WFD_ROOT/proposal_eval_manifest.json" \
+  SPLIT=development \
+  PUBLIC_MAX_CASES=10 \
+  PUBLIC_OUTPUT="$WFD_ROOT/runs/proposal-development-smoke"
+
+# 仅在 development protocol 冻结后执行。
+make experiment-public-pair-eval \
+  PUBLIC_MANIFEST="$WFD_ROOT/proposal_eval_manifest.json" \
+  SPLIT=holdout \
+  PUBLIC_REPLICATES=1 \
+  PUBLIC_OUTPUT="$WFD_ROOT/runs/proposal-holdout-r1"
+```
+
+proposal manifest 使用“exact expected winner + exact source count”的成功率，而不是 precision/abstention：WikiFactDiff 公开 release 只有两快照，且没有 multi-authority/no-proposal 标签。
+
+#### B. VitaminC：公开 Wikipedia revision claim--evidence pair
+
+从 VitaminC 官方项目的 release link 下载 archive 到仓库外路径，例如：
+
+```bash
+VITAMINC_ZIP="$PUBLIC_ROOT/vitaminc.zip"
+curl -L --fail --retry 3 \
+  -o "$VITAMINC_ZIP" \
+  "https://github.com/TalSchuster/talschuster.github.io/raw/master/static/vitaminc.zip"
+
+# 仅用于确认 archive 中 real dev/test JSONL 的成员名，不打印正文。
+unzip -Z1 "$VITAMINC_ZIP" | grep -Ei 'real.*(dev|valid|test).*jsonl'
+```
+
+适配器会尝试自动选择包含 `real` 的 dev/test JSONL；若 archive 布局变动，明确传入 member name，而不要让脚本猜测：
+
+```bash
+VITAMINC_ROOT="$PUBLIC_ROOT/vitaminc-real-v1"
+
+make experiment-public-vitaminc-plan \
+  VITAMINC_DEVELOPMENT="$VITAMINC_ZIP" \
+  VITAMINC_HOLDOUT="$VITAMINC_ZIP" \
+  PUBLIC_OUTPUT="$VITAMINC_ROOT" \
+  DEV_PER_LABEL=10 \
+  HOLDOUT_PER_LABEL=30 \
+  PUBLIC_VARIANT=c2-rules
+
+# 仅在自动探测失败时追加，例如：
+# VITAMINC_DEVELOPMENT_MEMBER='.../real/dev.jsonl' \
+# VITAMINC_HOLDOUT_MEMBER='.../real/test.jsonl'
+```
+
+运行顺序与 WikiFactDiff 一致：development 10-case smoke → 固定 protocol → 一次完整 holdout；若需稳定性，再把预定的前 10 个 holdout fact families 独立跑 3 次，不与完整 holdout 池化：
+
+```bash
+make experiment-public-pair-eval \
+  PUBLIC_MANIFEST="$VITAMINC_ROOT/pair_eval_manifest.json" \
+  SPLIT=development \
+  PUBLIC_MAX_CASES=10 \
+  PUBLIC_OUTPUT="$VITAMINC_ROOT/runs/development-smoke"
+
+# development 结论冻结后：
+make experiment-public-pair-eval \
+  PUBLIC_MANIFEST="$VITAMINC_ROOT/pair_eval_manifest.json" \
+  SPLIT=holdout \
+  PUBLIC_REPLICATES=1 \
+  PUBLIC_OUTPUT="$VITAMINC_ROOT/runs/holdout-r1"
+```
+
+`run_public_pair_eval.py` 在每个 case 创建 fresh temporary KB，复用真实 HTTP API → Asynq → PostgreSQL 导出链路。它会分别输出 execution-level 指标、primary strict-all-replicates fact-family 指标、dead-letter 完整性、cascade aggregate 和每个 case 的 immutable artifact 路径。任何缺失/失败 artifact 都是 `UNEVALUABLE`，不会被误计为 TN；完整 headline P/R/accuracy 会置为 `null`，仅保留 conditional 指标。
+
+论文里只能写为：**public benchmark transfer on WikiFactDiff/VitaminC-derived text under this adapter**。它仍不是 enterprise-document accuracy、native PDF/DOCX accuracy、human-review accuracy、end-to-end RAG QA accuracy 或 seed-controlled causal study。VitaminC 的上游 license/attribution 必须随发布版核验并保留；WikiFactDiff 的上游 release/config/revision 也必须写入 appendix/replication package。
+
 ### C4.10 真实语料 corpus / holdout plan
 
 若真实文档已集中在一个目录，先不移动、不上传，做 filename/hash inventory：
