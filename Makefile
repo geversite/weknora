@@ -1,4 +1,4 @@
-.PHONY: help build run test clean docker-build-app docker-build-docreader docker-build-frontend docker-build-all docker-run migrate-up migrate-down docker-restart docker-stop start-all stop-all start-ollama stop-ollama build-images build-images-app build-images-docreader build-images-frontend clean-images check-env list-containers pull-images show-platform dev-start dev-stop dev-restart dev-logs dev-status dev-app dev-frontend docs install-swagger build-lite run-lite package-lite experiment-check experiment-c1 experiment-c2-rules experiment-c2-batch experiment-c2-compare experiment-c3 experiment-c46 experiment-c46-negative experiment-c47 experiment-c47-negative experiment-c48 experiment-c48-negative experiment-c49 experiment-c49-review experiment-c410-plan experiment-c410-inventory experiment-c410-prepare experiment-c410-materialize experiment-c410-docreader-fixture experiment-c410-docreader-smoke experiment-c410-docreader-pdf-smoke experiment-c410-docreader-lifecycle experiment-c410-synthetic-corpus experiment-c410-fact-eval experiment-public-wikifactdiff-plan experiment-public-vitaminc-plan experiment-public-pair-eval experiment-public-pair-dry-run experiment-public-self-test experiment-c4 experiment-c4-fuzzy experiment-c4-resolve experiment-p2 experiment-p3 experiment-p12 experiment-v1 experiment-audit experiment-audit-summary experiment-audit-metrics experiment-gold-v2 experiment-gold-v2-review experiment-gold-v2-scope-review experiment-gold-v2-apply-recommendations experiment-gold-v2-finalize experiment-dual-scope-metrics paper-figures
+.PHONY: help build run test clean docker-build-app docker-build-docreader docker-build-frontend docker-build-all docker-run migrate-up migrate-down docker-restart docker-stop start-all stop-all start-ollama stop-ollama build-images build-images-app build-images-docreader build-images-frontend clean-images check-env list-containers pull-images show-platform dev-start dev-stop dev-restart dev-logs dev-status dev-app dev-frontend docs install-swagger build-lite run-lite package-lite experiment-check experiment-c1 experiment-c2-rules experiment-c2-batch experiment-c2-compare experiment-c3 experiment-c46 experiment-c46-negative experiment-c47 experiment-c47-negative experiment-c48 experiment-c48-negative experiment-c49 experiment-c49-review experiment-c410-plan experiment-c410-inventory experiment-c410-prepare experiment-c410-materialize experiment-c410-docreader-fixture experiment-c410-docreader-smoke experiment-c410-docreader-pdf-smoke experiment-c410-docreader-lifecycle experiment-c410-synthetic-corpus experiment-c410-fact-eval experiment-public-wikifactdiff-plan experiment-public-vitaminc-plan experiment-public-pair-eval experiment-public-pair-dry-run experiment-public-pair-resummarize experiment-public-self-test experiment-c4 experiment-c4-fuzzy experiment-c4-resolve experiment-p2 experiment-p3 experiment-p12 experiment-v1 experiment-audit experiment-audit-summary experiment-audit-metrics experiment-gold-v2 experiment-gold-v2-review experiment-gold-v2-scope-review experiment-gold-v2-apply-recommendations experiment-gold-v2-finalize experiment-dual-scope-metrics paper-figures
 
 # Show help
 help:
@@ -87,6 +87,7 @@ help:
 	@echo "  experiment-public-vitaminc-plan 生成公开 VitaminC real-split 评测计划（PUBLIC_OUTPUT=<dir>）"
 	@echo "  experiment-public-pair-eval 运行已生成的公开 pair manifest（PUBLIC_MANIFEST=<json>）"
 	@echo "  experiment-public-pair-dry-run 校验公开 pair manifest，不访问服务（PUBLIC_MANIFEST=<json>）"
+	@echo "  experiment-public-pair-resummarize 只读重汇总已完成 public run（PUBLIC_RUN=<dir>）"
 	@echo "  experiment-public-self-test 离线校验公开数据适配、split 和评分完整性"
 	@echo "  experiment-c4     运行 C4-Lite 三值同事实聚类实验"
 	@echo "  experiment-c4-fuzzy 运行 C4-Lite schema-drift fallback 聚类实验"
@@ -526,6 +527,11 @@ experiment-public-pair-eval:
 experiment-public-pair-dry-run:
 	@test -n "$(PUBLIC_MANIFEST)" || (echo "Usage: make experiment-public-pair-dry-run PUBLIC_MANIFEST=<pair_eval_manifest.json>"; exit 2)
 	python3 scripts/experiments/run_public_pair_eval.py --manifest "$(PUBLIC_MANIFEST)" $(if $(SPLIT),--split "$(SPLIT)") $(if $(PUBLIC_REPLICATES),--replicates "$(PUBLIC_REPLICATES)") $(if $(PUBLIC_MAX_CASES),--max-cases "$(PUBLIC_MAX_CASES)") $(if $(PUBLIC_CONFLICT_TIMEOUT),--detector-conflict-timeout-seconds "$(PUBLIC_CONFLICT_TIMEOUT)") --dry-run
+
+# Usage: make experiment-public-pair-resummarize PUBLIC_RUN=$HOME/weknora-public-data/<plan>/runs/<run>
+experiment-public-pair-resummarize:
+	@test -n "$(PUBLIC_RUN)" || (echo "Usage: make experiment-public-pair-resummarize PUBLIC_RUN=<completed-public-pair-run>"; exit 2)
+	python3 scripts/experiments/resummarize_public_pair_eval.py --run-dir "$(PUBLIC_RUN)" --apply
 
 experiment-public-self-test:
 	python3 scripts/experiments/test_public_benchmark_adapters.py

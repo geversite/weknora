@@ -568,21 +568,41 @@ CASCADE_KEYS = (
 
 
 def aggregate_cascade(results: list[dict[str, Any]]) -> dict[str, Any]:
+    """Aggregate the existing runner's nested C2 cascade artifact shape.
+
+    ``run_claims_eval.py`` exports ``metrics.cascade`` as a summary object with
+    its numeric fields under ``cascade.totals``. Public pair rows preserve that
+    object verbatim for auditability. Accept a flat shape as a compatibility
+    fallback, but prefer the nested totals; otherwise every public run would
+    misleadingly report an all-zero operational aggregate despite valid
+    detector artifacts.
+    """
     totals = {key: 0 for key in CASCADE_KEYS}
     observations = 0
+    nested_total_observations = 0
+    flat_total_observations = 0
     for row in results:
         if not row["detector_evaluable"]:
             continue
         cascade = row.get("cascade")
         if not isinstance(cascade, dict):
             continue
+        nested = cascade.get("totals")
+        if isinstance(nested, dict):
+            values = nested
+            nested_total_observations += 1
+        else:
+            values = cascade
+            flat_total_observations += 1
         observations += 1
         for key in CASCADE_KEYS:
-            value = as_int(cascade.get(key))
+            value = as_int(values.get(key))
             if value is not None:
                 totals[key] += value
     return {
         "evaluable_execution_observations": observations,
+        "nested_totals_observations": nested_total_observations,
+        "flat_totals_compatibility_observations": flat_total_observations,
         "totals": totals,
         "note": "Aggregate operational shape only; this public transfer set is not a C2 cost-ablation experiment.",
     }

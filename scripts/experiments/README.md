@@ -695,6 +695,15 @@ make experiment-public-pair-eval \
 
 `run_public_pair_eval.py` 会先检查模板 KB 配置，并执行一次已有的只读 `run_claims_eval.py --check --check-db` service/migration preflight；preflight 失败时不会启动任何 case，日志写入 `<output>/service_preflight.log`。随后它在每个 case 创建 fresh temporary KB，复用真实 HTTP API → Asynq → PostgreSQL 导出链路。它会分别输出 execution-level 指标、primary strict-all-replicates fact-family 指标、dead-letter 完整性、cascade aggregate 和每个 case 的 immutable artifact 路径。任何缺失/失败 artifact 都是 `UNEVALUABLE`，不会被误计为 TN；完整 headline P/R/accuracy 会置为 `null`，仅保留 conditional 指标。
 
+若早期 public-pair run 的 `metrics.json.cascade.totals` 异常全为零，但每个 detector 的 `metrics.json.cascade.totals` 实际存在数值，不要重跑模型。使用只读、保留旧 summary 备份的修复工具：
+
+```bash
+make experiment-public-pair-resummarize \
+  PUBLIC_RUN="$WFD_ROOT/runs/pair-development-r1"
+```
+
+它只读取 `execution_results.json` 的原始 per-case cascade artifact，先备份原 `metrics/report/fact-family` summary 到 `resummarization_backups/`，再重算聚合；不访问 HTTP、模型、Asynq、Docker 或数据库。
+
 论文里只能写为：**public benchmark transfer on WikiFactDiff/VitaminC-derived text under this adapter**。它仍不是 enterprise-document accuracy、native PDF/DOCX accuracy、human-review accuracy、end-to-end RAG QA accuracy 或 seed-controlled causal study。VitaminC 的上游 license/attribution 必须随发布版核验并保留；WikiFactDiff 的上游 release/config/revision 也必须写入 appendix/replication package。
 
 ### C4.10 真实语料 corpus / holdout plan

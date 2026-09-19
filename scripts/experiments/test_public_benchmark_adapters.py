@@ -188,6 +188,78 @@ class PublicBenchmarkAdapterTests(unittest.TestCase):
         proposal = module.aggregate_proposal_transfer(rows, strict)
         self.assertEqual(proposal["fact_family_strict_all_replicates"]["correct"], 1)
 
+        cascade_rows = [
+            {
+                "detector_evaluable": True,
+                "cascade": {
+                    "run_count": 2,
+                    "totals": {
+                        "candidate_claim_pairs": 3,
+                        "rule_direct_conflict": 2,
+                        "llm_single_call_count": 1,
+                        "duration_ms": 42,
+                    },
+                },
+            },
+            {
+                "detector_evaluable": True,
+                "cascade": {"candidate_claim_pairs": 4, "duration_ms": 8},
+            },
+        ]
+        cascade = module.aggregate_cascade(cascade_rows)
+        self.assertEqual(cascade["totals"]["candidate_claim_pairs"], 7)
+        self.assertEqual(cascade["totals"]["rule_direct_conflict"], 2)
+        self.assertEqual(cascade["totals"]["duration_ms"], 50)
+        self.assertEqual(cascade["nested_totals_observations"], 1)
+        self.assertEqual(cascade["flat_totals_compatibility_observations"], 1)
+
+    def test_posthoc_resummarizer_reads_nested_cascade_without_service_access(self) -> None:
+        script_dir = ROOT / "scripts/experiments"
+        sys.path.insert(0, str(script_dir))
+        spec = importlib.util.spec_from_file_location(
+            "public_pair_resummarize_test", script_dir / "resummarize_public_pair_eval.py",
+        )
+        assert spec and spec.loader
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        rows = []
+        for case_id, expected, observed in (("positive", True, True), ("negative", False, False)):
+            rows.append({
+                "case_id": case_id,
+                "fact_family_id": case_id,
+                "split": "development",
+                "case_type": "test",
+                "source_label": "test",
+                "variant": "c2-rules",
+                "replicate": 1,
+                "expected_conflict": expected,
+                "observed_conflict": observed,
+                "classification": "TP" if expected else "TN",
+                "correct": True,
+                "detector_evaluable": True,
+                "expected_winner_document": "",
+                "expected_winner_proposal_source_count": None,
+                "observed_winner_count": None,
+                "observed_winner_documents": [],
+                "observed_winner_source_counts": [],
+                "proposal_applicable": False,
+                "proposal_evaluable": False,
+                "proposal_correct": None,
+                "proposal_issues": [],
+                "dead_letter_count": 0,
+                "claim_count_total": 2,
+                "conflict_count_total": 1 if expected else 0,
+                "cascade": {"run_count": 2, "totals": {"candidate_claim_pairs": 3, "duration_ms": 11}},
+            })
+        metrics, strict = module.build_summary(
+            {"replicates": 1, "task": "test", "variant": "c2-rules", "split": "development", "case_count": 2},
+            rows,
+        )
+        self.assertEqual(len(strict), 2)
+        self.assertTrue(metrics["complete"])
+        self.assertEqual(metrics["cascade"]["totals"]["candidate_claim_pairs"], 6)
+        self.assertEqual(metrics["cascade"]["nested_totals_observations"], 2)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
