@@ -253,6 +253,48 @@ def write_command_log(path: Path, command: list[str], result: subprocess.Complet
     path.write_text(body, encoding="utf-8")
 
 
+def template_kb_source(explicit_template_kb_id: str, environment: dict[str, str]) -> str:
+    """Fail before a batch when the child runner cannot create a temporary KB.
+
+    `run_claims_eval.py` writes its initial manifest before checking this
+    variable. Without an early guard, a missing template configuration makes
+    every case look like a mysterious `running`/UNEVALUABLE artifact. Do not
+    echo the actual ID; it is configuration, not an experiment result.
+    """
+    if explicit_template_kb_id.strip():
+        return "argument"
+    if str(environment.get("WEKNORA_EXPERIMENT_TEMPLATE_KB", "")).strip():
+        return "environment"
+    raise PublicPairEvaluationError(
+        "缺少模板 KB 配置：请在同一 shell 设置 WEKNORA_EXPERIMENT_TEMPLATE_KB，"
+        "或传 --template-kb-id。为避免批量制造无效 artifact，未启动任何 case。",
+    )
+
+
+def run_service_preflight(output: Path, environment: dict[str, str]) -> dict[str, Any]:
+    """Run the existing read-only service/database/migration check once."""
+    command = [sys.executable, str(RUNNER), "--check", "--check-db"]
+    log_path = output / "service_preflight.log"
+    try:
+        result = subprocess.run(command, cwd=ROOT, text=True, capture_output=True, check=False, env=environment)
+    except OSError as exc:
+        write_command_log(log_path, command, None, str(exc))
+        raise PublicPairEvaluationError(f"无法启动 public-eval service preflight: {exc}") from exc
+    write_command_log(log_path, command, result)
+    if result.returncode != 0:
+        raise PublicPairEvaluationError(
+            "public-eval service preflight 失败；未启动任何 case。"
+            f"请查看 {log_path}，并确认 dev app、WEKNORA_BASE_URL、WEKNORA_API_KEY、"
+            "WEKNORA_DOCKER_BIN/数据库导出与 migrations 均就绪。",
+        )
+    return {
+        "command": command,
+        "exit_code": result.returncode,
+        "log": str(log_path),
+        "checked_at": utc_now(),
+    }
+
+
 def read_result_json(path: Path, issues: list[str], label: str) -> Any:
     try:
         return read_json(path)
@@ -740,6 +782,8 @@ def main() -> int:
             print(json.dumps(plan, ensure_ascii=False, indent=2))
             return 0
 
+        environment = dict(os.environ)
+        template_source = template_kb_source(args.template_kb_id, environment)
         default_dir = ROOT / "experiments/comparisons" / f"{utc_stamp()}-public-pair-{manifest['name']}"
         output = remove_tree_if_requested(Path(args.output_dir) if args.output_dir else default_dir, args.overwrite)
         run_manifest = {
@@ -747,11 +791,20 @@ def main() -> int:
             "created_at": utc_now(),
             "git_commit": safe_git_sha(),
             "source_manifest": manifest["source_manifest"],
+            "template_kb_configuration_source": template_source,
             "status": "running",
             "note": "Live public pair evaluation. Each case is a fresh temporary KB created through run_claims_eval.py.",
         }
         json_dump(output / "manifest.json", run_manifest)
-        environment = dict(os.environ)
+        try:
+            run_manifest["service_preflight"] = run_service_preflight(output, environment)
+        except PublicPairEvaluationError as exc:
+            run_manifest["status"] = "failed_preflight"
+            run_manifest["finished_at"] = utc_now()
+            run_manifest["error"] = str(exc)
+            json_dump(output / "manifest.json", run_manifest)
+            raise
+        json_dump(output / "manifest.json", run_manifest)
         results: list[dict[str, Any]] = []
         for case in cases:
             for replicate in range(1, args.replicates + 1):

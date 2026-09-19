@@ -172,6 +172,11 @@ class PublicBenchmarkAdapterTests(unittest.TestCase):
                 "proposal_evaluable": False, "proposal_correct": None, "replicate": 2,
             },
         ]
+        with self.assertRaises(module.PublicPairEvaluationError):
+            module.template_kb_source("", {})
+        self.assertEqual(module.template_kb_source("", {"WEKNORA_EXPERIMENT_TEMPLATE_KB": "configured"}), "environment")
+        self.assertEqual(module.template_kb_source("configured", {}), "argument")
+
         strict = module.strict_fact_rows(rows, 2)
         by_family = {row["fact_family_id"]: row for row in strict}
         self.assertEqual(by_family["positive"]["classification"], "TP")
