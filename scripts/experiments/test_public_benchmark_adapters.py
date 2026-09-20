@@ -216,6 +216,45 @@ class PublicBenchmarkAdapterTests(unittest.TestCase):
             self.assertEqual({case["source_label"] for case in manifest["cases"]}, {"supports", "refutes"})
             run_ok(str(PAIR_RUNNER), "--manifest", str(output / "pair_eval_manifest.json"), "--split", "all", "--dry-run")
 
+    def test_vitaminc_drops_same_text_opposite_label_families(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            archive = root / "vitaminc_real.zip"
+            lines = []
+            for label in ("SUPPORTS", "REFUTES"):
+                for index in range(20):
+                    lines.append(json.dumps({
+                        "id": f"test-{label}-{index}",
+                        "claim": f"Example test {label} claim {index} is a factual statement.",
+                        "evidence": f"Evidence for test {label} claim {index} is a factual statement.",
+                        "label": label,
+                    }))
+            colliding_claim = "The colliding VitaminC claim text is a factual statement."
+            colliding_evidence = "The colliding VitaminC evidence text is a factual statement."
+            for label in ("SUPPORTS", "REFUTES"):
+                lines.append(json.dumps({
+                    "id": f"collide-{label}",
+                    "claim": colliding_claim,
+                    "evidence": colliding_evidence,
+                    "label": label,
+                }))
+            with zipfile.ZipFile(archive, "w") as zipped:
+                zipped.writestr("vitaminc_real/test.jsonl", "\n".join(lines) + "\n")
+            output = root / "plan"
+            run_ok(
+                str(VITAMINC_ADAPTER),
+                "--development-input", str(archive),
+                "--holdout-input", str(archive),
+                "--output-dir", str(output),
+                "--development-per-label", "1",
+                "--holdout-per-label", "1",
+            )
+            source_manifest = json.loads((output / "source_manifest.json").read_text(encoding="utf-8"))
+            self.assertEqual(source_manifest["selection"]["development_inconsistent_families_dropped"], 1)
+            self.assertEqual(source_manifest["selection"]["holdout_inconsistent_families_dropped"], 0)
+            catalog = (output / "case_catalog.csv").read_text(encoding="utf-8")
+            self.assertNotIn("collide-", catalog)
+
     def test_strict_fact_family_and_proposal_scoring_do_not_pool_replicates(self) -> None:
         script_dir = ROOT / "scripts/experiments"
         sys.path.insert(0, str(script_dir))

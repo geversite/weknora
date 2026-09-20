@@ -273,9 +273,18 @@ def scan_source(
     }
 
 
-def unique_candidates(candidates: Iterable[dict[str, Any]], split: str) -> tuple[list[dict[str, Any]], int]:
+def unique_candidates(candidates: Iterable[dict[str, Any]], split: str) -> tuple[list[dict[str, Any]], dict[str, int]]:
+    """Collapse identical claim/evidence text; drop families with opposite labels.
+
+    VitaminC's official real test member can repeat the same whitespace-normalized
+    claim+evidence with both SUPPORTS and REFUTES. Picking either gold would be
+    silent label invention; keeping both would give the same uploaded documents
+    contradictory expected outcomes. Those families are excluded and counted.
+    Same-label repeats are ordinary duplicates and keep the first row.
+    """
     seen: dict[str, dict[str, Any]] = {}
-    duplicates = 0
+    duplicate_same = 0
+    inconsistent_families: set[str] = set()
     for item in candidates:
         family = str(item["family_id"])
         prior = seen.get(family)
@@ -283,11 +292,15 @@ def unique_candidates(candidates: Iterable[dict[str, Any]], split: str) -> tuple
             seen[family] = item
             continue
         if prior["source_label"] != item["source_label"]:
-            raise VitaminCError(
-                f"{split} 内同一 claim/evidence fact_family_id 带有相反标签: {family}；拒绝静默去重。",
-            )
-        duplicates += 1
-    return list(seen.values()), duplicates
+            inconsistent_families.add(family)
+            continue
+        duplicate_same += 1
+    for family in inconsistent_families:
+        seen.pop(family, None)
+    return list(seen.values()), {
+        "duplicate_same_family_rows_dropped": duplicate_same,
+        "inconsistent_duplicate_families_dropped": len(inconsistent_families),
+    }
 
 
 def select_split(
@@ -550,7 +563,7 @@ def main() -> int:
                 min_chars=args.min_chars,
                 max_chars=args.max_chars,
             )
-            shared, shared_duplicates = unique_candidates(shared_raw, "shared")
+            shared, shared_dedupe = unique_candidates(shared_raw, "shared")
             selected_development, selected_holdout, shared_available = partition_shared_candidates(
                 shared,
                 development_per_label=args.development_per_label,
@@ -559,8 +572,11 @@ def main() -> int:
             )
             development_source = dict(shared_source_info)
             holdout_source = dict(shared_source_info)
-            development_duplicates = shared_duplicates
-            holdout_duplicates = 0
+            development_dedupe = dict(shared_dedupe)
+            holdout_dedupe = {
+                "duplicate_same_family_rows_dropped": 0,
+                "inconsistent_duplicate_families_dropped": 0,
+            }
             dev_available = dict(shared_available)
             holdout_available = dict(shared_available)
             split_policy = {
@@ -598,8 +614,8 @@ def main() -> int:
                 min_chars=args.min_chars,
                 max_chars=args.max_chars,
             )
-            development, development_duplicates = unique_candidates(development_raw, "development")
-            holdout, holdout_duplicates = unique_candidates(holdout_raw, "holdout")
+            development, development_dedupe = unique_candidates(development_raw, "development")
+            holdout, holdout_dedupe = unique_candidates(holdout_raw, "holdout")
             development_families = {str(item["family_id"]) for item in development}
             holdout_families = {str(item["family_id"]) for item in holdout}
             overlap = development_families & holdout_families
@@ -663,8 +679,10 @@ def main() -> int:
                 "holdout_per_label": args.holdout_per_label,
                 "development_available_by_label": dev_available,
                 "holdout_available_by_label": holdout_available,
-                "development_duplicate_rows_dropped": development_duplicates,
-                "holdout_duplicate_rows_dropped": holdout_duplicates,
+                "development_duplicate_rows_dropped": development_dedupe["duplicate_same_family_rows_dropped"],
+                "holdout_duplicate_rows_dropped": holdout_dedupe["duplicate_same_family_rows_dropped"],
+                "development_inconsistent_families_dropped": development_dedupe["inconsistent_duplicate_families_dropped"],
+                "holdout_inconsistent_families_dropped": holdout_dedupe["inconsistent_duplicate_families_dropped"],
                 "source_scan_complete": source_scan_complete,
                 "source_scan_status": "complete" if source_scan_complete else "partial_smoke_only",
                 "split_policy": split_policy,
