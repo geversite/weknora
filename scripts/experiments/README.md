@@ -649,16 +649,17 @@ proposal manifest 使用“exact expected winner + exact source count”的成�
 从 VitaminC 官方项目的 release link 下载 archive 到仓库外路径，例如：
 
 ```bash
-VITAMINC_ZIP="$PUBLIC_ROOT/vitaminc.zip"
+# 使用上游单独发布的 real-only archive；不要将 combined vitaminc.zip 当作 real split。
+VITAMINC_ZIP="$PUBLIC_ROOT/vitaminc_real.zip"
 curl -L --fail --retry 3 \
   -o "$VITAMINC_ZIP" \
-  "https://github.com/TalSchuster/talschuster.github.io/raw/master/static/vitaminc.zip"
+  "https://github.com/TalSchuster/talschuster.github.io/raw/master/static/vitaminc_real.zip"
 
-# 仅用于确认 archive 中 real dev/test JSONL 的成员名，不打印正文。
-unzip -Z1 "$VITAMINC_ZIP" | grep -Ei 'real.*(dev|valid|test).*jsonl'
+# 只确认成员路径，不打印正文。专用 archive 可使用普通 dev/test 名称。
+unzip -Z1 "$VITAMINC_ZIP" | grep -Ei '(dev|valid|test).*jsonl'
 ```
 
-适配器会尝试自动选择包含 `real` 的 dev/test JSONL；若 archive 布局变动，明确传入 member name，而不要让脚本猜测：
+适配器会识别官方 `vitaminc_real.zip` 文件名，并自动选择其中的 dev/test JSONL；若 archive 布局变动，明确传入 member name，而不要让脚本猜测：
 
 ```bash
 VITAMINC_ROOT="$PUBLIC_ROOT/vitaminc-real-v1"
@@ -672,8 +673,8 @@ make experiment-public-vitaminc-plan \
   PUBLIC_VARIANT=c2-rules
 
 # 仅在自动探测失败时追加，例如：
-# VITAMINC_DEVELOPMENT_MEMBER='.../real/dev.jsonl' \
-# VITAMINC_HOLDOUT_MEMBER='.../real/test.jsonl'
+# VITAMINC_DEVELOPMENT_MEMBER='dev.jsonl' \
+# VITAMINC_HOLDOUT_MEMBER='test.jsonl'
 ```
 
 运行顺序与 WikiFactDiff 一致：development 10-case smoke → 固定 protocol → 一次完整 holdout；若需稳定性，再把预定的前 10 个 holdout fact families 独立跑 3 次，不与完整 holdout 池化：

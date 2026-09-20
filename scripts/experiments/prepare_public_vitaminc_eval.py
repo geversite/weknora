@@ -19,8 +19,8 @@ Asynq, Docker, or PostgreSQL.
 Example (the official archive has separate real dev/test JSONL members):
 
   python3 scripts/experiments/prepare_public_vitaminc_eval.py \
-    --development-input "$HOME/weknora-public-data/vitaminc.zip" \
-    --holdout-input "$HOME/weknora-public-data/vitaminc.zip" \
+    --development-input "$HOME/weknora-public-data/vitaminc_real.zip" \
+    --holdout-input "$HOME/weknora-public-data/vitaminc_real.zip" \
     --output-dir "$HOME/weknora-public-data/vitaminc-real-v1" \
     --development-per-label 10 --holdout-per-label 30
 
@@ -61,7 +61,7 @@ from public_benchmark_common import (
 )
 
 
-DEFAULT_SOURCE_URL = "https://github.com/TalSchuster/VitaminC"
+DEFAULT_SOURCE_URL = "https://github.com/TalSchuster/talschuster.github.io/raw/master/static/vitaminc_real.zip"
 DEFAULT_DATA_LICENSE_URL = "https://github.com/TalSchuster/VitaminC/blob/main/DATA_LICENSE"
 SUPPORT_LABELS = {"supports", "support", "entailment", "entails"}
 REFUTE_LABELS = {"refutes", "refute", "contradiction", "contradicts"}
@@ -75,8 +75,20 @@ def text_value(value: Any) -> str:
     return ("" if value is None else str(value)).replace("\r\n", "\n").replace("\r", "\n").strip()
 
 
+def dedicated_real_archive(path: Path) -> bool:
+    """Recognize the official standalone ``vitaminc_real.zip`` release.
+
+    The combined ``vitaminc.zip`` archive is intentionally not accepted as a
+    substitute: its member names alone do not prove the examples are real-only.
+    A user who has renamed the official archive can still pass explicit member
+    names, but should retain its source URL and SHA-256 in the generated
+    manifest.
+    """
+    return "vitaminc_real" in path.name.casefold()
+
+
 def source_member_for_split(path: Path, explicit_member: str, split: str, real_only: bool) -> str:
-    """Choose one JSON member from the official multi-split archive, fail closed."""
+    """Choose one JSON member from an upstream archive, fail closed by default."""
     if path.suffix.lower() != ".zip":
         if explicit_member:
             raise VitaminCError(f"{split} 输入不是 ZIP，不能设置 archive member")
@@ -84,6 +96,7 @@ def source_member_for_split(path: Path, explicit_member: str, split: str, real_o
     if explicit_member:
         return explicit_member
     split_tokens = ("dev", "valid") if split == "development" else ("test",)
+    archive_is_real = dedicated_real_archive(path)
     with zipfile.ZipFile(path) as archive:
         members = [name for name in archive.namelist() if not name.endswith("/") and is_json_like_name(name)]
     candidates = []
@@ -91,24 +104,29 @@ def source_member_for_split(path: Path, explicit_member: str, split: str, real_o
         lower = name.casefold()
         if not any(token in lower for token in split_tokens):
             continue
-        if real_only and "real" not in lower:
+        if real_only and not archive_is_real and "real" not in lower:
             continue
         if real_only and "synthetic" in lower:
             continue
         candidates.append(name)
     if len(candidates) == 1:
         return candidates[0]
-    # Try an exact real/split path-token match to make error diagnostics clearer.
+    required_tokens = (() if archive_is_real else (("real",) if real_only else ())) + split_tokens[:1]
     try:
         return find_archive_member(
             path,
-            include_tokens=(("real",) if real_only else ()) + split_tokens[:1],
+            include_tokens=required_tokens,
             exclude_tokens=("synthetic",) if real_only else (),
         )
     except PublicBenchmarkError as exc:
+        provenance = (
+            "官方 vitaminc_real.zip 的文件名已声明 real-only，但成员仍不唯一"
+            if archive_is_real else
+            "combined/未标记 archive 不能证明 real-only"
+        )
         raise VitaminCError(
-            f"无法为 {split} 自动选择 VitaminC ZIP 成员。请传 --{split}-member。"
-            f"候选 JSON 成员: {candidates[:30]}；详情: {exc}",
+            f"无法为 {split} 自动选择 VitaminC ZIP 成员（{provenance}）。"
+            f"请传 --{split}-member。候选 JSON 成员: {candidates[:30]}；详情: {exc}",
         ) from exc
 
 
@@ -486,6 +504,14 @@ def main() -> int:
                 "source_url": args.source_url,
                 "data_license_url": args.data_license_url,
                 "real_only_requested": args.real_only,
+                "development_real_identity": (
+                    "dedicated_vitaminc_real_archive_filename"
+                    if dedicated_real_archive(development_path) else "member_path_or_user_assertion"
+                ),
+                "holdout_real_identity": (
+                    "dedicated_vitaminc_real_archive_filename"
+                    if dedicated_real_archive(holdout_path) else "member_path_or_user_assertion"
+                ),
                 "development": development_source,
                 "holdout": holdout_source,
             },

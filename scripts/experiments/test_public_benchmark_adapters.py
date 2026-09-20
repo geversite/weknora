@@ -98,7 +98,7 @@ class PublicBenchmarkAdapterTests(unittest.TestCase):
     def test_vitaminc_real_archive_auto_members_and_label_mapping(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            archive = root / "vitaminc.zip"
+            archive = root / "vitaminc_real.zip"
             with zipfile.ZipFile(archive, "w") as zipped:
                 for split in ("dev", "test"):
                     lines = []
@@ -112,7 +112,7 @@ class PublicBenchmarkAdapterTests(unittest.TestCase):
                                 # must prefer gold_label when it is present.
                                 **({"gold_label": label} if index == 0 else {"label": label}),
                             }))
-                    zipped.writestr(f"vitaminc_real/{split}.jsonl", "\n".join(lines) + "\n")
+                    zipped.writestr(f"{split}.jsonl", "\n".join(lines) + "\n")
             output = root / "plan"
             run_ok(
                 str(VITAMINC_ADAPTER),
