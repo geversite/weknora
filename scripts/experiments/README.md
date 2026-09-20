@@ -655,8 +655,8 @@ curl -L --fail --retry 3 \
   -o "$VITAMINC_ZIP" \
   "https://github.com/TalSchuster/talschuster.github.io/raw/master/static/vitaminc_real.zip"
 
-# 只确认成员路径，不打印正文。专用 archive 可使用普通 dev/test 名称。
-unzip -Z1 "$VITAMINC_ZIP" | grep -Ei '(dev|valid|test).*jsonl'
+# 列出全部成员路径，不打印正文。官方 real archive 可能是 train.jsonl + test.jsonl。
+unzip -Z1 "$VITAMINC_ZIP"
 ```
 
 适配器会识别官方 `vitaminc_real.zip` 文件名，并自动选择其中的 dev/test JSONL；若 archive 布局变动，明确传入 member name，而不要让脚本猜测：
@@ -672,9 +672,9 @@ make experiment-public-vitaminc-plan \
   HOLDOUT_PER_LABEL=30 \
   PUBLIC_VARIANT=c2-rules
 
-# 仅在自动探测失败时追加，例如：
-# VITAMINC_DEVELOPMENT_MEMBER='dev.jsonl' \
-# VITAMINC_HOLDOUT_MEMBER='test.jsonl'
+# 仅在自动探测失败时追加，例如官方 train/test 布局：
+# VITAMINC_DEVELOPMENT_MEMBER='vitaminc_real/train.jsonl' \
+# VITAMINC_HOLDOUT_MEMBER='vitaminc_real/test.jsonl'
 ```
 
 运行顺序与 WikiFactDiff 一致：development 10-case smoke → 固定 protocol → 一次完整 holdout；若需稳定性，再把预定的前 10 个 holdout fact families 独立跑 3 次，不与完整 holdout 池化：

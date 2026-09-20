@@ -135,6 +135,41 @@ class PublicBenchmarkAdapterTests(unittest.TestCase):
             self.assertEqual({case["expected_conflict"] for case in manifest["cases"]}, {True, False})
             run_ok(str(PAIR_RUNNER), "--manifest", str(output / "pair_eval_manifest.json"), "--split", "all", "--dry-run")
 
+    def test_vitaminc_real_archive_train_fallback_for_development(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            archive = root / "vitaminc_real.zip"
+            with zipfile.ZipFile(archive, "w") as zipped:
+                for split in ("train", "test"):
+                    lines = []
+                    for label in ("SUPPORTS", "REFUTES"):
+                        for index in range(20):
+                            lines.append(json.dumps({
+                                "id": f"{split}-{label}-{index}",
+                                "claim": f"Example {split} {label} claim {index} is a factual statement.",
+                                "evidence": f"Evidence for {split} {label} claim {index} is a factual statement.",
+                                "label": label,
+                            }))
+                    zipped.writestr(f"vitaminc_real/{split}.jsonl", "\n".join(lines) + "\n")
+            output = root / "plan"
+            run_ok(
+                str(VITAMINC_ADAPTER),
+                "--development-input", str(archive),
+                "--holdout-input", str(archive),
+                "--output-dir", str(output),
+                "--development-per-label", "1",
+                "--holdout-per-label", "1",
+            )
+            source_manifest = json.loads((output / "source_manifest.json").read_text(encoding="utf-8"))
+            self.assertEqual(
+                source_manifest["dataset"]["development"]["archive_member"],
+                "vitaminc_real/train.jsonl",
+            )
+            self.assertEqual(
+                source_manifest["dataset"]["holdout"]["archive_member"],
+                "vitaminc_real/test.jsonl",
+            )
+
     def test_strict_fact_family_and_proposal_scoring_do_not_pool_replicates(self) -> None:
         script_dir = ROOT / "scripts/experiments"
         sys.path.insert(0, str(script_dir))

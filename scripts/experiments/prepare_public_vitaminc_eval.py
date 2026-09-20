@@ -43,7 +43,6 @@ from typing import Any, Iterable
 from public_benchmark_common import (
     PublicBenchmarkError,
     json_dump,
-    find_archive_member,
     is_json_like_name,
     iter_json_records,
     remove_tree_if_requested,
@@ -87,47 +86,69 @@ def dedicated_real_archive(path: Path) -> bool:
     return "vitaminc_real" in path.name.casefold()
 
 
+def json_archive_members(path: Path) -> list[str]:
+    with zipfile.ZipFile(path) as archive:
+        return [name for name in archive.namelist() if not name.endswith("/") and is_json_like_name(name)]
+
+
+def jsonl_stem(name: str) -> str:
+    base = Path(name).name.casefold()
+    for suffix in (".jsonl.gz", ".ndjson.gz", ".json.gz", ".jsonl", ".ndjson", ".json"):
+        if base.endswith(suffix):
+            return base[: -len(suffix)]
+    return Path(name).stem.casefold()
+
+
+def members_with_stems(members: list[str], stems: set[str], *, real_only: bool, archive_is_real: bool) -> list[str]:
+    hits: list[str] = []
+    for name in members:
+        if jsonl_stem(name) not in stems:
+            continue
+        lower = name.casefold()
+        if real_only and "synthetic" in lower:
+            continue
+        if real_only and not archive_is_real and "real" not in lower:
+            continue
+        hits.append(name)
+    return hits
+
+
 def source_member_for_split(path: Path, explicit_member: str, split: str, real_only: bool) -> str:
-    """Choose one JSON member from an upstream archive, fail closed by default."""
+    """Choose one JSON member from an upstream archive, fail closed by default.
+
+    Official VitaminC processors use ``train.jsonl`` / ``dev.jsonl`` /
+    ``test.jsonl``. The dedicated ``vitaminc_real.zip`` release observed in
+    practice may omit ``dev.jsonl`` and keep only ``train`` + ``test``. In that
+    dedicated-real case, development may fall back to the unique ``train``
+    member. Combined archives still require a member path marked ``real``.
+    """
     if path.suffix.lower() != ".zip":
         if explicit_member:
             raise VitaminCError(f"{split} 输入不是 ZIP，不能设置 archive member")
         return ""
     if explicit_member:
         return explicit_member
-    split_tokens = ("dev", "valid") if split == "development" else ("test",)
+
     archive_is_real = dedicated_real_archive(path)
-    with zipfile.ZipFile(path) as archive:
-        members = [name for name in archive.namelist() if not name.endswith("/") and is_json_like_name(name)]
-    candidates = []
-    for name in members:
-        lower = name.casefold()
-        if not any(token in lower for token in split_tokens):
-            continue
-        if real_only and not archive_is_real and "real" not in lower:
-            continue
-        if real_only and "synthetic" in lower:
-            continue
-        candidates.append(name)
-    if len(candidates) == 1:
-        return candidates[0]
-    required_tokens = (() if archive_is_real else (("real",) if real_only else ())) + split_tokens[:1]
-    try:
-        return find_archive_member(
-            path,
-            include_tokens=required_tokens,
-            exclude_tokens=("synthetic",) if real_only else (),
-        )
-    except PublicBenchmarkError as exc:
-        provenance = (
-            "官方 vitaminc_real.zip 的文件名已声明 real-only，但成员仍不唯一"
-            if archive_is_real else
-            "combined/未标记 archive 不能证明 real-only"
-        )
-        raise VitaminCError(
-            f"无法为 {split} 自动选择 VitaminC ZIP 成员（{provenance}）。"
-            f"请传 --{split}-member。候选 JSON 成员: {candidates[:30]}；详情: {exc}",
-        ) from exc
+    members = json_archive_members(path)
+    if split == "development":
+        preferred = members_with_stems(members, {"dev", "valid", "validation"}, real_only=real_only, archive_is_real=archive_is_real)
+        fallback = members_with_stems(members, {"train"}, real_only=real_only, archive_is_real=archive_is_real) if archive_is_real else []
+        flag = "--development-member"
+    else:
+        preferred = members_with_stems(members, {"test"}, real_only=real_only, archive_is_real=archive_is_real)
+        fallback = []
+        flag = "--holdout-member"
+
+    if len(preferred) == 1:
+        return preferred[0]
+    if not preferred and len(fallback) == 1:
+        return fallback[0]
+    raise VitaminCError(
+        f"无法为 {split} 自动选择 VitaminC ZIP 成员。"
+        f"请传 {flag}。全部 JSON 成员: {members[:40]}；"
+        f"preferred={preferred[:20]}；train-fallback={fallback[:20]}",
+    )
 
 
 def normalize_label(value: Any, supports: set[str], refutes: set[str]) -> tuple[str, bool] | None:
