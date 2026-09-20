@@ -16,7 +16,8 @@ The script only reads a user-downloaded public release and writes transformed
 files/manifests outside Git. It never calls WeKnora HTTP APIs, model providers,
 Asynq, Docker, or PostgreSQL.
 
-Example (the official archive has separate real dev/test JSONL members):
+Example (the official dedicated real archive observed in practice ships only
+``test.jsonl``; the adapter then makes a recorded disjoint partition):
 
   python3 scripts/experiments/prepare_public_vitaminc_eval.py \
     --development-input "$HOME/weknora-public-data/vitaminc_real.zip" \
@@ -26,7 +27,7 @@ Example (the official archive has separate real dev/test JSONL members):
 
 If automatic ZIP member detection is ambiguous, pass:
 
-  --development-member <real-dev.jsonl-member> \
+  --development-member <real-dev-or-train-or-test.jsonl-member> \
   --holdout-member <real-test.jsonl-member>
 """
 
@@ -118,9 +119,17 @@ def source_member_for_split(path: Path, explicit_member: str, split: str, real_o
 
     Official VitaminC processors use ``train.jsonl`` / ``dev.jsonl`` /
     ``test.jsonl``. The dedicated ``vitaminc_real.zip`` release observed in
-    practice may omit ``dev.jsonl`` and keep only ``train`` + ``test``. In that
-    dedicated-real case, development may fall back to the unique ``train``
-    member. Combined archives still require a member path marked ``real``.
+    practice is a real *test-set* package: it may contain only ``test.jsonl``,
+    or ``train`` + ``test`` without ``dev``. Development selection order for a
+    dedicated-real archive is therefore:
+
+    1. unique ``dev`` / ``valid`` / ``validation`` stem
+    2. unique ``train`` stem
+    3. unique ``test`` stem, and only when that is also the archive's sole JSON member
+
+    Combined archives still require a member path marked ``real``. A later
+    shared-member partition, not this function, is what keeps development and
+    holdout families disjoint when both splits read that sole test member.
     """
     if path.suffix.lower() != ".zip":
         if explicit_member:
@@ -131,9 +140,12 @@ def source_member_for_split(path: Path, explicit_member: str, split: str, real_o
 
     archive_is_real = dedicated_real_archive(path)
     members = json_archive_members(path)
+    test_only: list[str] = []
     if split == "development":
         preferred = members_with_stems(members, {"dev", "valid", "validation"}, real_only=real_only, archive_is_real=archive_is_real)
         fallback = members_with_stems(members, {"train"}, real_only=real_only, archive_is_real=archive_is_real) if archive_is_real else []
+        if archive_is_real:
+            test_only = members_with_stems(members, {"test"}, real_only=real_only, archive_is_real=archive_is_real)
         flag = "--development-member"
     else:
         preferred = members_with_stems(members, {"test"}, real_only=real_only, archive_is_real=archive_is_real)
@@ -144,10 +156,13 @@ def source_member_for_split(path: Path, explicit_member: str, split: str, real_o
         return preferred[0]
     if not preferred and len(fallback) == 1:
         return fallback[0]
+    if not preferred and not fallback and len(test_only) == 1 and len(members) == 1:
+        return test_only[0]
     raise VitaminCError(
         f"无法为 {split} 自动选择 VitaminC ZIP 成员。"
         f"请传 {flag}。全部 JSON 成员: {members[:40]}；"
-        f"preferred={preferred[:20]}；train-fallback={fallback[:20]}",
+        f"preferred={preferred[:20]}；train-fallback={fallback[:20]}；"
+        f"test-only-fallback={test_only[:20]}",
     )
 
 
@@ -295,6 +310,54 @@ def select_split(
             )
         selected.extend(ranked[:per_label])
     return sorted(selected, key=lambda item: (str(item["source_label"]), str(item["selection_rank"]))), availability
+
+
+def partition_shared_candidates(
+    candidates: list[dict[str, Any]],
+    *,
+    development_per_label: int,
+    holdout_per_label: int,
+    seed: str,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, int]]:
+    """Deterministically split one shared real source into disjoint families.
+
+    Official ``vitaminc_real.zip`` is a test-set package. Using its sole
+    ``test.jsonl`` for both splits is valid only if development takes the
+    rank prefix and holdout takes the next unused families. The rank hash
+    does not include the split name, so the same family cannot be assigned
+    to both sides.
+    """
+    needed = development_per_label + holdout_per_label
+    by_label: dict[str, list[dict[str, Any]]] = {"supports": [], "refutes": []}
+    for item in candidates:
+        item = dict(item)
+        item["selection_rank"] = stable_rank(seed, f"shared\x1f{item['family_id']}")
+        by_label[str(item["source_label"])].append(item)
+    selected_development: list[dict[str, Any]] = []
+    selected_holdout: list[dict[str, Any]] = []
+    availability: dict[str, int] = {}
+    for label in ("supports", "refutes"):
+        ranked = sorted(by_label[label], key=lambda item: (str(item["selection_rank"]), str(item["family_id"])))
+        availability[label] = len(ranked)
+        if len(ranked) < needed:
+            raise VitaminCError(
+                f"共享 real test member 的 {label} 可用严格样本为 {len(ranked)}，"
+                f"不足 development+holdout 请求的 {needed}；"
+                "降低 --*-per-label，或提供独立的 development member。",
+            )
+        for item in ranked[:development_per_label]:
+            chosen = dict(item)
+            chosen["split"] = "development"
+            selected_development.append(chosen)
+        for item in ranked[development_per_label:needed]:
+            chosen = dict(item)
+            chosen["split"] = "holdout"
+            selected_holdout.append(chosen)
+    return (
+        sorted(selected_development, key=lambda item: (str(item["source_label"]), str(item["selection_rank"]))),
+        sorted(selected_holdout, key=lambda item: (str(item["source_label"]), str(item["selection_rank"]))),
+        availability,
+    )
 
 
 def case_id(item: dict[str, Any]) -> str:
@@ -470,50 +533,103 @@ def main() -> int:
             raise VitaminCError("development-input 与 holdout-input 都必须是存在的公开 release 文件")
         development_member = source_member_for_split(development_path, args.development_member, "development", args.real_only)
         holdout_member = source_member_for_split(holdout_path, args.holdout_member, "holdout", args.real_only)
-        development_raw, development_source = scan_source(
-            development_path,
-            archive_member=development_member,
-            split="development",
-            limit=args.max_development_records,
-            supports=supports,
-            refutes=refutes,
-            min_chars=args.min_chars,
-            max_chars=args.max_chars,
-        )
-        holdout_raw, holdout_source = scan_source(
-            holdout_path,
-            archive_member=holdout_member,
-            split="holdout",
-            limit=args.max_holdout_records,
-            supports=supports,
-            refutes=refutes,
-            min_chars=args.min_chars,
-            max_chars=args.max_chars,
-        )
-        development, development_duplicates = unique_candidates(development_raw, "development")
-        holdout, holdout_duplicates = unique_candidates(holdout_raw, "holdout")
-        development_families = {str(item["family_id"]) for item in development}
-        holdout_families = {str(item["family_id"]) for item in holdout}
-        overlap = development_families & holdout_families
-        if overlap:
-            raise VitaminCError(
-                f"原始 development/holdout 出现 {len(overlap)} 个完全相同 claim/evidence family；"
-                "拒绝自动去除，避免对 split 泄漏作无声处理。",
+        shared_source = development_path == holdout_path and development_member == holdout_member
+        if shared_source:
+            if args.max_development_records != args.max_holdout_records:
+                raise VitaminCError(
+                    "同一 VitaminC source member 做 adapter-defined disjoint split 时，"
+                    "--max-development-records 与 --max-holdout-records 必须相同。",
+                )
+            shared_raw, shared_source_info = scan_source(
+                development_path,
+                archive_member=development_member,
+                split="shared",
+                limit=args.max_development_records,
+                supports=supports,
+                refutes=refutes,
+                min_chars=args.min_chars,
+                max_chars=args.max_chars,
             )
-
-        selected_development, dev_available = select_split(
-            development,
-            split="development",
-            per_label=args.development_per_label,
-            seed=args.selection_seed,
-        )
-        selected_holdout, holdout_available = select_split(
-            holdout,
-            split="holdout",
-            per_label=args.holdout_per_label,
-            seed=args.selection_seed,
-        )
+            shared, shared_duplicates = unique_candidates(shared_raw, "shared")
+            selected_development, selected_holdout, shared_available = partition_shared_candidates(
+                shared,
+                development_per_label=args.development_per_label,
+                holdout_per_label=args.holdout_per_label,
+                seed=args.selection_seed,
+            )
+            development_source = dict(shared_source_info)
+            holdout_source = dict(shared_source_info)
+            development_duplicates = shared_duplicates
+            holdout_duplicates = 0
+            dev_available = dict(shared_available)
+            holdout_available = dict(shared_available)
+            split_policy = {
+                "kind": "adapter_defined_disjoint_partition_of_shared_source",
+                "reason": (
+                    "development 与 holdout 读取同一 source member；"
+                    "官方 dedicated vitaminc_real.zip 在实践中可能只含 test.jsonl。"
+                    "development 取每个 label 的 selection_rank 前缀，holdout 取随后未使用的 family。"
+                ),
+                "shared_input": str(development_path),
+                "shared_archive_member": development_member,
+                "development_slice": "first development_per_label unique families per label by selection_rank",
+                "holdout_slice": "next holdout_per_label unique families per label by selection_rank",
+                "native_official_train_dev_test": False,
+                "dedicated_real_archive": dedicated_real_archive(development_path),
+            }
+        else:
+            development_raw, development_source = scan_source(
+                development_path,
+                archive_member=development_member,
+                split="development",
+                limit=args.max_development_records,
+                supports=supports,
+                refutes=refutes,
+                min_chars=args.min_chars,
+                max_chars=args.max_chars,
+            )
+            holdout_raw, holdout_source = scan_source(
+                holdout_path,
+                archive_member=holdout_member,
+                split="holdout",
+                limit=args.max_holdout_records,
+                supports=supports,
+                refutes=refutes,
+                min_chars=args.min_chars,
+                max_chars=args.max_chars,
+            )
+            development, development_duplicates = unique_candidates(development_raw, "development")
+            holdout, holdout_duplicates = unique_candidates(holdout_raw, "holdout")
+            development_families = {str(item["family_id"]) for item in development}
+            holdout_families = {str(item["family_id"]) for item in holdout}
+            overlap = development_families & holdout_families
+            if overlap:
+                raise VitaminCError(
+                    f"原始 development/holdout 出现 {len(overlap)} 个完全相同 claim/evidence family；"
+                    "拒绝自动去除，避免对 split 泄漏作无声处理。",
+                )
+            selected_development, dev_available = select_split(
+                development,
+                split="development",
+                per_label=args.development_per_label,
+                seed=args.selection_seed,
+            )
+            selected_holdout, holdout_available = select_split(
+                holdout,
+                split="holdout",
+                per_label=args.holdout_per_label,
+                seed=args.selection_seed,
+            )
+            split_policy = {
+                "kind": "separate_source_members",
+                "development_archive_member": development_member,
+                "holdout_archive_member": holdout_member,
+                "native_official_train_dev_test": bool(development_member) and bool(holdout_member) and development_member != holdout_member,
+            }
         selected = selected_development + selected_holdout
+        selected_families = [str(item["family_id"]) for item in selected]
+        if len(selected_families) != len(set(selected_families)):
+            raise VitaminCError("选择结果出现 fact_family_id 重复，拒绝生成可能泄漏的评测集")
         source_scan_complete = development_source["source_scan_complete"] and holdout_source["source_scan_complete"]
         summary = {
             "schema_version": 1,
@@ -551,6 +667,7 @@ def main() -> int:
                 "holdout_duplicate_rows_dropped": holdout_duplicates,
                 "source_scan_complete": source_scan_complete,
                 "source_scan_status": "complete" if source_scan_complete else "partial_smoke_only",
+                "split_policy": split_policy,
             },
             "evaluation_scope": {
                 "task": "Public claim--evidence conflict-detection transfer.",
@@ -615,6 +732,8 @@ def main() -> int:
             "  cases: "
             f"{len(cases)} (development={len(selected_development)}, holdout={len(selected_holdout)})",
         )
+        print(f"  split policy: {split_policy['kind']}")
+        print(f"  native VitaminC train/dev/test: {str(split_policy.get('native_official_train_dev_test')).lower()}")
         print(f"  source scan: {'complete' if source_scan_complete else 'PARTIAL / smoke only'}")
         print("  HTTP/model/Asynq/Docker/PostgreSQL: not contacted")
         return 0

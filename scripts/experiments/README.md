@@ -655,11 +655,11 @@ curl -L --fail --retry 3 \
   -o "$VITAMINC_ZIP" \
   "https://github.com/TalSchuster/talschuster.github.io/raw/master/static/vitaminc_real.zip"
 
-# 列出全部成员路径，不打印正文。官方 real archive 可能是 train.jsonl + test.jsonl。
+# 列出全部成员路径，不打印正文。官方 dedicated real archive 实测只有 test.jsonl。
 unzip -Z1 "$VITAMINC_ZIP"
 ```
 
-适配器会识别官方 `vitaminc_real.zip` 文件名，并自动选择其中的 dev/test JSONL；若 archive 布局变动，明确传入 member name，而不要让脚本猜测：
+适配器会识别官方 `vitaminc_real.zip` 文件名。若其中有独立 `dev`/`train` 与 `test` JSONL，则分别用作 development/holdout；若 archive 只有唯一的 `test.jsonl`（官方 real test-set 包的实际布局），则对该 member 做记录在案的确定性互斥切分，而不是声称 native train/dev/test。若布局仍不唯一，明确传入 member name，而不要让脚本猜测：
 
 ```bash
 VITAMINC_ROOT="$PUBLIC_ROOT/vitaminc-real-v1"
@@ -672,8 +672,10 @@ make experiment-public-vitaminc-plan \
   HOLDOUT_PER_LABEL=30 \
   PUBLIC_VARIANT=c2-rules
 
-# 仅在自动探测失败时追加，例如官方 train/test 布局：
-# VITAMINC_DEVELOPMENT_MEMBER='vitaminc_real/train.jsonl' \
+# 仅在自动探测失败时追加。官方 test-only 布局通常不必传 member；
+# 若仍需显式指定，development 与 holdout 都指向同一 test.jsonl 即可，
+# adapter 会做互斥切分：
+# VITAMINC_DEVELOPMENT_MEMBER='vitaminc_real/test.jsonl' \
 # VITAMINC_HOLDOUT_MEMBER='vitaminc_real/test.jsonl'
 ```
 

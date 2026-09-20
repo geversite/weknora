@@ -169,6 +169,52 @@ class PublicBenchmarkAdapterTests(unittest.TestCase):
                 source_manifest["dataset"]["holdout"]["archive_member"],
                 "vitaminc_real/test.jsonl",
             )
+            self.assertEqual(
+                source_manifest["selection"]["split_policy"]["kind"],
+                "separate_source_members",
+            )
+
+    def test_vitaminc_real_archive_test_only_disjoint_partition(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            archive = root / "vitaminc_real.zip"
+            lines = []
+            for label in ("SUPPORTS", "REFUTES"):
+                for index in range(20):
+                    lines.append(json.dumps({
+                        "id": f"test-{label}-{index}",
+                        "claim": f"Example test {label} claim {index} is a factual statement.",
+                        "evidence": f"Evidence for test {label} claim {index} is a factual statement.",
+                        "label": label,
+                    }))
+            with zipfile.ZipFile(archive, "w") as zipped:
+                zipped.writestr("vitaminc_real/README.txt", "official real test-set package\n")
+                zipped.writestr("vitaminc_real/test.jsonl", "\n".join(lines) + "\n")
+            output = root / "plan"
+            run_ok(
+                str(VITAMINC_ADAPTER),
+                "--development-input", str(archive),
+                "--holdout-input", str(archive),
+                "--output-dir", str(output),
+                "--development-per-label", "1",
+                "--holdout-per-label", "1",
+            )
+            source_manifest = json.loads((output / "source_manifest.json").read_text(encoding="utf-8"))
+            manifest = json.loads((output / "pair_eval_manifest.json").read_text(encoding="utf-8"))
+            policy = source_manifest["selection"]["split_policy"]
+            self.assertEqual(policy["kind"], "adapter_defined_disjoint_partition_of_shared_source")
+            self.assertFalse(policy["native_official_train_dev_test"])
+            self.assertEqual(policy["shared_archive_member"], "vitaminc_real/test.jsonl")
+            self.assertEqual(source_manifest["dataset"]["development"]["archive_member"], "vitaminc_real/test.jsonl")
+            self.assertEqual(source_manifest["dataset"]["holdout"]["archive_member"], "vitaminc_real/test.jsonl")
+            self.assertEqual(len(manifest["cases"]), 4)
+            development_ids = {case["fact_family_id"] for case in manifest["cases"] if case["split"] == "development"}
+            holdout_ids = {case["fact_family_id"] for case in manifest["cases"] if case["split"] == "holdout"}
+            self.assertEqual(len(development_ids), 2)
+            self.assertEqual(len(holdout_ids), 2)
+            self.assertEqual(development_ids & holdout_ids, set())
+            self.assertEqual({case["source_label"] for case in manifest["cases"]}, {"supports", "refutes"})
+            run_ok(str(PAIR_RUNNER), "--manifest", str(output / "pair_eval_manifest.json"), "--split", "all", "--dry-run")
 
     def test_strict_fact_family_and_proposal_scoring_do_not_pool_replicates(self) -> None:
         script_dir = ROOT / "scripts/experiments"
