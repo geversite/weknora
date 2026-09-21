@@ -751,6 +751,23 @@ def wait_for_parse(
     raise ExperimentError(f"等待知识 {knowledge_id} 完成超时（{timeout_seconds}s）")
 
 
+def detection_run_exists(db: PostgresExporter, knowledge_id: str) -> bool:
+    """Return whether claim extract has released the follow-up detect task.
+
+    Conflict detection is enqueued only after claim extract returns, including
+    the 0-claim success path. A detection-run row is therefore a completion
+    barrier: waiting for ``claims >= 1`` would hang forever on a finished
+    extractor that produced nothing.
+    """
+    if not conflict_detection_runs_table_exists(db):
+        return False
+    rows = db.query(
+        "SELECT 1 AS ok FROM conflict_detection_runs "
+        f"WHERE knowledge_id = {sql_literal(knowledge_id)} LIMIT 1"
+    )
+    return bool(rows)
+
+
 def wait_for_claims(
     db: PostgresExporter,
     knowledge_id: str,
@@ -768,6 +785,10 @@ def wait_for_claims(
         rows = db.query(query)
         last_count = int((rows[0] if rows else {}).get("count", "0"))
         if last_count >= minimum:
+            return last_count
+        # Public transfer documents can finish extract with 0 claims. Treat that
+        # as an evaluable extractor outcome once detect has been released.
+        if minimum > 0 and detection_run_exists(db, knowledge_id):
             return last_count
         time.sleep(poll_seconds)
     raise ExperimentError(
