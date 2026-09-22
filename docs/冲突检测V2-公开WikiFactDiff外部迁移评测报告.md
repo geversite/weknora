@@ -49,7 +49,14 @@ pair-holdout 的 2 条死信均为 `wiki:ingest` 重试超限，不是 `claim:ex
 | proposal-development-r1 | 10 | 1.0 / 1.0 / 1.0 | 1.000 | 10×0 |
 | proposal-holdout-r1 | 30 | 1.0 / 1.0 / 1.0 | **0.833**（25/30） | 30×0 |
 
-Holdout 上 30 条 replacement 的 pair conflict 全对，但 5 条 exact winner+source_count 未命中。这正说明 pair 检出 ≠ advisory proposal 成功，不得把 1.0 pair 数字写成 proposal 泛化。
+Holdout 上 30 条 replacement 的 pair conflict 全对，但 5 条 exact winner+source_count 未命中。冻结后的只读分类（不改 25/30）：
+
+| 条数 | detector status | 观察 | 含义 |
+| ---: | --- | --- | --- |
+| 4 | `completed_with_winner_proposal_failure` | 2 个 proposal，均为 `snapshot_new` 且 source_count=2 | 同一 replacement 被拆成两个 DisputedFact；方向对，但不是 exactly-one cluster |
+| 1 | `completed_with_cluster_expectation_failure` | 1 个 proposal，`snapshot_new` / source_count=2 | winner 正确，但 `expected_disputed_fact_count=1` 未满足，status 不是 `completed` |
+
+评分要求 `manifest.status == "completed"` 且恰好一个 proposal，因此这 5 条计失败。不得事后放宽成 30/30，也不得写成 proposal precision。这正说明 pair 检出 ≠ 单一 advisory cluster。
 
 ## 4. 主张边界
 
