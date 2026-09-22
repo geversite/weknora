@@ -58,7 +58,7 @@ email@example.edu}}
 \maketitle
 
 \begin{abstract}
-Versioned knowledge bases are commonly maintained through chunk retrieval and chunk-pair conflict detection. Yet an individual conflict pair cannot naturally represent a dispute shared by multiple sources, nor can its local A/B direction be safely promoted to a global governance action. We present \sys{} Conflict Detection V2, a fact-level conflict-governance prototype for versioned, multi-source knowledge bases. The system extracts atomic claims with source quotes, combines exact claim keys with semantic fallback candidates, and applies a rule-plus-grounded-LLM cascade for conflict adjudication. Raw chunk-pair conflicts are projected into \disputedfact{}s. A global \proposal{} is produced only when every source carries explicit and mutually consistent issuer, date, and version evidence. Proposals are advisory: \adoption{} requires an explicit snapshot-bound request, while a durable record enables a precise \reopen{} operation. In a live environment with HTTP APIs, DocReader, Asynq, PostgreSQL, and configured models, C2-B4 reduced LLM calls from 48 to 9 relative to C1. A controlled lifecycle matrix completed 15/15 case executions and 9/9 adoption--reopen cycles with zero dead letters across 15 detector artifacts. In an expanded synthetic development/holdout policy corpus, the held-out matrix completed 36/36 executions and 18/18 lifecycle cycles. The global proposal policy achieved 1.000 controlled fact-family accuracy with zero unsafe actions, while simple recency and local-vote baselines produced unsafe proposals. These findings establish controlled integration and safety evidence, not real-document generalization, human-review accuracy, or seed-controlled causal claims.
+Versioned knowledge bases are commonly maintained through chunk retrieval and chunk-pair conflict detection. Yet an individual conflict pair cannot naturally represent a dispute shared by multiple sources, nor can its local A/B direction be safely promoted to a global governance action. We present \sys{} Conflict Detection V2, a fact-level conflict-governance prototype for versioned, multi-source knowledge bases. The system extracts atomic claims with source quotes, combines exact claim keys with semantic fallback candidates, and applies a rule-plus-grounded-LLM cascade for conflict adjudication. Raw chunk-pair conflicts are projected into \disputedfact{}s. A global \proposal{} is produced only when every source carries explicit and mutually consistent issuer, date, and version evidence. Proposals are advisory: \adoption{} requires an explicit snapshot-bound request, while a durable record enables a precise \reopen{} operation. In a live environment with HTTP APIs, DocReader, Asynq, PostgreSQL, and configured models, C2-B4 reduced LLM calls from 48 to 9 relative to C1. A controlled lifecycle matrix completed 15/15 case executions and 9/9 adoption--reopen cycles with zero dead letters across 15 detector artifacts. In an expanded synthetic development/holdout policy corpus, the held-out matrix completed 36/36 executions and 18/18 lifecycle cycles. The global proposal policy achieved 1.000 controlled fact-family accuracy with zero unsafe actions, while simple recency and local-vote baselines produced unsafe proposals. Separately, adapter-defined public transfer is reported in independent tables: WikiFactDiff templated two-snapshot pairs reached 60/60 holdout accuracy, while VitaminC claim--evidence transfer reached holdout precision/recall/accuracy of 0.750/0.800/0.767. These findings establish controlled integration, safety, and public-text transfer evidence, not real-document generalization, human-review accuracy, or seed-controlled causal claims.
 \end{abstract}
 
 \begin{IEEEkeywords}
@@ -80,6 +80,7 @@ Our contributions are as follows:
     \item \textbf{Fact-level conflict projection.} We project raw chunk-pair conflicts into \disputedfact{}s using exact and deliberately conservative fallback anchors.
     \item \textbf{Explicit and reversible winner governance.} We separate advisory global proposals from snapshot-bound adoption, and support durable, precise reopen rather than inferred rollback.
     \item \textbf{Real-service controlled evaluation.} We report C2 cost ablation, C4 lifecycle safety experiments, binary DocReader integration, and a fact-family development/holdout policy evaluation with simple baselines.
+    \item \textbf{Separate public-text transfer.} We additionally evaluate adapter-defined WikiFactDiff temporal-fact and VitaminC claim--evidence pair transfer, reported independently of the synthetic policy metrics.
 \end{enumerate}
 
 \begin{figure*}[t]
@@ -189,15 +190,16 @@ No UI is required for the reported experiments. This makes temporary-KB creation
 
 \subsection{Research Questions and Scope}
 
-We evaluate four questions:
+We evaluate five questions:
 \begin{enumerate}
     \item \textbf{RQ1:} Can claim-aware extraction and candidate generation run with auditable evidence in the live service?
     \item \textbf{RQ2:} Can the C2 cascade reduce LLM cost without breaking scenario integrity?
     \item \textbf{RQ3:} Can C4.6--C4.8 repeatedly execute proposal, adoption, reopen, and fail-closed guards?
     \item \textbf{RQ4:} Does global all-source metadata checking avoid unsafe proposals made by simple local or single-signal baselines in a controlled fact-family holdout?
+    \item \textbf{RQ5:} Does claim-aware pair detection transfer to public temporal-fact and claim--evidence text under adapter-defined mappings, separately from the synthetic policy corpus?
 \end{enumerate}
 
-All results below must be interpreted as controlled prototype evidence. The C1 audit is a development/calibration analysis; C4.9 is a controlled policy matrix; and C4.10 uses synthetic fixtures. We do not report these values as real-business-document accuracy or human-study results.
+All results below must be interpreted as controlled prototype evidence. The C1 audit is a development/calibration analysis; C4.9 is a controlled policy matrix; and C4.10 uses synthetic fixtures. Public WikiFactDiff and VitaminC numbers are adapter-defined transfer metrics on derived text, not pooled with C4.9/C4.10 and not real-business-document or human-study results.
 
 \subsection{C1 Claim Extraction Audit}
 
@@ -293,6 +295,49 @@ The latest-upload baseline necessarily chooses a source even for no-proposal cas
 
 On the completed holdout, all 84 candidate pairs were exact claim-key pairs and the rule layer directly resolved all 84 conflicts. Thus, this particular synthetic holdout should not be used to estimate LLM cost; the C2 ablation above is the relevant evidence for that question.
 
+\subsection{Public Benchmark Transfer}
+\label{sec:public-transfer}
+
+To add external text without pooling it into the synthetic policy tables, we evaluated two public resources under frozen adapters \cite{ammarkhodja2024wikifactdiff,schuster2021vitaminc}. Each adapter writes manual-text documents outside Git, uses a hash-based development/holdout partition, and scores fact-family pair detection through the same live HTTP/Asynq/PostgreSQL path. Missing detector artifacts are unevaluable, never true negatives. Cascade token counts from these corpora are operational shape only and do not replace Table~\ref{tab:c2-cost}.
+
+WikiFactDiff supplies templated verbalizations of Wikidata updates between the 2021-01-04 and 2023-02-27 snapshots. Pair positives are strict one-old/one-new replacements; no-conflict controls duplicate an explicit static/keep statement. A replacement-only proposal subset derives title issuer/date/version from release snapshot dates rather than native document headers, and reports exact winner plus source-count success, not proposal precision. VitaminC uses the official dedicated real archive, which contains only \texttt{test.jsonl}; development and holdout are an adapter-defined disjoint partition of that member. \texttt{REFUTES} maps to expected conflict and \texttt{SUPPORTS} to expected no-conflict. This is claim--evidence pair transfer, not document-version governance.
+
+\begin{table}[t]
+\caption{WikiFactDiff public temporal-fact transfer. Pair holdout is 30 replacement plus 30 static/keep controls. Proposal success requires exactly one advisory winner equal to the new snapshot with source-count 2. Title metadata are derived from release snapshot dates.}
+\label{tab:wfd-public}
+\centering
+\small
+\begin{tabular}{llrll}
+\toprule
+Task & Split & $N$ & Metric & Value \\
+\midrule
+Pair detection & Dev. & 20 & P / R / Acc. & 1.000 / 1.000 / 1.000 \\
+Pair detection & Holdout & 60 & P / R / Acc. & 1.000 / 1.000 / 1.000 \\
+Advisory proposal & Dev. & 10 & Exact success & 1.000 \\
+Advisory proposal & Holdout & 30 & Exact success & 0.833 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[t]
+\caption{VitaminC public claim--evidence transfer on an adapter-defined partition of the official real test member, not a native train/dev/test split.}
+\label{tab:vitaminc-public}
+\centering
+\small
+\begin{tabular}{lrrrrrrr}
+\toprule
+Split & $N$ & TP & TN & FP & FN & P / R / Acc. \\
+\midrule
+Dev. & 20 & 8 & 5 & 5 & 2 & 0.615 / 0.800 / 0.650 \\
+Holdout & 60 & 24 & 22 & 8 & 6 & 0.750 / 0.800 / 0.767 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Table~\ref{tab:wfd-public} shows that templated WikiFactDiff pairs transferred perfectly at the pair level (development 20/20, holdout 60/60). Pair holdout recorded two \texttt{wiki:ingest} dead letters on one true-negative control; claim extraction and conflict detection completed, so the case remains evaluable and the 1.000 pair score is not rewritten as all-zero dead letters. Two-snapshot advisory-proposal exact success was 10/10 in development and 25/30 in holdout. All 30 holdout replacements were pair true positives; the five exact-success misses were clustering failures (four duplicate correct new-snapshot proposals, one unique correct proposal with a cluster-count assertion failure), not wrong-snapshot selections. Pair detection therefore does not imply a single advisory cluster.
+
+Table~\ref{tab:vitaminc-public} shows a harder public claim--evidence setting. Holdout precision/recall/accuracy were 0.750/0.800/0.767 on 60 families (24 TP, 22 TN, 8 FP, 6 FN), with zero detector dead letters. WikiFactDiff's templated 1.000 pair accuracy must not be used to interpret VitaminC, and neither table is pooled with Table~\ref{tab:holdout}.
+
 \section{Related Work}
 \label{sec:related}
 
@@ -302,7 +347,7 @@ Truth discovery and data fusion address conflicting observations from multiple s
 
 \subsection{Fact Verification and Natural Language Inference}
 
-Fact-verification datasets such as FEVER and SciFact connect claims to supporting or refuting evidence \cite{thorne2018fever,wadden2020scifact}. NLI datasets provide foundational entailment/contradiction/neutral formulations and expose cross-genre difficulty \cite{bowman2015snli,williams2018multinli}. Our use of claims and quotes is compatible with these traditions, but the output is a multi-source governance object rather than an objective-veracity label for a single claim.
+Fact-verification datasets such as FEVER and SciFact connect claims to supporting or refuting evidence \cite{thorne2018fever,wadden2020scifact}. VitaminC constructs contrastive claim--evidence pairs from Wikipedia revisions \cite{schuster2021vitaminc}, and WikiFactDiff organizes atomic Wikidata updates between two public snapshots \cite{ammarkhodja2024wikifactdiff}. NLI datasets provide foundational entailment/contradiction/neutral formulations and expose cross-genre difficulty \cite{bowman2015snli,williams2018multinli}. Our use of claims and quotes is compatible with these traditions, but the output is a multi-source governance object rather than an objective-veracity label for a single claim. Section~\ref{sec:public-transfer} therefore reports adapter-defined transfer on VitaminC and WikiFactDiff separately from document-version governance.
 
 \subsection{RAG and Knowledge Conflicts}
 
@@ -315,7 +360,7 @@ Data provenance motivates retaining source, derivation, and recovery information
 \section{Limitations and Threats to Validity}
 \label{sec:limitations}
 
-The prototype has several limitations. First, the C1 audit is a development/calibration analysis with incomplete dual-review coverage. Second, C4.9 and C4.10 are controlled policy experiments. The C4.10 holdout separates generated fact-family subjects, paths, and labels from development, but retains deliberately simple document syntax and metadata topology. It is therefore a held-out policy test, not a real-document semantic or authority-generalization benchmark.
+The prototype has several limitations. First, the C1 audit is a development/calibration analysis with incomplete dual-review coverage. Second, C4.9 and C4.10 are controlled policy experiments. The C4.10 holdout separates generated fact-family subjects, paths, and labels from development, but retains deliberately simple document syntax and metadata topology. It is therefore a held-out policy test, not a real-document semantic or authority-generalization benchmark. Public WikiFactDiff and VitaminC results are likewise not pooled with those tables: WikiFactDiff uses templated verbalizations and derived snapshot metadata, VitaminC uses an adapter-defined partition of the official real test member, and neither evaluates native headers, multi-authority abstention, adoption/reopen, or enterprise documents.
 
 Third, PDF processing has been tested as binary ingress and claim extraction only; the paper does not claim a PDF--DOCX cross-format clustering benchmark. Fourth, provider random seeds are not portable across the configured model API, so the reported repetitions are independent executions rather than seed-controlled trials. Fifth, the current proposal rule uses explicit issuer/date/version evidence and does not represent organization hierarchies, jurisdiction, legal force, scope precedence, or arbitrary version semantics.
 
@@ -324,9 +369,9 @@ Finally, one earlier synthetic holdout matrix execution became incomplete before
 \section{Conclusion}
 \label{sec:conclusion}
 
-We presented \sys{} Conflict Detection V2, a fact-level conflict-governance prototype for versioned multi-source knowledge bases. The system transforms raw chunk-pair conflicts into \disputedfact{}s, issues global proposals only under all-source metadata consistency, and separates advisory proposals from explicit, snapshot-bound, durable, and reversible governance actions. Controlled real-service experiments demonstrate cost reductions for cascade adjudication, repeated lifecycle safety behavior, binary DocReader integration, and a fact-family policy comparison against simple baselines.
+We presented \sys{} Conflict Detection V2, a fact-level conflict-governance prototype for versioned multi-source knowledge bases. The system transforms raw chunk-pair conflicts into \disputedfact{}s, issues global proposals only under all-source metadata consistency, and separates advisory proposals from explicit, snapshot-bound, durable, and reversible governance actions. Controlled real-service experiments demonstrate cost reductions for cascade adjudication, repeated lifecycle safety behavior, binary DocReader integration, and a fact-family policy comparison against simple baselines. Adapter-defined public transfer adds external text: WikiFactDiff templated pairs transferred at 60/60 holdout accuracy, while VitaminC claim--evidence holdout reached 0.750/0.800/0.767 and WikiFactDiff two-snapshot exact-proposal success was 25/30.
 
-The central conclusion is deliberately narrow: fact-level conflict governance can cluster evidence, abstain under unsafe metadata conditions, and execute reversible winner actions through a fail-closed protocol. Future work should evaluate licensed real versioned documents, independently annotated holdouts, organization-specific authority semantics, cross-format extraction drift, and user-facing review workflows.
+The central conclusion is deliberately narrow: fact-level conflict governance can cluster evidence, abstain under unsafe metadata conditions, and execute reversible winner actions through a fail-closed protocol. Public-text pair transfer is a separate supplement, not a substitute for licensed real versioned documents. Future work should evaluate independently annotated real holdouts, organization-specific authority semantics, cross-format extraction drift, and user-facing review workflows.
 
 \balance
 \bibliographystyle{IEEEtran}
