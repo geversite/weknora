@@ -328,6 +328,16 @@ class PublicBenchmarkAdapterTests(unittest.TestCase):
             self.assertEqual(ok["classification"], "TN")
             self.assertTrue(ok["detector_reused"])
             self.assertTrue(ok["detector_evaluable"])
+            fake = subprocess.CompletedProcess(
+                ["python"],
+                0,
+                stdout="实验完成: /tmp\n  cascade: rules(no/conflict/llm)=0/0/2; LLM(batch/single)=0/2\n",
+                stderr="",
+            )
+            scored = module.score_case(case, 1, completed, ["python"], fake)
+            self.assertEqual(scored["classification"], "TN")
+            self.assertTrue(scored["detector_evaluable"])
+            self.assertFalse(any("detector error:" in item for item in scored["issues"]))
 
     def test_claims_eval_stdio_accepts_chinese_and_records_encode_snippet(self) -> None:
         spec = importlib.util.spec_from_file_location(

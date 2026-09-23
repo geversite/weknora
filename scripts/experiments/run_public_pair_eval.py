@@ -302,10 +302,10 @@ def detector_failure_excerpt(
             lines = [line.strip() for line in stream.splitlines() if line.strip()]
             for line in reversed(lines):
                 lowered = line.lower()
-                if "failed" in lowered or "error" in lowered or "codec" in lowered:
+                if lowered.startswith("cascade:"):
+                    continue
+                if "failed" in lowered or "unicodeencodeerror" in lowered or "codec" in lowered:
                     return sanitize_excerpt(line)
-            if lines:
-                return sanitize_excerpt(lines[-1])
     return ""
 
 
