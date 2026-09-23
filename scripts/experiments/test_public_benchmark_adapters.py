@@ -328,6 +328,15 @@ class PublicBenchmarkAdapterTests(unittest.TestCase):
             self.assertEqual(ok["classification"], "TN")
             self.assertTrue(ok["detector_reused"])
             self.assertTrue(ok["detector_evaluable"])
+            (completed / "failure.txt").write_text(
+                "'ascii' codec can't encode characters in position 29-32: ordinal not in range(128)\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(module.detector_failure_excerpt(completed, None), "")
+            stale = module.score_case(case, 1, completed, ["python"], None, skip_exit_check=True, reused=True)
+            self.assertEqual(stale["classification"], "TN")
+            self.assertTrue(stale["detector_evaluable"])
+            self.assertFalse(any("detector error:" in item for item in stale["issues"]))
             fake = subprocess.CompletedProcess(
                 ["python"],
                 0,

@@ -1634,6 +1634,9 @@ def run_experiment(args: argparse.Namespace) -> int:
         raise ExperimentError(f"输出目录已存在且非空: {output_dir}（需要 --overwrite）")
     output_dir.mkdir(parents=True, exist_ok=True)
     (output_dir / "spans").mkdir(exist_ok=True)
+    stale_failure = output_dir / "failure.txt"
+    if stale_failure.is_file():
+        stale_failure.unlink()
 
     client = APIClient(args.base_url, os.environ.get("WEKNORA_API_KEY"))
     manifest: dict[str, Any] = {
@@ -1680,6 +1683,11 @@ def run_experiment(args: argparse.Namespace) -> int:
 
     if not args.template_kb_id:
         raise ExperimentError("live run requires --template-kb-id or WEKNORA_EXPERIMENT_TEMPLATE_KB")
+    if not str(args.template_kb_id).isascii():
+        raise ExperimentError(
+            "template KB id must be ASCII (http.client encodes the request line as ASCII; "
+            "a non-ASCII id fails before any document is uploaded)"
+        )
 
     db = PostgresExporter()
     try:

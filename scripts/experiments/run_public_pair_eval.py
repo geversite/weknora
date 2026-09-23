@@ -281,12 +281,16 @@ def detector_failure_excerpt(
         except (OSError, json.JSONDecodeError):
             payload = None
         if isinstance(payload, dict):
+            status = str(payload.get("status", ""))
             err = str(payload.get("error") or "").strip()
             if err:
                 return sanitize_excerpt(err)
             kids = payload.get("knowledge_ids")
-            if isinstance(kids, dict) and not kids and str(payload.get("status", "")) == "failed":
+            if isinstance(kids, dict) and not kids and status == "failed":
                 return "failed before document upload (empty knowledge_ids)"
+            # Successful --overwrite can leave a previous failure.txt behind.
+            if status.startswith("completed"):
+                return ""
     failure_path = detector_dir / "failure.txt"
     if failure_path.is_file():
         try:
@@ -368,8 +372,17 @@ def template_kb_source(explicit_template_kb_id: str, environment: dict[str, str]
     echo the actual ID; it is configuration, not an experiment result.
     """
     if explicit_template_kb_id.strip():
+        if not explicit_template_kb_id.isascii():
+            raise PublicPairEvaluationError(
+                "template KB id must be ASCII; a non-ASCII id cannot be sent in the HTTP request line."
+            )
         return "argument"
-    if str(environment.get("WEKNORA_EXPERIMENT_TEMPLATE_KB", "")).strip():
+    env_id = str(environment.get("WEKNORA_EXPERIMENT_TEMPLATE_KB", "")).strip()
+    if env_id:
+        if not env_id.isascii():
+            raise PublicPairEvaluationError(
+                "WEKNORA_EXPERIMENT_TEMPLATE_KB must be ASCII; a non-ASCII id cannot be sent in the HTTP request line."
+            )
         return "environment"
     raise PublicPairEvaluationError(
         "缺少模板 KB 配置：请在同一 shell 设置 WEKNORA_EXPERIMENT_TEMPLATE_KB，"
@@ -423,9 +436,6 @@ def score_case(
     reused: bool = False,
 ) -> dict[str, Any]:
     issues: list[str] = []
-    excerpt = detector_failure_excerpt(detector_dir, result)
-    if excerpt:
-        issues.append(f"detector error: {excerpt}")
     detector_manifest = read_result_json(detector_dir / "manifest.json", issues, "detector manifest")
     detector_metrics = read_result_json(detector_dir / "metrics.json", issues, "detector metrics")
     pairs = read_result_json(detector_dir / "conflict_document_pairs.json", issues, "conflict_document_pairs")
@@ -442,6 +452,9 @@ def score_case(
             issues.append("knowledge_ids empty (failed before document upload)")
     else:
         issues.append("detector manifest 根节点不是对象")
+    excerpt = detector_failure_excerpt(detector_dir, result)
+    if excerpt and not status.startswith("completed"):
+        issues.insert(0, f"detector error: {excerpt}")
     if not isinstance(detector_metrics, dict):
         issues.append("detector metrics 根节点不是对象")
     if not isinstance(pairs, list):
