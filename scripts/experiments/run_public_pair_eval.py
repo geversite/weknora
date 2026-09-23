@@ -21,6 +21,7 @@ import csv
 import datetime as dt
 import json
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -32,8 +33,9 @@ from typing import Any
 from public_benchmark_common import (
     ROOT,
     PublicBenchmarkError,
+    force_utf8_stdio,
     json_dump,
-    remove_tree_if_requested,
+    prepare_output_dir,
     resolve_path,
     safe_git_sha,
     sha256_file,
@@ -47,6 +49,10 @@ from public_benchmark_common import (
 
 RUNNER = ROOT / "scripts/experiments/run_claims_eval.py"
 VALID_SPLITS = {"all", "development", "holdout"}
+SECRET_PATTERN = re.compile(
+    r"(?i)(api[_-]?key|authorization|bearer|password|passwd|secret|token)\s*[:=]\s*\S+",
+)
+DEFAULT_FAIL_FAST_UNEVALUABLE = 5
 
 
 class PublicPairEvaluationError(PublicBenchmarkError):
@@ -254,6 +260,104 @@ def write_command_log(path: Path, command: list[str], result: subprocess.Complet
     path.write_text(body, encoding="utf-8")
 
 
+
+def sanitize_excerpt(text: str, limit: int = 240) -> str:
+    cleaned = SECRET_PATTERN.sub(lambda match: match.group(1) + "=<redacted>", text)
+    cleaned = " ".join(cleaned.split())
+    if len(cleaned) > limit:
+        return cleaned[: limit - 1] + "…"
+    return cleaned
+
+
+def detector_failure_excerpt(
+    detector_dir: Path,
+    result: subprocess.CompletedProcess[str] | None,
+) -> str:
+    """Return a short credential-free reason for a failed detector run."""
+    manifest_path = detector_dir / "manifest.json"
+    if manifest_path.is_file():
+        try:
+            payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            payload = None
+        if isinstance(payload, dict):
+            err = str(payload.get("error") or "").strip()
+            if err:
+                return sanitize_excerpt(err)
+            kids = payload.get("knowledge_ids")
+            if isinstance(kids, dict) and not kids and str(payload.get("status", "")) == "failed":
+                return "failed before document upload (empty knowledge_ids)"
+    failure_path = detector_dir / "failure.txt"
+    if failure_path.is_file():
+        try:
+            body = failure_path.read_text(encoding="utf-8", errors="replace").strip()
+        except OSError:
+            body = ""
+        if body:
+            return sanitize_excerpt(body)
+    if result is not None:
+        for stream in (result.stderr, result.stdout):
+            if not stream:
+                continue
+            lines = [line.strip() for line in stream.splitlines() if line.strip()]
+            for line in reversed(lines):
+                lowered = line.lower()
+                if "failed" in lowered or "error" in lowered or "codec" in lowered:
+                    return sanitize_excerpt(line)
+            if lines:
+                return sanitize_excerpt(lines[-1])
+    return ""
+
+
+def detector_dir_reusable(detector_dir: Path) -> bool:
+    """True when an interrupted batch already has a completed, scorable detector run."""
+    try:
+        manifest = read_json(detector_dir / "manifest.json")
+        metrics = read_json(detector_dir / "metrics.json")
+        pairs = read_json(detector_dir / "conflict_document_pairs.json")
+    except PublicPairEvaluationError:
+        return False
+    return (
+        isinstance(manifest, dict)
+        and str(manifest.get("status", "")).startswith("completed")
+        and isinstance(metrics, dict)
+        and isinstance(pairs, list)
+    )
+
+
+def unevaluable_error_key(row: dict[str, Any]) -> str:
+    for item in row.get("issues") or []:
+        text = str(item)
+        if text.startswith("detector error:"):
+            return sanitize_excerpt(text, 160)
+    if row.get("issues"):
+        return sanitize_excerpt(str(row["issues"][0]), 160)
+    return "unevaluable"
+
+
+def build_detector_command(
+    case: dict[str, Any],
+    detector_dir: Path,
+    template_kb_id: str,
+    detector_conflict_timeout_seconds: int,
+    *,
+    overwrite: bool = False,
+) -> list[str]:
+    command = [
+        sys.executable,
+        str(RUNNER),
+        "--scenario", str(case["scenario"]),
+        "--variant", str(case["variant"]),
+        "--output", str(detector_dir),
+        "--conflict-timeout-seconds", str(detector_conflict_timeout_seconds),
+    ]
+    if template_kb_id:
+        command.extend(["--template-kb-id", template_kb_id])
+    if overwrite:
+        command.append("--overwrite")
+    return command
+
+
 def template_kb_source(explicit_template_kb_id: str, environment: dict[str, str]) -> str:
     """Fail before a batch when the child runner cannot create a temporary KB.
 
@@ -277,7 +381,10 @@ def run_service_preflight(output: Path, environment: dict[str, str]) -> dict[str
     command = [sys.executable, str(RUNNER), "--check", "--check-db"]
     log_path = output / "service_preflight.log"
     try:
-        result = subprocess.run(command, cwd=ROOT, text=True, capture_output=True, check=False, env=environment)
+        result = subprocess.run(
+            command, cwd=ROOT, text=True, encoding="utf-8", errors="replace",
+            capture_output=True, check=False, env=environment,
+        )
     except OSError as exc:
         write_command_log(log_path, command, None, str(exc))
         raise PublicPairEvaluationError(f"无法启动 public-eval service preflight: {exc}") from exc
@@ -304,54 +411,44 @@ def read_result_json(path: Path, issues: list[str], label: str) -> Any:
         return None
 
 
-def run_case(
+def score_case(
     case: dict[str, Any],
     replicate: int,
-    output: Path,
-    env: dict[str, str],
-    template_kb_id: str,
-    detector_conflict_timeout_seconds: int,
+    detector_dir: Path,
+    command: list[str],
+    result: subprocess.CompletedProcess[str] | None,
+    *,
+    skip_exit_check: bool = False,
+    reused: bool = False,
 ) -> dict[str, Any]:
-    detector_dir = output / "replicates" / str(case["id"]) / f"replicate-{replicate:02d}" / "detector"
-    command = [
-        sys.executable,
-        str(RUNNER),
-        "--scenario", str(case["scenario"]),
-        "--variant", str(case["variant"]),
-        "--output", str(detector_dir),
-        "--conflict-timeout-seconds", str(detector_conflict_timeout_seconds),
-    ]
-    if template_kb_id:
-        command.extend(["--template-kb-id", template_kb_id])
-    log_path = detector_dir.parent / "detector_command.log"
-    try:
-        result = subprocess.run(
-            command, cwd=ROOT, text=True, encoding="utf-8", errors="replace",
-            capture_output=True, check=False, env=env,
-        )
-    except OSError as exc:
-        write_command_log(log_path, command, None, str(exc))
-        return result_row(
-            case, replicate, detector_dir, command, None, None, [f"无法启动 detector: {exc}"],
-            proposal_issues=["detector 未启动，proposal artifact 不可评估"],
-        )
-    write_command_log(log_path, command, result)
-
     issues: list[str] = []
+    excerpt = detector_failure_excerpt(detector_dir, result)
+    if excerpt:
+        issues.append(f"detector error: {excerpt}")
     detector_manifest = read_result_json(detector_dir / "manifest.json", issues, "detector manifest")
     detector_metrics = read_result_json(detector_dir / "metrics.json", issues, "detector metrics")
     pairs = read_result_json(detector_dir / "conflict_document_pairs.json", issues, "conflict_document_pairs")
     status = ""
     if isinstance(detector_manifest, dict):
         status = str(detector_manifest.get("status", ""))
+        kids = detector_manifest.get("knowledge_ids")
+        if (
+            isinstance(kids, dict)
+            and not kids
+            and not status.startswith("completed")
+            and not any("knowledge_ids" in item for item in issues)
+        ):
+            issues.append("knowledge_ids empty (failed before document upload)")
     else:
         issues.append("detector manifest 根节点不是对象")
     if not isinstance(detector_metrics, dict):
         issues.append("detector metrics 根节点不是对象")
     if not isinstance(pairs, list):
         issues.append("conflict_document_pairs 根节点不是数组")
-    if result.returncode not in {0, 2}:
+    if result is not None and result.returncode not in {0, 2}:
         issues.append(f"detector exit={result.returncode}，预期为 0 或 2（评测命中失败仍会返回 2）")
+    elif result is None and not skip_exit_check:
+        issues.append("detector 未启动")
     if not status.startswith("completed"):
         issues.append(f"detector manifest status={status!r}，预期 completed*")
 
@@ -374,7 +471,48 @@ def run_case(
         manifest_status=status,
         winner_proposals=winner_proposals,
         proposal_issues=proposal_issues,
+        reused=reused,
     )
+
+
+def run_case(
+    case: dict[str, Any],
+    replicate: int,
+    output: Path,
+    env: dict[str, str],
+    template_kb_id: str,
+    detector_conflict_timeout_seconds: int,
+    *,
+    resume: bool = False,
+) -> dict[str, Any]:
+    detector_dir = output / "replicates" / str(case["id"]) / f"replicate-{replicate:02d}" / "detector"
+    log_path = detector_dir.parent / "detector_command.log"
+    if resume and detector_dir_reusable(detector_dir):
+        command = build_detector_command(
+            case, detector_dir, template_kb_id, detector_conflict_timeout_seconds,
+        )
+        return score_case(
+            case, replicate, detector_dir, command, None,
+            skip_exit_check=True, reused=True,
+        )
+    overwrite_child = detector_dir.exists() and any(detector_dir.iterdir())
+    command = build_detector_command(
+        case, detector_dir, template_kb_id, detector_conflict_timeout_seconds,
+        overwrite=overwrite_child,
+    )
+    try:
+        result = subprocess.run(
+            command, cwd=ROOT, text=True, encoding="utf-8", errors="replace",
+            capture_output=True, check=False, env=env,
+        )
+    except OSError as exc:
+        write_command_log(log_path, command, None, str(exc))
+        return result_row(
+            case, replicate, detector_dir, command, None, None, [f"无法启动 detector: {exc}"],
+            proposal_issues=["detector 未启动，proposal artifact 不可评估"],
+        )
+    write_command_log(log_path, command, result)
+    return score_case(case, replicate, detector_dir, command, result)
 
 
 def result_row(
@@ -390,6 +528,7 @@ def result_row(
     manifest_status: str = "",
     winner_proposals: Any = None,
     proposal_issues: list[str] | None = None,
+    reused: bool = False,
 ) -> dict[str, Any]:
     evaluable = not issues and isinstance(detector_metrics, dict) and observed is not None
     expected = bool(case["expected_conflict"])
@@ -474,6 +613,7 @@ def result_row(
         "proposal_issues": proposal_issues,
         "detector_exit_code": result.returncode if result is not None else None,
         "detector_manifest_status": manifest_status,
+        "detector_reused": reused,
         "detector_dir": str(detector_dir),
         "detector_command": shlex.join(command),
         "issues": issues,
@@ -755,6 +895,147 @@ upstream dataset-specific transformation and license notes.
     path.write_text(text, encoding="utf-8")
 
 
+EXECUTION_CSV_FIELDS = [
+    "case_id", "fact_family_id", "split", "case_type", "source_label", "variant", "replicate",
+    "expected_conflict", "observed_conflict", "classification", "correct", "detector_evaluable",
+    "expected_winner_document", "expected_winner_proposal_source_count", "observed_winner_count",
+    "observed_winner_documents", "observed_winner_source_counts", "proposal_applicable",
+    "proposal_evaluable", "proposal_correct", "detector_exit_code", "detector_manifest_status",
+    "detector_reused", "dead_letter_count", "claim_count_total", "conflict_count_total",
+    "detector_dir", "detector_command", "issues", "proposal_issues", "cascade",
+]
+
+
+def write_execution_csv(path: Path, results: list[dict[str, Any]]) -> None:
+    write_csv(
+        path,
+        [
+            {
+                **{
+                    key: value for key, value in row.items()
+                    if key not in {
+                        "cascade", "issues", "proposal_issues",
+                        "observed_winner_documents", "observed_winner_source_counts",
+                    }
+                },
+                "issues": " | ".join(str(value) for value in row["issues"]),
+                "proposal_issues": " | ".join(str(value) for value in row["proposal_issues"]),
+                "observed_winner_documents": ";".join(row["observed_winner_documents"]),
+                "observed_winner_source_counts": ";".join(
+                    "" if value is None else str(value) for value in row["observed_winner_source_counts"]
+                ),
+                "cascade": json.dumps(row["cascade"], ensure_ascii=False, sort_keys=True),
+            }
+            for row in results
+        ],
+        EXECUTION_CSV_FIELDS,
+    )
+
+
+def write_run_artifacts(
+    output: Path,
+    run_manifest: dict[str, Any],
+    results: list[dict[str, Any]],
+    *,
+    replicates: int,
+    manifest: dict[str, Any],
+    split: str,
+    cases_planned: int,
+    status: str,
+) -> dict[str, Any]:
+    strict_rows = strict_fact_rows(results, replicates) if results else []
+    execution_metrics = confusion(results)
+    strict_metrics = confusion(strict_rows, strict=True)
+    dead_letters = aggregate_dead_letters(results)
+    proposal_transfer = aggregate_proposal_transfer(results, strict_rows)
+    run_complete = (
+        bool(results)
+        and len(results) == cases_planned * replicates
+        and bool(execution_metrics["complete"])
+        and bool(proposal_transfer["execution_level"]["complete"])
+        and bool(proposal_transfer["fact_family_strict_all_replicates"]["complete"])
+    )
+    metrics = {
+        "schema_version": 1,
+        "task": manifest["task"],
+        "variant": manifest["variant"],
+        "split": split,
+        "replicates_requested": replicates,
+        "case_definitions": cases_planned,
+        "fact_family_definitions": len(strict_rows),
+        "execution_level": execution_metrics,
+        "fact_family_strict_all_replicates": strict_metrics,
+        "proposal_transfer": proposal_transfer,
+        "dead_letter_count": dead_letters,
+        "claim_count": aggregate_basic_counts(results, "claim_count_total"),
+        "raw_conflict_count": aggregate_basic_counts(results, "conflict_count_total"),
+        "cascade": aggregate_cascade(results),
+        "seed_control": "none; independent fresh-KB service executions only",
+        "scope_note": (
+            "Public pair transfer metric only; not real enterprise-document, human-review, native-header, "
+            "end-to-end RAG, or provider-seed-controlled evidence."
+        ),
+        "complete": run_complete,
+    }
+    json_dump(output / "execution_results.json", results)
+    json_dump(output / "fact_family_results.json", strict_rows)
+    write_execution_csv(output / "execution_results.csv", results)
+    write_csv(
+        output / "fact_family_results.csv",
+        [
+            {
+                **row,
+                "replicate_classifications": ";".join(row["replicate_classifications"]),
+                "replicate_proposal_correct": ";".join(
+                    "" if value is None else str(value).lower() for value in row["replicate_proposal_correct"]
+                ),
+            }
+            for row in strict_rows
+        ],
+        [
+            "fact_family_id", "case_id", "split", "case_type", "source_label", "expected_conflict",
+            "replicates_expected", "replicates_observed", "replicate_classifications", "classification",
+            "strictly_correct", "proposal_applicable", "expected_winner_document",
+            "expected_winner_proposal_source_count", "replicate_proposal_correct", "proposal_evaluable",
+            "proposal_strictly_correct",
+        ],
+    )
+    run_manifest["artifact_complete"] = run_complete
+    json_dump(output / "metrics.json", metrics)
+    write_report(
+        output / "report.md", run_manifest, execution_metrics, strict_metrics, dead_letters, proposal_transfer,
+    )
+    run_manifest["status"] = status if status != "completed" or run_complete else "completed_incomplete_artifacts"
+    if status == "completed" and not run_complete:
+        run_manifest["status"] = "completed_incomplete_artifacts"
+    run_manifest["finished_at"] = utc_now()
+    json_dump(output / "manifest.json", run_manifest)
+    return metrics
+
+
+def print_run_summary(output: Path, metrics: dict[str, Any]) -> None:
+    strict_metrics = metrics["fact_family_strict_all_replicates"]
+    execution_metrics = metrics["execution_level"]
+    print(f"Public pair evaluation complete: {output}")
+    print(
+        "  fact-family strict-all-replicates P/R/accuracy: "
+        f"{strict_metrics['precision']} / {strict_metrics['recall']} / {strict_metrics['accuracy']}",
+    )
+    print(
+        "  evaluable executions / facts: "
+        f"{execution_metrics['evaluable_observations']}/{execution_metrics['observations']} / "
+        f"{strict_metrics['evaluable_observations']}/{strict_metrics['observations']}",
+    )
+    print(
+        "  proposal exact-success (strict facts): "
+        f"{metrics['proposal_transfer']['fact_family_strict_all_replicates']['success_rate']}",
+    )
+    print(
+        "  dead letters total / all-zero: "
+        f"{metrics['dead_letter_count']['total']} / {metrics['dead_letter_count']['all_zero']}",
+    )
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Run a prepared public pair conflict-transfer manifest against a live WeKnora service.",
@@ -767,13 +1048,30 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", default="", help="Output root; defaults to experiments/comparisons/<timestamp>-public-pair-<manifest>")
     parser.add_argument("--template-kb-id", default="", help="Optional override; otherwise run_claims_eval reads WEKNORA_EXPERIMENT_TEMPLATE_KB")
     parser.add_argument("--detector-conflict-timeout-seconds", type=int, default=60, help="Per-case positive-pair wait before completed detector artifacts are scored")
+    parser.add_argument(
+        "--fail-fast-unevaluable",
+        type=int,
+        default=DEFAULT_FAIL_FAST_UNEVALUABLE,
+        help="Stop after N consecutive UNEVALUABLE cases with the same detector error; 0 disables",
+    )
     parser.add_argument("--dry-run", action="store_true", help="Validate manifest and print planned cases without contacting services")
     parser.add_argument("--overwrite", action="store_true", help="Explicitly replace a non-empty output directory")
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Reuse completed detector artifacts in an existing output directory and rerun only incomplete/failed cases",
+    )
     return parser.parse_args()
 
 
 def main() -> int:
+    force_utf8_stdio()
     args = parse_args()
+    output: Path | None = None
+    run_manifest: dict[str, Any] | None = None
+    results: list[dict[str, Any]] = []
+    cases: list[dict[str, Any]] = []
+    manifest: dict[str, Any] | None = None
     try:
         if args.replicates < 1 or args.replicates > 10:
             raise PublicPairEvaluationError("--replicates 必须在 1–10 之间")
@@ -781,6 +1079,8 @@ def main() -> int:
             raise PublicPairEvaluationError("--max-cases 不能为负数")
         if args.detector_conflict_timeout_seconds < 1:
             raise PublicPairEvaluationError("--detector-conflict-timeout-seconds 必须为正整数")
+        if args.fail_fast_unevaluable < 0:
+            raise PublicPairEvaluationError("--fail-fast-unevaluable 不能为负数")
         manifest_path = Path(args.manifest).expanduser().resolve()
         manifest = load_manifest(manifest_path)
         cases = select_cases(manifest["cases"], args.split, args.max_cases)
@@ -796,6 +1096,8 @@ def main() -> int:
             "fact_family_count": len({str(case['fact_family_id']) for case in cases}),
             "max_cases": args.max_cases,
             "detector_conflict_timeout_seconds": args.detector_conflict_timeout_seconds,
+            "fail_fast_unevaluable": args.fail_fast_unevaluable,
+            "resume": bool(args.resume),
             "cases": [
                 {"id": case["id"], "fact_family_id": case["fact_family_id"], "expected_conflict": case["expected_conflict"]}
                 for case in cases
@@ -809,7 +1111,11 @@ def main() -> int:
         environment = utf8_child_environment()
         template_source = template_kb_source(args.template_kb_id, environment)
         default_dir = ROOT / "experiments/comparisons" / f"{utc_stamp()}-public-pair-{manifest['name']}"
-        output = remove_tree_if_requested(Path(args.output_dir) if args.output_dir else default_dir, args.overwrite)
+        output = prepare_output_dir(
+            Path(args.output_dir) if args.output_dir else default_dir,
+            overwrite=args.overwrite,
+            resume=args.resume,
+        )
         run_manifest = {
             **{key: value for key, value in plan.items() if key != "note"},
             "created_at": utc_now(),
@@ -829,129 +1135,76 @@ def main() -> int:
             json_dump(output / "manifest.json", run_manifest)
             raise
         json_dump(output / "manifest.json", run_manifest)
-        results: list[dict[str, Any]] = []
+
+        consecutive_unevaluable = 0
+        last_error_key = ""
+        stopped_reason = ""
         for case in cases:
+            if stopped_reason:
+                break
             for replicate in range(1, args.replicates + 1):
                 result = run_case(
                     case, replicate, output, environment, args.template_kb_id,
-                    args.detector_conflict_timeout_seconds,
+                    args.detector_conflict_timeout_seconds, resume=args.resume,
                 )
                 results.append(result)
-                print(
-                    f"[public-pair] {case['id']} r{replicate}: "
-                    f"{result['classification']}"
-                    + (f" ({'; '.join(result['issues'])})" if result["issues"] else ""),
-                )
+                extra = ""
+                if result["detector_reused"]:
+                    extra = " reused"
+                if result["issues"]:
+                    extra += f" ({'; '.join(result['issues'])})"
+                print(f"[public-pair] {case['id']} r{replicate}: {result['classification']}{extra}")
+                json_dump(output / "execution_results.json", results)
+                if result["detector_evaluable"]:
+                    consecutive_unevaluable = 0
+                    last_error_key = ""
+                    continue
+                key = unevaluable_error_key(result)
+                if key == last_error_key:
+                    consecutive_unevaluable += 1
+                else:
+                    consecutive_unevaluable = 1
+                    last_error_key = key
+                if args.fail_fast_unevaluable and consecutive_unevaluable >= args.fail_fast_unevaluable:
+                    stopped_reason = (
+                        f"连续 {consecutive_unevaluable} 条 UNEVALUABLE 且 detector error 相同；"
+                        "停止后续 case，避免把同一基础设施故障扩散成整批。请先诊断再 --resume 同一目录。"
+                    )
+                    print(f"[public-pair] FAIL-FAST: {stopped_reason}", file=sys.stderr)
+                    print(f"[public-pair] FAIL-FAST error: {key}", file=sys.stderr)
+                    break
 
-        strict_rows = strict_fact_rows(results, args.replicates)
-        execution_metrics = confusion(results)
-        strict_metrics = confusion(strict_rows, strict=True)
-        dead_letters = aggregate_dead_letters(results)
-        proposal_transfer = aggregate_proposal_transfer(results, strict_rows)
-        metrics = {
-            "schema_version": 1,
-            "task": manifest["task"],
-            "variant": manifest["variant"],
-            "split": args.split,
-            "replicates_requested": args.replicates,
-            "case_definitions": len(cases),
-            "fact_family_definitions": len(strict_rows),
-            "execution_level": execution_metrics,
-            "fact_family_strict_all_replicates": strict_metrics,
-            "proposal_transfer": proposal_transfer,
-            "dead_letter_count": dead_letters,
-            "claim_count": aggregate_basic_counts(results, "claim_count_total"),
-            "raw_conflict_count": aggregate_basic_counts(results, "conflict_count_total"),
-            "cascade": aggregate_cascade(results),
-            "seed_control": "none; independent fresh-KB service executions only",
-            "scope_note": (
-                "Public pair transfer metric only; not real enterprise-document, human-review, native-header, "
-                "end-to-end RAG, or provider-seed-controlled evidence."
-            ),
-        }
-        json_dump(output / "execution_results.json", results)
-        json_dump(output / "fact_family_results.json", strict_rows)
-        write_csv(
-            output / "execution_results.csv",
-            [
-                {
-                    **{
-                        key: value for key, value in row.items()
-                        if key not in {"cascade", "issues", "proposal_issues", "observed_winner_documents", "observed_winner_source_counts"}
-                    },
-                    "issues": " | ".join(str(value) for value in row["issues"]),
-                    "proposal_issues": " | ".join(str(value) for value in row["proposal_issues"]),
-                    "observed_winner_documents": ";".join(row["observed_winner_documents"]),
-                    "observed_winner_source_counts": ";".join(
-                        "" if value is None else str(value) for value in row["observed_winner_source_counts"]
-                    ),
-                    "cascade": json.dumps(row["cascade"], ensure_ascii=False, sort_keys=True),
-                }
-                for row in results
-            ],
-            [
-                "case_id", "fact_family_id", "split", "case_type", "source_label", "variant", "replicate",
-                "expected_conflict", "observed_conflict", "classification", "correct", "detector_evaluable",
-                "expected_winner_document", "expected_winner_proposal_source_count", "observed_winner_count",
-                "observed_winner_documents", "observed_winner_source_counts", "proposal_applicable",
-                "proposal_evaluable", "proposal_correct", "detector_exit_code", "detector_manifest_status",
-                "dead_letter_count", "claim_count_total", "conflict_count_total", "detector_dir", "detector_command",
-                "issues", "proposal_issues", "cascade",
-            ],
+        status = "completed"
+        exit_code = 0
+        if stopped_reason:
+            run_manifest["error"] = stopped_reason
+            status = "failed_fast"
+            exit_code = 1
+        metrics = write_run_artifacts(
+            output, run_manifest, results,
+            replicates=args.replicates, manifest=manifest, split=args.split,
+            cases_planned=len(cases), status=status,
         )
-        write_csv(
-            output / "fact_family_results.csv",
-            [
-                {
-                    **row,
-                    "replicate_classifications": ";".join(row["replicate_classifications"]),
-                    "replicate_proposal_correct": ";".join(
-                        "" if value is None else str(value).lower() for value in row["replicate_proposal_correct"]
-                    ),
-                }
-                for row in strict_rows
-            ],
-            [
-                "fact_family_id", "case_id", "split", "case_type", "source_label", "expected_conflict",
-                "replicates_expected", "replicates_observed", "replicate_classifications", "classification",
-                "strictly_correct", "proposal_applicable", "expected_winner_document",
-                "expected_winner_proposal_source_count", "replicate_proposal_correct", "proposal_evaluable",
-                "proposal_strictly_correct",
-            ],
-        )
-        run_complete = (
-            bool(execution_metrics["complete"])
-            and bool(proposal_transfer["execution_level"]["complete"])
-            and bool(proposal_transfer["fact_family_strict_all_replicates"]["complete"])
-        )
-        metrics["complete"] = run_complete
-        run_manifest["artifact_complete"] = run_complete
-        json_dump(output / "metrics.json", metrics)
-        write_report(
-            output / "report.md", run_manifest, execution_metrics, strict_metrics, dead_letters, proposal_transfer,
-        )
-        run_manifest["status"] = "completed" if run_complete else "completed_incomplete_artifacts"
-        run_manifest["finished_at"] = utc_now()
-        json_dump(output / "manifest.json", run_manifest)
-        print(f"Public pair evaluation complete: {output}")
-        print(
-            "  fact-family strict-all-replicates P/R/accuracy: "
-            f"{strict_metrics['precision']} / {strict_metrics['recall']} / {strict_metrics['accuracy']}",
-        )
-        print(
-            "  evaluable executions / facts: "
-            f"{execution_metrics['evaluable_observations']}/{execution_metrics['observations']} / "
-            f"{strict_metrics['evaluable_observations']}/{strict_metrics['observations']}",
-        )
-        print(
-            "  proposal exact-success (strict facts): "
-            f"{proposal_transfer['fact_family_strict_all_replicates']['success_rate']}",
-        )
-        print(
-            "  dead letters total / all-zero: "
-            f"{dead_letters['total']} / {dead_letters['all_zero']}",
-        )
-        return 0 if run_complete else 2
+        print_run_summary(output, metrics)
+        if stopped_reason:
+            return exit_code
+        return 0 if metrics["complete"] else 2
+    except KeyboardInterrupt:
+        if output is not None and run_manifest is not None and manifest is not None:
+            run_manifest["error"] = "interrupted"
+            write_run_artifacts(
+                output, run_manifest, results,
+                replicates=args.replicates, manifest=manifest, split=args.split,
+                cases_planned=len(cases), status="interrupted",
+            )
+            print(
+                f"[public-pair] interrupted after {len(results)} execution(s); "
+                f"partial artifacts written to {output}. Resume with --resume 同一目录，不要 --overwrite。",
+                file=sys.stderr,
+            )
+        else:
+            print("[public-pair] interrupted", file=sys.stderr)
+        return 130
     except PublicBenchmarkError as exc:
         print(f"[public-pair] FAILED: {exc}", file=sys.stderr)
         return 1

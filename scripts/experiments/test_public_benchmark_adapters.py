@@ -255,6 +255,79 @@ class PublicBenchmarkAdapterTests(unittest.TestCase):
             catalog = (output / "case_catalog.csv").read_text(encoding="utf-8")
             self.assertNotIn("collide-", catalog)
 
+    def test_utf8_child_environment_overrides_non_utf8_locale(self) -> None:
+        script_dir = ROOT / "scripts/experiments"
+        sys.path.insert(0, str(script_dir))
+        from public_benchmark_common import locale_is_utf8, prepare_output_dir, utf8_child_environment
+        from public_benchmark_common import PublicBenchmarkError as CommonError
+
+        self.assertFalse(locale_is_utf8("C"))
+        self.assertTrue(locale_is_utf8("C.UTF-8"))
+        self.assertTrue(locale_is_utf8("en_US.utf8"))
+        ascii_env = utf8_child_environment({"LANG": "C", "LC_ALL": "C", "PATH": "/bin"})
+        self.assertEqual(ascii_env["PYTHONUTF8"], "1")
+        self.assertEqual(ascii_env["PYTHONIOENCODING"], "utf-8")
+        self.assertEqual(ascii_env["LC_ALL"], "C.UTF-8")
+        latin_env = utf8_child_environment({"LANG": "en_US", "PATH": "/bin"})
+        self.assertEqual(latin_env["LANG"], "C.UTF-8")
+        keep = utf8_child_environment({"LANG": "zh_CN.UTF-8", "LC_ALL": "zh_CN.UTF-8", "PATH": "/bin"})
+        self.assertEqual(keep["LC_ALL"], "zh_CN.UTF-8")
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / "out"
+            root.mkdir()
+            (root / "keep.txt").write_text("x", encoding="utf-8")
+            resumed = prepare_output_dir(root, overwrite=False, resume=True)
+            self.assertTrue((resumed / "keep.txt").is_file())
+            with self.assertRaises(CommonError):
+                prepare_output_dir(root, overwrite=True, resume=True)
+
+    def test_failed_detector_error_is_surfaced_and_completed_dir_is_reusable(self) -> None:
+        script_dir = ROOT / "scripts/experiments"
+        sys.path.insert(0, str(script_dir))
+        spec = importlib.util.spec_from_file_location("public_pair_eval_error_test", PAIR_RUNNER)
+        assert spec and spec.loader
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        with tempfile.TemporaryDirectory() as temp:
+            failed = Path(temp) / "failed" / "detector"
+            failed.mkdir(parents=True)
+            (failed / "manifest.json").write_text(json.dumps({
+                "status": "failed",
+                "error": "'ascii' codec can't encode characters in position 29-32: ordinal not in range(128)",
+                "knowledge_ids": {},
+            }, ensure_ascii=False), encoding="utf-8")
+            excerpt = module.detector_failure_excerpt(failed, None)
+            self.assertIn("ascii", excerpt)
+            self.assertFalse(module.detector_dir_reusable(failed))
+            case = {
+                "id": "vitaminc-supports-demo",
+                "fact_family_id": "fam",
+                "split": "holdout",
+                "case_type": "pair",
+                "source_label": "supports",
+                "variant": "c2-rules",
+                "expected_conflict": False,
+                "expected_pair": {"left": "claim", "right": "evidence"},
+                "expected_winner_document": "",
+                "expected_winner_proposal_source_count": None,
+                "scenario": "unused.json",
+            }
+            row = module.score_case(case, 1, failed, ["python", "run_claims_eval.py"], None, skip_exit_check=True)
+            self.assertEqual(row["classification"], "UNEVALUABLE")
+            self.assertTrue(any("detector error:" in item and "ascii" in item for item in row["issues"]))
+            self.assertEqual(module.unevaluable_error_key(row)[:20], "detector error: 'asc")
+
+            completed = Path(temp) / "completed" / "detector"
+            completed.mkdir(parents=True)
+            (completed / "manifest.json").write_text(json.dumps({"status": "completed", "knowledge_ids": {"claim": "k1"}}), encoding="utf-8")
+            (completed / "metrics.json").write_text(json.dumps({"claim_count_total": 2, "dead_letter_count": 0, "cascade": {}}), encoding="utf-8")
+            (completed / "conflict_document_pairs.json").write_text("[]", encoding="utf-8")
+            self.assertTrue(module.detector_dir_reusable(completed))
+            ok = module.score_case(case, 1, completed, ["python"], None, skip_exit_check=True, reused=True)
+            self.assertEqual(ok["classification"], "TN")
+            self.assertTrue(ok["detector_reused"])
+            self.assertTrue(ok["detector_evaluable"])
+
     def test_strict_fact_family_and_proposal_scoring_do_not_pool_replicates(self) -> None:
         script_dir = ROOT / "scripts/experiments"
         sys.path.insert(0, str(script_dir))

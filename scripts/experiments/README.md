@@ -696,7 +696,16 @@ make experiment-public-pair-eval \
   PUBLIC_OUTPUT="$VITAMINC_ROOT/runs/holdout-r1"
 ```
 
-`run_public_pair_eval.py` 会先检查模板 KB 配置，并执行一次已有的只读 `run_claims_eval.py --check --check-db` service/migration preflight；preflight 失败时不会启动任何 case，日志写入 `<output>/service_preflight.log`。随后它在每个 case 创建 fresh temporary KB，复用真实 HTTP API → Asynq → PostgreSQL 导出链路。它会分别输出 execution-level 指标、primary strict-all-replicates fact-family 指标、dead-letter 完整性、cascade aggregate 和每个 case 的 immutable artifact 路径。任何缺失/失败 artifact 都是 `UNEVALUABLE`，不会被误计为 TN；完整 headline P/R/accuracy 会置为 `null`，仅保留 conditional 指标。
+`run_public_pair_eval.py` 会先检查模板 KB 配置，并执行一次已有的只读 `run_claims_eval.py --check --check-db` service/migration preflight；preflight 失败时不会启动任何 case，日志写入 `<output>/service_preflight.log`。随后它在每个 case 创建 fresh temporary KB，复用真实 HTTP API → Asynq → PostgreSQL 导出链路。它会分别输出 execution-level 指标、primary strict-all-replicates fact-family 指标、dead-letter 完整性、cascade aggregate 和每个 case 的 immutable artifact 路径。任何缺失/失败 artifact 都是 `UNEVALUABLE`，不会被误计为 TN；完整 headline P/R/accuracy 会置为 `null`，仅保留 conditional 指标。UNEVALUABLE 行会附带 detector `manifest.error` / `failure.txt` 的短摘要，避免只看到缺 `metrics.json`。默认在连续 5 条相同 detector error 的 UNEVALUABLE 后 fail-fast，避免把同一基础设施故障跑满 holdout。Ctrl+C 会写出已完成 case 的 partial artifacts。若要继续同一目录，使用 `PUBLIC_RESUME=1`，不要 `--overwrite`：
+
+```bash
+make experiment-public-pair-eval \
+  PUBLIC_MANIFEST="$VITAMINC_ROOT/pair_eval_manifest.json" \
+  SPLIT=holdout \
+  PUBLIC_REPLICATES=1 \
+  PUBLIC_OUTPUT="$VITAMINC_ROOT/runs/holdout-r1-retry1" \
+  PUBLIC_RESUME=1
+```
 
 若早期 public-pair run 的 `metrics.json.cascade.totals` 异常全为零，但每个 detector 的 `metrics.json.cascade.totals` 实际存在数值，不要重跑模型。使用只读、保留旧 summary 备份的修复工具：
 

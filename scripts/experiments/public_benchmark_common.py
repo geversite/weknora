@@ -19,6 +19,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import unicodedata
 import zipfile
 from pathlib import Path
@@ -29,21 +30,37 @@ ROOT = Path(__file__).resolve().parents[2]
 VALID_VARIANTS = {"v1", "c1", "c2-rules", "c2-batch"}
 
 
+def locale_is_utf8(value: str) -> bool:
+    return "UTF8" in value.upper().replace("-", "")
+
+
 def utf8_child_environment(base: dict[str, str] | None = None) -> dict[str, str]:
     """Force UTF-8 I/O for detector subprocesses.
 
     A login shell with LANG=C makes Python 3 encode stderr/HTTP helpers as
     ASCII. ExperimentError messages and cloned KB JSON then raise
     UnicodeEncodeError before any document is uploaded (empty knowledge_ids).
+    Non-UTF-8 locales such as en_US (no suffix) are also replaced.
     """
     env = dict(base or os.environ)
     env["PYTHONUTF8"] = "1"
     env["PYTHONIOENCODING"] = "utf-8"
     lang = (env.get("LC_ALL") or env.get("LANG") or "").strip()
-    if not lang or lang.upper() in {"C", "POSIX"}:
+    if not lang or lang.upper() in {"C", "POSIX"} or not locale_is_utf8(lang):
         env["LANG"] = "C.UTF-8"
         env["LC_ALL"] = "C.UTF-8"
     return env
+
+
+def force_utf8_stdio() -> None:
+    """Best-effort UTF-8 stdout/stderr so Chinese experiment errors can print."""
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            try:
+                reconfigure(encoding="utf-8", errors="replace")
+            except (OSError, ValueError):
+                continue
 
 
 class PublicBenchmarkError(RuntimeError):
@@ -397,12 +414,27 @@ def safe_case_token(value: str) -> str:
 
 def remove_tree_if_requested(path: Path, overwrite: bool) -> Path:
     """Create an output folder; destructive replacement needs explicit opt-in."""
+    return prepare_output_dir(path, overwrite=overwrite, resume=False)
+
+
+def prepare_output_dir(path: Path, *, overwrite: bool, resume: bool) -> Path:
+    """Create or reuse an experiment output folder.
+
+    ``--overwrite`` deletes a non-empty directory. ``--resume`` keeps existing
+    per-case detector artifacts so a Ctrl+C / fail-fast batch can continue.
+    The two flags are mutually exclusive.
+    """
+    if overwrite and resume:
+        raise PublicBenchmarkError("--overwrite 与 --resume 不能同时使用")
     output = path.expanduser().resolve()
     if output.exists() and any(output.iterdir()):
-        if not overwrite:
+        if overwrite:
+            shutil.rmtree(output)
+        elif resume:
+            return output
+        else:
             raise PublicBenchmarkError(
-                f"输出目录已存在且非空: {output}；使用新目录，或确认后传 --overwrite。",
+                f"输出目录已存在且非空: {output}；使用新目录，或确认后传 --overwrite / --resume。",
             )
-        shutil.rmtree(output)
     output.mkdir(parents=True, exist_ok=True)
     return output
