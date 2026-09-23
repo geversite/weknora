@@ -54,13 +54,27 @@ def utf8_child_environment(base: dict[str, str] | None = None) -> dict[str, str]
 
 def force_utf8_stdio() -> None:
     """Best-effort UTF-8 stdout/stderr so Chinese experiment errors can print."""
-    for stream in (sys.stdout, sys.stderr):
+    os.environ["PYTHONUTF8"] = "1"
+    os.environ["PYTHONIOENCODING"] = "utf-8"
+    for name in ("stdout", "stderr"):
+        stream = getattr(sys, name, None)
+        if stream is None:
+            continue
         reconfigure = getattr(stream, "reconfigure", None)
         if callable(reconfigure):
             try:
                 reconfigure(encoding="utf-8", errors="replace")
-            except (OSError, ValueError):
                 continue
+            except (OSError, ValueError, AttributeError):
+                pass
+        buffer = getattr(stream, "buffer", None)
+        if buffer is None:
+            continue
+        try:
+            wrapped = io.TextIOWrapper(buffer, encoding="utf-8", errors="replace", line_buffering=True)
+            setattr(sys, name, wrapped)
+        except (OSError, ValueError, AttributeError):
+            continue
 
 
 class PublicBenchmarkError(RuntimeError):

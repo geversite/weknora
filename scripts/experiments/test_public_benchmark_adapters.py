@@ -9,6 +9,7 @@ scoring. This script never calls WeKnora, a model provider, Docker, or a DB.
 from __future__ import annotations
 
 import importlib.util
+import io
 import json
 import subprocess
 import sys
@@ -327,6 +328,35 @@ class PublicBenchmarkAdapterTests(unittest.TestCase):
             self.assertEqual(ok["classification"], "TN")
             self.assertTrue(ok["detector_reused"])
             self.assertTrue(ok["detector_evaluable"])
+
+    def test_claims_eval_stdio_accepts_chinese_and_records_encode_snippet(self) -> None:
+        spec = importlib.util.spec_from_file_location(
+            "claims_eval_stdio_test", ROOT / "scripts/experiments/run_claims_eval.py",
+        )
+        assert spec and spec.loader
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        buf = io.BytesIO()
+        wrapper = io.TextIOWrapper(buf, encoding="ascii", errors="strict", line_buffering=True)
+        old_stdout = sys.stdout
+        sys.stdout = wrapper
+        try:
+            module._force_utf8_stdio()
+            print("knowledge_conflicts.status 宽度不足")
+            getattr(sys.stdout, "flush", lambda: None)()
+        finally:
+            sys.stdout = old_stdout
+            try:
+                wrapper.detach()
+            except Exception:
+                pass
+        try:
+            "knowledge_conflicts.status 宽度不足；请重启".encode("ascii")
+        except UnicodeEncodeError as exc:
+            text = module.format_unicode_encode_error(exc)
+            self.assertIn("ascii", text)
+            self.assertIn("snippet=", text)
+            self.assertIn("宽度", text)
 
     def test_strict_fact_family_and_proposal_scoring_do_not_pool_replicates(self) -> None:
         script_dir = ROOT / "scripts/experiments"

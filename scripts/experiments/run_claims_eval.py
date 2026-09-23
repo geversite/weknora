@@ -64,11 +64,46 @@ def safe_git_sha() -> str:
     try:
         result = subprocess.run(
             ["git", "rev-parse", "HEAD"], cwd=ROOT, check=True,
-            capture_output=True, text=True,
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
         )
         return result.stdout.strip()
     except (OSError, subprocess.CalledProcessError):
         return "unknown"
+
+
+def python_encoding_snapshot() -> dict[str, Any]:
+    """Record stdio/locale encodings without environment secrets."""
+    try:
+        import locale
+        preferred = locale.getpreferredencoding(False)
+    except Exception:
+        preferred = "unknown"
+    return {
+        "stdout": getattr(sys.stdout, "encoding", None),
+        "stderr": getattr(sys.stderr, "encoding", None),
+        "utf8_mode": bool(getattr(sys.flags, "utf8_mode", 0)),
+        "defaultencoding": sys.getdefaultencoding(),
+        "filesystemencoding": sys.getfilesystemencoding(),
+        "preferredencoding": preferred,
+        "lang": os.environ.get("LANG", ""),
+        "lc_all": os.environ.get("LC_ALL", ""),
+        "pythonioencoding": os.environ.get("PYTHONIOENCODING", ""),
+    }
+
+
+def format_unicode_encode_error(exc: UnicodeEncodeError) -> str:
+    snippet = ""
+    obj = exc.object
+    if isinstance(obj, (str, bytes, bytearray)):
+        start = max(0, int(exc.start) - 24)
+        end = min(len(obj), int(exc.end) + 24)
+        snippet = repr(obj[start:end])
+        if len(snippet) > 200:
+            snippet = snippet[:199] + "…"
+    return (
+        f"UnicodeEncodeError encoding={exc.encoding!r} "
+        f"pos={exc.start}-{exc.end} snippet={snippet}"
+    )
 
 
 def json_dump(path: Path, data: Any) -> None:
@@ -262,7 +297,7 @@ def file_upload_form_fields(document: dict[str, Any], file_name: str, channel: s
     if metadata is not None:
         if not isinstance(metadata, dict) or not all(isinstance(key, str) and isinstance(value, str) for key, value in metadata.items()):
             raise ExperimentError(f"场景文档 {document.get('id', '')} metadata 必须是 string:string 对象")
-        fields["metadata"] = json.dumps(metadata, ensure_ascii=False)
+        fields["metadata"] = json.dumps(metadata, ensure_ascii=True)
     process_config = document.get("process_config")
     if process_config is not None:
         if not isinstance(process_config, dict):
@@ -411,7 +446,10 @@ class APIClient:
             headers["X-API-Key"] = self.api_key
         if payload is not None:
             headers["Content-Type"] = "application/json"
-            body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+            # ASCII-only JSON on the wire. Some HTTP stacks re-encode the body
+            # with the locale codec; LANG=C then raises UnicodeEncodeError on
+            # Chinese template fields before any document is uploaded.
+            body = json.dumps(payload, ensure_ascii=True).encode("ascii")
         request = urllib.request.Request(url, data=body, headers=headers, method=method)
         try:
             with urllib.request.urlopen(request, timeout=30) as response:
@@ -1612,6 +1650,7 @@ def run_experiment(args: argparse.Namespace) -> int:
         "document_ingest": {},
         "source_integrity": {},
         "database_export_mode": PostgresExporter().describe_mode(),
+        "python_encodings": python_encoding_snapshot(),
     }
     json_dump(output_dir / "manifest.json", manifest)
 
@@ -2056,13 +2095,46 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _force_utf8_stdio() -> None:
-    for stream in (sys.stdout, sys.stderr):
+    """Make stdout/stderr accept Chinese even when the locale codec is ASCII.
+
+    Captured pipes plus LANG=C still yield encoding=ascii on some Conda
+    3.13 builds despite PYTHONUTF8=1. Reconfigure, then wrap the buffer.
+    errors=replace so a later print cannot raise UnicodeEncodeError.
+    """
+    os.environ["PYTHONUTF8"] = "1"
+    os.environ["PYTHONIOENCODING"] = "utf-8"
+    for name in ("stdout", "stderr"):
+        stream = getattr(sys, name, None)
+        if stream is None:
+            continue
         reconfigure = getattr(stream, "reconfigure", None)
         if callable(reconfigure):
             try:
                 reconfigure(encoding="utf-8", errors="replace")
-            except (OSError, ValueError):
                 continue
+            except (OSError, ValueError, AttributeError):
+                pass
+        buffer = getattr(stream, "buffer", None)
+        if buffer is None:
+            continue
+        try:
+            wrapped = io.TextIOWrapper(buffer, encoding="utf-8", errors="replace", line_buffering=True)
+            setattr(sys, name, wrapped)
+        except (OSError, ValueError, AttributeError):
+            continue
+
+
+def safe_print(message: str, *, file: Any | None = None) -> None:
+    stream = sys.stderr if file is None else file
+    try:
+        print(message, file=stream)
+        return
+    except UnicodeEncodeError:
+        pass
+    buffer = getattr(stream, "buffer", None)
+    if buffer is not None:
+        buffer.write((message + "\n").encode("utf-8", errors="replace"))
+        buffer.flush()
 
 
 def main() -> int:
@@ -2075,10 +2147,10 @@ def main() -> int:
     try:
         return run_experiment(args)
     except ExperimentError as exc:
-        print(f"[experiment] FAILED: {exc}", file=sys.stderr)
+        safe_print(f"[experiment] FAILED: {exc}")
         return 1
     except KeyboardInterrupt:
-        print("[experiment] interrupted", file=sys.stderr)
+        safe_print("[experiment] interrupted")
         return 130
 
 
