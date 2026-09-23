@@ -15,6 +15,7 @@ import gzip
 import hashlib
 import io
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -26,6 +27,23 @@ from typing import Any, Iterable, Iterator, Sequence
 
 ROOT = Path(__file__).resolve().parents[2]
 VALID_VARIANTS = {"v1", "c1", "c2-rules", "c2-batch"}
+
+
+def utf8_child_environment(base: dict[str, str] | None = None) -> dict[str, str]:
+    """Force UTF-8 I/O for detector subprocesses.
+
+    A login shell with LANG=C makes Python 3 encode stderr/HTTP helpers as
+    ASCII. ExperimentError messages and cloned KB JSON then raise
+    UnicodeEncodeError before any document is uploaded (empty knowledge_ids).
+    """
+    env = dict(base or os.environ)
+    env["PYTHONUTF8"] = "1"
+    env["PYTHONIOENCODING"] = "utf-8"
+    lang = (env.get("LC_ALL") or env.get("LANG") or "").strip()
+    if not lang or lang.upper() in {"C", "POSIX"}:
+        env["LANG"] = "C.UTF-8"
+        env["LC_ALL"] = "C.UTF-8"
+    return env
 
 
 class PublicBenchmarkError(RuntimeError):

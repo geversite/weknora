@@ -467,7 +467,10 @@ class PostgresExporter:
                 "-v", "ON_ERROR_STOP=1", "--csv", "-P", "footer=off", "-c", sql,
             ]
         try:
-            result = subprocess.run(command, check=False, capture_output=True, text=True, timeout=60)
+            result = subprocess.run(
+                command, check=False, capture_output=True, text=True,
+                encoding="utf-8", errors="replace", timeout=60,
+            )
         except FileNotFoundError as exc:
             raise ExperimentError(
                 "无法执行数据库导出命令；请设置 WEKNORA_DOCKER_BIN 或 WEKNORA_EXPERIMENT_PG_DSN"
@@ -1298,7 +1301,10 @@ def write_evaluator_run(
 
 def run_evaluator(run_file: Path, output_file: Path) -> dict[str, Any]:
     command = [sys.executable, str(EVALUATOR), "--run", str(run_file)]
-    result = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, check=False)
+    result = subprocess.run(
+        command, cwd=ROOT, capture_output=True, text=True,
+        encoding="utf-8", errors="replace", check=False,
+    )
     output = (result.stdout or "") + ("\n[stderr]\n" + result.stderr if result.stderr else "")
     output_file.write_text(output, encoding="utf-8")
     merged = re.search(r"合并口径\s+P=([0-9.]+)\s+R=([0-9.]+)", output)
@@ -2049,7 +2055,18 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _force_utf8_stdio() -> None:
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            try:
+                reconfigure(encoding="utf-8", errors="replace")
+            except (OSError, ValueError):
+                continue
+
+
 def main() -> int:
+    _force_utf8_stdio()
     parser = build_parser()
     args = parser.parse_args()
     client = APIClient(args.base_url, os.environ.get("WEKNORA_API_KEY"))

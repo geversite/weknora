@@ -39,6 +39,7 @@ from public_benchmark_common import (
     sha256_file,
     utc_now,
     utc_stamp,
+    utf8_child_environment,
     valid_variant,
     write_csv,
 )
@@ -324,7 +325,10 @@ def run_case(
         command.extend(["--template-kb-id", template_kb_id])
     log_path = detector_dir.parent / "detector_command.log"
     try:
-        result = subprocess.run(command, cwd=ROOT, text=True, capture_output=True, check=False, env=env)
+        result = subprocess.run(
+            command, cwd=ROOT, text=True, encoding="utf-8", errors="replace",
+            capture_output=True, check=False, env=env,
+        )
     except OSError as exc:
         write_command_log(log_path, command, None, str(exc))
         return result_row(
@@ -802,7 +806,7 @@ def main() -> int:
             print(json.dumps(plan, ensure_ascii=False, indent=2))
             return 0
 
-        environment = dict(os.environ)
+        environment = utf8_child_environment()
         template_source = template_kb_source(args.template_kb_id, environment)
         default_dir = ROOT / "experiments/comparisons" / f"{utc_stamp()}-public-pair-{manifest['name']}"
         output = remove_tree_if_requested(Path(args.output_dir) if args.output_dir else default_dir, args.overwrite)
