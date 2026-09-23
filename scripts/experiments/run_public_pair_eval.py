@@ -345,6 +345,7 @@ def build_detector_command(
 ) -> list[str]:
     command = [
         sys.executable,
+        "-X", "utf8",
         str(RUNNER),
         "--scenario", str(case["scenario"]),
         "--variant", str(case["variant"]),
@@ -378,7 +379,7 @@ def template_kb_source(explicit_template_kb_id: str, environment: dict[str, str]
 
 def run_service_preflight(output: Path, environment: dict[str, str]) -> dict[str, Any]:
     """Run the existing read-only service/database/migration check once."""
-    command = [sys.executable, str(RUNNER), "--check", "--check-db"]
+    command = [sys.executable, "-X", "utf8", str(RUNNER), "--check", "--check-db"]
     log_path = output / "service_preflight.log"
     try:
         result = subprocess.run(

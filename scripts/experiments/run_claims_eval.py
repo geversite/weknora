@@ -352,7 +352,7 @@ class APIClient:
         upload shortcut for an unreviewed source folder.
         """
         if not self.api_key:
-            raise ExperimentError("缺少 WEKNORA_API_KEY；实验写入 API 需要 API key")
+            raise ExperimentError("missing WEKNORA_API_KEY; write APIs require an API key")
         if timeout_seconds <= 0:
             raise ExperimentError("文件上传 timeout_seconds 必须为正数")
         if not source.is_file():
@@ -406,7 +406,7 @@ class APIClient:
             text = response.read().decode("utf-8", errors="replace")
             return self._decode_response("POST", url, response.status, text, unwrap=True)
         except (OSError, http.client.HTTPException) as exc:
-            raise ExperimentError(f"无法连接 WeKnora 服务 {self.base_url}: {exc}") from exc
+            raise ExperimentError(f"cannot connect to WeKnora at {self.base_url}: {exc}") from exc
         finally:
             connection.close()
 
@@ -414,17 +414,17 @@ class APIClient:
         if status < 200 or status >= 300:
             raise ExperimentError(
                 f"HTTP {status}: {method} {urllib.parse.urlparse(url).path}: {text[:3000]}",
-            )
+            )  # path/status are ASCII; body is truncated server text
         try:
             response_json = json.loads(text)
         except json.JSONDecodeError as exc:
             raise ExperimentError(
-                f"{method} {urllib.parse.urlparse(url).path} 返回非 JSON: {text[:500]}",
+                f"{method} {urllib.parse.urlparse(url).path} returned non-JSON: {text[:500]}",
             ) from exc
         if not unwrap:
             return response_json
         if isinstance(response_json, dict) and response_json.get("success") is False:
-            raise ExperimentError(f"{method} {urllib.parse.urlparse(url).path} 返回失败: {response_json}")
+            raise ExperimentError(f"{method} {urllib.parse.urlparse(url).path} failed: {response_json}")
         if isinstance(response_json, dict) and "data" in response_json:
             return response_json["data"]
         return response_json
@@ -442,7 +442,7 @@ class APIClient:
         body: bytes | None = None
         if use_api_key:
             if not self.api_key:
-                raise ExperimentError("缺少 WEKNORA_API_KEY；实验写入 API 需要 API key")
+                raise ExperimentError("missing WEKNORA_API_KEY; write APIs require an API key")
             headers["X-API-Key"] = self.api_key
         if payload is not None:
             headers["Content-Type"] = "application/json"
@@ -459,7 +459,7 @@ class APIClient:
             detail = exc.read().decode("utf-8", errors="replace")[:3000]
             raise ExperimentError(f"HTTP {exc.code}: {method} {urllib.parse.urlparse(url).path}: {detail}") from exc
         except urllib.error.URLError as exc:
-            raise ExperimentError(f"无法连接 WeKnora 服务 {self.base_url}: {exc.reason}") from exc
+            raise ExperimentError(f"cannot connect to WeKnora at {self.base_url}: {exc.reason}") from exc
 
 
 class PostgresExporter:
@@ -735,7 +735,7 @@ def apply_variant(strategy: dict[str, Any], scenario: dict[str, Any], variant: s
     ))
     if not base_enabled:
         raise ExperimentError(
-            "实验 KB 的 vector/keyword/wiki/graph 均为关闭；当前 API 不接受只有 claim_extract_enabled 的策略。"
+            "experiment KB has vector/keyword/wiki/graph all disabled; API rejects claim_extract_enabled-only strategy"
         )
     return result
 
@@ -1625,6 +1625,7 @@ def experiment_channel(run_id: str) -> str:
 
 
 def run_experiment(args: argparse.Namespace) -> int:
+    _force_utf8_stdio()
     scenario_path = Path(args.scenario).resolve()
     scenario = load_scenario(scenario_path)
     run_id = args.run_id or make_run_id(str(scenario["name"]), args.variant)
@@ -1678,47 +1679,47 @@ def run_experiment(args: argparse.Namespace) -> int:
         return 0
 
     if not args.template_kb_id:
-        raise ExperimentError("真实运行需要 --template-kb-id 或 WEKNORA_EXPERIMENT_TEMPLATE_KB")
+        raise ExperimentError("live run requires --template-kb-id or WEKNORA_EXPERIMENT_TEMPLATE_KB")
 
     db = PostgresExporter()
     try:
         health = client.health()
         if health.get("status") != "ok":
-            raise ExperimentError(f"WeKnora /health 非 OK: {health}")
+            raise ExperimentError(f"WeKnora /health not ok: {health}")
         db.check()
         if not conflict_detection_runs_table_exists(db):
-            raise ExperimentError("缺少 conflict_detection_runs；请重启包含 C2 migration 000086 的后端。")
+            raise ExperimentError("missing conflict_detection_runs; restart backend for C2 migration 000086")
         if not disputed_facts_table_exists(db):
-            raise ExperimentError("缺少 disputed_facts；请重启包含 C4 migration 000088 的后端。")
+            raise ExperimentError("missing disputed_facts; restart backend for C4 migration 000088")
         if not conflict_status_width_is_sufficient(db):
-            raise ExperimentError("knowledge_conflicts.status 宽度不足；请重启包含 C4.5/C4.7 所依赖 migration 000089 的后端。")
+            raise ExperimentError("knowledge_conflicts.status width too small; restart backend for migration 000089")
         if not conflict_version_suggestions_ready(db):
-            raise ExperimentError("缺少 C3 conflict version suggestion 列；请重启包含 migration 000090 的后端。")
+            raise ExperimentError("missing C3 version suggestion columns; restart backend for migration 000090")
         if not disputed_fact_winner_proposals_ready(db):
-            raise ExperimentError("缺少 C3/C4.6 winner proposal 列；请重启包含 migration 000091 的后端。")
+            raise ExperimentError("missing C3/C4.6 winner proposal columns; restart backend for migration 000091")
         if not disputed_fact_winner_adoptions_ready(db):
-            raise ExperimentError("缺少 C4.8 durable winner adoption schema；请重启包含 migration 000092 的后端。")
+            raise ExperimentError("missing C4.8 durable winner adoption schema; restart backend for migration 000092")
 
         template = client.get(f"/knowledge-bases/{args.template_kb_id}")
         if not isinstance(template, dict):
-            raise ExperimentError("模板 KB 响应格式异常")
+            raise ExperimentError("template KB response is not an object")
         kb_name = f"exp-{scenario['name']}-{run_id[-22:]}"
         payload = clone_payload(template, kb_name, scenario, args.variant)
         kb = client.post("/knowledge-bases", payload)
         if not isinstance(kb, dict) or not kb.get("id"):
-            raise ExperimentError("创建实验 KB 的响应缺少 id")
+            raise ExperimentError("create experiment KB response missing id")
         kb_id = str(kb["id"])
         strategy = kb.get("indexing_strategy") or payload["indexing_strategy"]
         expected_claim_enabled = args.variant in CLAIM_ENABLED_VARIANTS
         if bool(strategy.get("claim_extract_enabled")) != expected_claim_enabled:
             raise ExperimentError(
-                "实验 KB 的 claim_extract_enabled 与 variant 不一致；请确认运行的后端已包含 C1/C2 代码。"
+                "experiment KB claim_extract_enabled does not match variant; restart a backend that includes C1/C2"
             )
         actual_cascade_mode = str(strategy.get("conflict_cascade_mode") or "legacy")
         if actual_cascade_mode != expected_cascade_mode(args.variant):
             raise ExperimentError(
-                f"实验 KB 的 conflict_cascade_mode={actual_cascade_mode!r}，"
-                f"期望 {expected_cascade_mode(args.variant)!r}；请确认后端已包含 C2 代码。"
+                f"experiment KB conflict_cascade_mode={actual_cascade_mode!r}, "
+                f"expected {expected_cascade_mode(args.variant)!r}; restart a backend that includes C2"
             )
         manifest.update({
             "knowledge_base_id": kb_id,
@@ -2062,9 +2063,13 @@ def run_experiment(args: argparse.Namespace) -> int:
     except Exception as exc:
         manifest["status"] = "failed"
         manifest["finished_at"] = utc_now()
-        manifest["error"] = str(exc)
+        manifest["python_encodings"] = python_encoding_snapshot()
+        error_text = format_unicode_encode_error(exc) if isinstance(exc, UnicodeEncodeError) else str(exc)
+        manifest["error"] = error_text
         json_dump(output_dir / "manifest.json", manifest)
-        (output_dir / "failure.txt").write_text(str(exc) + "\n", encoding="utf-8")
+        (output_dir / "failure.txt").write_text(error_text + "\n", encoding="utf-8")
+        if isinstance(exc, UnicodeEncodeError):
+            raise ExperimentError(error_text) from exc
         raise
 
 
