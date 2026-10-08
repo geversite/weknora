@@ -1,6 +1,6 @@
 # 冲突检测 V2：WikiFactDiff 公开时序事实 transfer 评估报告
 
-> 状态：**pair development/holdout 与 two-snapshot proposal development/holdout 均已冻结。**
+> 状态：**v1 pair/proposal development+holdout 已冻结；v2 更大 holdout（pair 200、proposal 100）已冻结为独立加大 N，不覆盖 v1。**
 >
 > 公开 temporal-fact transfer，不是 native document-header、multi-authority、C4.7/C4.8 或企业文档准确率。
 > 不与 C4.9/C4.10 或 VitaminC 指标池化。不含语料正文。
@@ -25,7 +25,9 @@
 | `runs/pair-development-r1` | **冻结 pair development**：20/20 |
 | `runs/proposal-development-r1` | **冻结 proposal development**：10/10 |
 | `runs/pair-holdout-r1` | **冻结 pair holdout**：60/60 |
-| `runs/proposal-holdout-r1` | **冻结 proposal holdout**：30/30 可评 |
+| `runs/proposal-holdout-r1` | **冻结 proposal holdout v1**：30/30 可评 |
+| `$HOME/weknora-public-data/wikifactdiff-20210104-20230227-legacy-v2-r1/runs/pair-holdout-r1` | **冻结 pair holdout v2**：200/200 |
+| `.../legacy-v2-r1/runs/proposal-holdout-r1` | **冻结 proposal holdout v2**：100/100 |
 
 ## 3. 冻结数字
 
@@ -37,8 +39,9 @@ Fact-family strict-all-replicates，`replicates=1`。
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
 | pair-development-r1 | 20 | 10 | 10 | 0 | 0 | 1.0 | 1.0 | 1.0 | 20×0 |
 | pair-holdout-r1 | 60 | 30 | 30 | 0 | 0 | 1.0 | 1.0 | 1.0 | total=2（1 个 TN keep-control 上的 `wiki:ingest`×2），all_zero=false |
+| pair-holdout-v2-r1 | 200 | 100 | 99 | 1 | 0 | 0.990 | 1.0 | 0.995 | 200×0 |
 
-pair-holdout 的 2 条死信均为 `wiki:ingest` 重试超限，不是 `claim:extract` / `conflict:detect`；该 case 仍为 TN。不得写成 all-zero。
+v1 pair-holdout 的 2 条死信均为 `wiki:ingest` 重试超限，不是 `claim:extract` / `conflict:detect`；该 case 仍为 TN。不得写成 all-zero。v2 pair holdout 死信全 0；P=0.990099、R=1、A=0.995 对应 100/99/1/0（每类 100）。v2 不得覆盖 v1 的 60×1.0，也不得用 v1 的 1.0 抹掉这一条 FP。
 
 ### 3.2 Two-snapshot advisory proposal transfer
 
@@ -48,6 +51,7 @@ pair-holdout 的 2 条死信均为 `wiki:ingest` 重试超限，不是 `claim:ex
 | --- | ---: | --- | ---: | --- |
 | proposal-development-r1 | 10 | 1.0 / 1.0 / 1.0 | 1.000 | 10×0 |
 | proposal-holdout-r1 | 30 | 1.0 / 1.0 / 1.0 | **0.833**（25/30） | 30×0 |
+| proposal-holdout-v2-r1 | 100 | 1.0 / 0.95 / 0.95 | **0.86**（86/100） | 100×0 |
 
 Holdout 上 30 条 replacement 的 pair conflict 全对，但 5 条 exact winner+source_count 未命中。冻结后的只读分类（不改 25/30）：
 
@@ -57,6 +61,8 @@ Holdout 上 30 条 replacement 的 pair conflict 全对，但 5 条 exact winner
 | 1 | `completed_with_cluster_expectation_failure` | 1 个 proposal，`snapshot_new` / source_count=2 | winner 正确，但 `expected_disputed_fact_count=1` 未满足，status 不是 `completed` |
 
 评分要求 `manifest.status == "completed"` 且恰好一个 proposal，因此这 5 条计失败。不得事后放宽成 30/30，也不得写成 proposal precision。这正说明 pair 检出 ≠ 单一 advisory cluster。
+
+v2 proposal holdout 冻结 **86/100=0.86**。pair 口径为 TP=95、FN=5（R=0.95）；exact-proposal 未命中 14 条（含这 5 条 pair FN）。未再做 v1 那种 winner_count=2 / cluster-count 细分类；不得把 0.86 放宽成 100/100，也不得写成 proposal precision。v2 不得覆盖 v1 的 25/30。
 
 ## 4. 主张边界
 
@@ -80,4 +86,4 @@ enterprise-document accuracy
 provider seed-controlled causality
 ```
 
-模板化 Wikidata 原子事实的 pair 1.0 不能用来解释 VitaminC holdout 的 0.75，也不能掩盖 proposal holdout 的 5 个 exact-match 失败。
+模板化 Wikidata 原子事实的 pair 1.0 / v2 的 0.995 不能用来解释 VitaminC holdout 的 0.75 或 v2 的 0.68，也不能掩盖 proposal holdout v1 的 25/30 与 v2 的 86/100。

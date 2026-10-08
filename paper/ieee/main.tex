@@ -303,7 +303,7 @@ To add external text without pooling it into the synthetic policy tables, we eva
 WikiFactDiff supplies templated verbalizations of Wikidata updates between the 2021-01-04 and 2023-02-27 snapshots. Pair positives are strict one-old/one-new replacements; no-conflict controls duplicate an explicit static/keep statement. A replacement-only proposal subset derives title issuer/date/version from release snapshot dates rather than native document headers, and reports exact winner plus source-count success, not proposal precision. VitaminC uses the official dedicated real archive, which contains only \texttt{test.jsonl}; development and holdout are an adapter-defined disjoint partition of that member. \texttt{REFUTES} maps to expected conflict and \texttt{SUPPORTS} to expected no-conflict. This is claim--evidence pair transfer, not document-version governance.
 
 \begin{table}[t]
-\caption{WikiFactDiff public temporal-fact transfer. Pair holdout is 30 replacement plus 30 static/keep controls. Proposal success requires exactly one advisory winner equal to the new snapshot with source-count 2. Title metadata are derived from release snapshot dates.}
+\caption{WikiFactDiff public temporal-fact transfer. Frozen holdout is 30 replacement plus 30 static/keep controls; holdout-v2 is a nested 100+100 set under the same selection seed. Proposal success requires exactly one advisory winner equal to the new snapshot with source-count 2. Title metadata are derived from release snapshot dates.}
 \label{tab:wfd-public}
 \centering
 \small
@@ -313,8 +313,10 @@ Task & Split & $N$ & Metric & Value \\
 \midrule
 Pair detection & Dev. & 20 & P / R / Acc. & 1.000 / 1.000 / 1.000 \\
 Pair detection & Holdout & 60 & P / R / Acc. & 1.000 / 1.000 / 1.000 \\
+Pair detection & Holdout-v2 & 200 & P / R / Acc. & 0.990 / 1.000 / 0.995 \\
 Advisory proposal & Dev. & 10 & Exact success & 1.000 \\
 Advisory proposal & Holdout & 30 & Exact success & 0.833 \\
+Advisory proposal & Holdout-v2 & 100 & Exact success & 0.860 \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -330,13 +332,14 @@ Split & $N$ & TP & TN & FP & FN & P / R / Acc. \\
 \midrule
 Dev. & 20 & 8 & 5 & 5 & 2 & 0.615 / 0.800 / 0.650 \\
 Holdout & 60 & 24 & 22 & 8 & 6 & 0.750 / 0.800 / 0.767 \\
+Holdout-v2 & 200 & 85 & 60 & 40 & 15 & 0.680 / 0.850 / 0.725 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-Table~\ref{tab:wfd-public} shows that templated WikiFactDiff pairs transferred perfectly at the pair level (development 20/20, holdout 60/60). Pair holdout recorded two \texttt{wiki:ingest} dead letters on one true-negative control; claim extraction and conflict detection completed, so the case remains evaluable and the 1.000 pair score is not rewritten as all-zero dead letters. Two-snapshot advisory-proposal exact success was 10/10 in development and 25/30 in holdout. All 30 holdout replacements were pair true positives; the five exact-success misses were clustering failures (four duplicate correct new-snapshot proposals, one unique correct proposal with a cluster-count assertion failure), not wrong-snapshot selections. Pair detection therefore does not imply a single advisory cluster.
+Table~\ref{tab:wfd-public} shows that templated WikiFactDiff pairs transferred at the pair level with development 20/20 and frozen holdout 60/60. Pair holdout recorded two \texttt{wiki:ingest} dead letters on one true-negative control; claim extraction and conflict detection completed, so the case remains evaluable and the 1.000 pair score is not rewritten as all-zero dead letters. Nested holdout-v2 ($N{=}200$) reached 0.990/1.000/0.995 with zero dead letters and does not replace the 60-family freeze. Two-snapshot advisory-proposal exact success was 10/10 in development and 25/30 in holdout. All 30 frozen holdout replacements were pair true positives; the five exact-success misses were clustering failures (four duplicate correct new-snapshot proposals, one unique correct proposal with a cluster-count assertion failure), not wrong-snapshot selections. Holdout-v2 exact success was 86/100, reported separately; 25/30 is not relaxed. Pair detection therefore does not imply a single advisory cluster.
 
-Table~\ref{tab:vitaminc-public} shows a harder public claim--evidence setting. Holdout precision/recall/accuracy were 0.750/0.800/0.767 on 60 families (24 TP, 22 TN, 8 FP, 6 FN), with zero detector dead letters. WikiFactDiff's templated 1.000 pair accuracy must not be used to interpret VitaminC, and neither table is pooled with Table~\ref{tab:holdout}.
+Table~\ref{tab:vitaminc-public} shows a harder public claim--evidence setting. Frozen holdout precision/recall/accuracy were 0.750/0.800/0.767 on 60 families (24 TP, 22 TN, 8 FP, 6 FN), with zero detector dead letters. Nested holdout-v2 ($N{=}200$) yielded 0.680/0.850/0.725 (85 TP, 60 TN, 40 FP, 15 FN) and is not pooled with the 60-family freeze. WikiFactDiff's templated pair accuracy must not be used to interpret VitaminC, and neither table is pooled with Table~\ref{tab:holdout}.
 
 \section{Related Work}
 \label{sec:related}

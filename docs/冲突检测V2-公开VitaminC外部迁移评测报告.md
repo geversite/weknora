@@ -24,7 +24,8 @@
 | `runs/development-smoke` | 10-case 通路；不作论文指标 |
 | `runs/development-r1` | 18/20，2 条 0-claim 被误标 UNEVALUABLE；**保留并排除** |
 | `runs/development-r1-retry1` | **冻结 development**：20/20 |
-| `runs/holdout-r1` | **冻结 holdout**：60/60 |
+| `runs/holdout-r1` | **冻结 holdout v1**：60/60 |
+| `$HOME/weknora-public-data/vitaminc-real-v2-r1/runs/holdout-r1-retry1` | **冻结更大 holdout v2**：200/200；同一 `selection_seed` 的嵌套加大 N，不覆盖 v1 |
 
 0-claim 在 detect 已入队后视为可评测抽取结果，不再空等 `claims>=1`。
 
@@ -36,10 +37,11 @@ Fact-family strict-all-replicates，`replicates=1`。
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
 | development-r1-retry1 | 20 | 8 | 5 | 5 | 2 | 0.615 | 0.800 | 0.650 | 20×0 |
 | holdout-r1 | 60 | 24 | 22 | 8 | 6 | 0.750 | 0.800 | 0.767 | 60×0 |
+| holdout-v2-r1-retry1 | 200 | 85 | 60 | 40 | 15 | 0.680 | 0.850 | 0.725 | 200×0 |
 
-Holdout 正例 30 = 24 TP + 6 FN；负例 30 = 22 TN + 8 FP。proposal 列不适用。
+v1 holdout 正例 30 = 24 TP + 6 FN；负例 30 = 22 TN + 8 FP。v2 为每类 100、共 200；由报告的 P/R/A 反推混淆矩阵为 85/60/40/15（100×0.85=85 TP；85/0.68=125 预测正例 → FP=40；TN=60）。proposal 列不适用。v2 不得覆盖 v1，也不得与 v1 加总成“总准确率”。
 
-Development 与 holdout 的 recall 均为 0.800；holdout precision 更高，不是根据 holdout 调参的结果。
+v1 development 与 holdout 的 recall 均为 0.800。v2 更大 holdout 上 precision 下降、recall 略升，符合更杂的公开 claim--evidence 迁移，不是根据 holdout 调参。
 
 ## 4. 主张边界
 
