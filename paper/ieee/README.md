@@ -1,4 +1,4 @@
-# IEEE conference manuscript draft — WeKnora Conflict Detection V2
+# IEEE conference manuscript draft — WeKnora fact-level conflict governance
 
 This is a generic IEEEtran conference-format manuscript project. It intentionally does **not** assume a specific conference, author block, page limit, copyright notice, or camera-ready template.
 
@@ -102,11 +102,11 @@ make pdf SHELL_ESCAPE=0
 The paper source is intentionally scoped as a controlled systems/prototype paper:
 
 ```text
-C4.9: 15/15 controlled lifecycle executions, 9/9 cycles, 15 detector artifacts with dead_letter_count=0
-C4.10: binary DocReader integration plus a 12-family synthetic holdout with 3 independent replicates per family
+Lifecycle matrix: 15/15 controlled executions, 9/9 cycles, 15 detector artifacts with dead_letter_count=0
+Synthetic holdout: binary DocReader integration plus a 12-family synthetic holdout with 3 independent replicates per family
 Public transfer (independent tables): WikiFactDiff pair holdout 60/60 P/R/A=1.0; proposal exact success 25/30; VitaminC holdout P/R/A=0.750/0.800/0.767
 ```
 
-These results do not establish real-document generalization, cross-format PDF--DOCX clustering accuracy, human-review accuracy, or provider-seed-controlled causality. Public WikiFactDiff/VitaminC numbers must not be pooled with C4.9/C4.10.
+These results do not establish real-document generalization, cross-format PDF--DOCX clustering accuracy, human-review accuracy, or provider-seed-controlled causality. Public WikiFactDiff/VitaminC numbers must not be pooled with the synthetic policy tables.
 
 See the frozen reports under `../../docs/` before editing numerical claims.

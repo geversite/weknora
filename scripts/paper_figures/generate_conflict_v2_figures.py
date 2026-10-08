@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate editable SVG figures for the WeKnora Conflict Detection V2 paper.
+"""Generate editable SVG figures for the WeKnora fact-level conflict-governance paper.
 
 The figures use only the Python standard library, so a Linux development host
 can render them without Graphviz, Matplotlib, a browser, or an image model.
@@ -24,7 +24,7 @@ from xml.sax.saxutils import escape
 
 
 ROOT = Path(__file__).resolve().parents[2]
-FIGURE_VERSION = "conflict-v2-paper-figures-v1"
+FIGURE_VERSION = "conflict-v2-paper-figures-v2"
 
 COLORS = {
     "ink": "#17324D",
@@ -192,16 +192,16 @@ def arrow_label(canvas: SVG, x1: float, y1: float, x2: float, y2: float, label: 
 
 def figure_1_architecture() -> tuple[str, dict[str, Any]]:
     c = SVG(1800, 1080)
-    title(c, "图 1  WeKnora Conflict Detection V2：事实级冲突治理架构", "从文档摄取到 explicit、可撤销的 winner lifecycle")
+    title(c, "图 1  WeKnora：事实级冲突治理架构", "从文档摄取到 explicit、可撤销的 winner lifecycle")
 
     sources = [(80, 220, "文档", ["PDF / DOCX / Markdown"]), (80, 430, "Wiki", ["页面修订 / 人工编辑"])]
     for x, y, heading, lines in sources:
         labeled_box(c, x, y, 210, 115, heading, lines, fill=COLORS["panel"], stroke=COLORS["blue"])
 
-    labeled_box(c, 370, 285, 245, 150, "C1 声明抽取", ["subject / predicate", "value / qualifiers / quote"], fill=COLORS["pale_blue"], stroke=COLORS["blue"])
+    labeled_box(c, 370, 285, 245, 150, "声明抽取", ["subject / predicate", "value / qualifiers / quote"], fill=COLORS["pale_blue"], stroke=COLORS["blue"])
     labeled_box(c, 700, 205, 255, 118, "精确候选", ["same ClaimKey"], fill=COLORS["pale_teal"], stroke=COLORS["teal"])
     labeled_box(c, 700, 400, 255, 118, "语义 fallback", ["未覆盖 chunk", "HybridSearch"], fill=COLORS["pale_orange"], stroke=COLORS["orange"])
-    labeled_box(c, 1040, 285, 260, 150, "C2 级联裁决", ["保守规则", "grounded LLM"], fill=COLORS["pale_purple"], stroke=COLORS["purple"])
+    labeled_box(c, 1040, 285, 260, 150, "级联裁决", ["保守规则", "grounded LLM"], fill=COLORS["pale_purple"], stroke=COLORS["purple"])
     labeled_box(c, 1385, 285, 250, 150, "Raw Conflict", ["chunk-pair evidence", "不直接治理"], fill=COLORS["pale_red"], stroke=COLORS["red"])
 
     arrow_label(c, 290, 277, 370, 335)
@@ -212,10 +212,10 @@ def figure_1_architecture() -> tuple[str, dict[str, Any]]:
     arrow_label(c, 955, 458, 1040, 385)
     arrow_label(c, 1300, 360, 1385, 360)
 
-    labeled_box(c, 280, 670, 290, 160, "C4 DisputedFact", ["按 fact anchor 聚类", "sources + values + members"], fill=COLORS["pale_blue"], stroke=COLORS["blue"])
-    labeled_box(c, 690, 670, 295, 160, "C4.6 Winner Proposal", ["all-source metadata", "仅 advisory / 可 abstain"], fill=COLORS["pale_teal"], stroke=COLORS["teal"])
-    labeled_box(c, 1110, 670, 260, 160, "C4.7 Adoption", ["explicit snapshot", "winner 保留 / loser disable"], fill=COLORS["pale_orange"], stroke=COLORS["orange"])
-    labeled_box(c, 1470, 670, 245, 160, "C4.8 Reopen", ["durable record", "precise re-enable"], fill=COLORS["pale_purple"], stroke=COLORS["purple"])
+    labeled_box(c, 280, 670, 290, 160, "DisputedFact 聚类", ["按 fact anchor 聚类", "sources + values + members"], fill=COLORS["pale_blue"], stroke=COLORS["blue"])
+    labeled_box(c, 690, 670, 295, 160, "全局胜方建议", ["all-source metadata", "仅 advisory / 可 abstain"], fill=COLORS["pale_teal"], stroke=COLORS["teal"])
+    labeled_box(c, 1110, 670, 260, 160, "显式采纳", ["explicit snapshot", "winner 保留 / loser disable"], fill=COLORS["pale_orange"], stroke=COLORS["orange"])
+    labeled_box(c, 1470, 670, 245, 160, "撤销重开", ["durable record", "precise re-enable"], fill=COLORS["pale_purple"], stroke=COLORS["purple"])
 
     c.path("M 1510 435 L 1510 595 L 425 595 L 425 670", color=COLORS["line"], width=2.5, arrow=True, dash="8 8")
     c.text(970, 580, "聚类", size=17, color=COLORS["muted"], anchor="middle")
@@ -226,10 +226,10 @@ def figure_1_architecture() -> tuple[str, dict[str, Any]]:
     c.rect(360, 900, 1080, 90, fill=COLORS["panel"], stroke=COLORS["light_line"], radius=14)
     c.text(900, 939, "持久化证据：claims · conflict_detection_runs · knowledge_conflicts · disputed_facts · durable winner adoptions", size=20, color=COLORS["muted"], anchor="middle")
     c.text(900, 970, "安全边界：proposal ≠ adoption；adoption ≠ deletion；reopen ≠ automatic re-adoption", size=19, color=COLORS["red"], anchor="middle", weight="700")
-    footer(c, "图源：WeKnora Conflict Detection V2 实现与受控实验；建议在终稿中使用矢量 SVG/PDF。")
+    footer(c, "图源：WeKnora 事实级冲突治理实现与受控实验；建议在终稿中使用矢量 SVG/PDF。")
     return c.render(), {
         "id": "fig1_system_architecture",
-        "caption": "WeKnora Conflict Detection V2 从声明抽取、候选与裁决到事实级聚类、proposal、adoption/reopen 的系统架构。",
+        "caption": "WeKnora 从声明抽取、候选与裁决到事实级聚类、proposal、adoption/reopen 的系统架构。",
         "evidence": "系统设计；不含外部准确率主张。",
     }
 
@@ -265,7 +265,7 @@ def figure_2_fact_lifecycle() -> tuple[str, dict[str, Any]]:
     arrow_label(c, 685, 470, 820, 470)
     arrow_label(c, 685, 665, 820, 525)
 
-    labeled_box(c, 1280, 260, 310, 160, "C4.6 Proposal", ["全来源 issuer/date/version", "唯一严格最大：V3", "advisory only"], fill=COLORS["pale_teal"], stroke=COLORS["teal"])
+    labeled_box(c, 1280, 260, 310, 160, "全局胜方建议", ["全来源 issuer/date/version", "唯一严格最大：V3", "advisory only"], fill=COLORS["pale_teal"], stroke=COLORS["teal"])
     labeled_box(c, 1280, 555, 310, 160, "Explicit Lifecycle", ["adopt：仅禁用 V1 / V2", "durable record", "reopen：精确恢复 V1 / V2"], fill=COLORS["pale_orange"], stroke=COLORS["orange"])
     arrow_label(c, 1150, 430, 1280, 340, "metadata 一致")
     arrow_label(c, 1435, 420, 1435, 555, "显式 snapshot")
@@ -277,7 +277,7 @@ def figure_2_fact_lifecycle() -> tuple[str, dict[str, Any]]:
     return c.render(), {
         "id": "fig2_fact_lifecycle",
         "caption": "三个版本来源的 raw chunk-pair conflicts 被聚合为一个 DisputedFact；只有全来源 metadata 条件成立时才可 proposal，且治理动作必须显式且可撤销。",
-        "evidence": "C4.6/C4.7/C4.8 设计与受控 lifecycle evidence。",
+        "evidence": "全局胜方建议、显式采纳与撤销重开的设计与受控 lifecycle evidence。",
     }
 
 
@@ -304,40 +304,40 @@ def draw_bar_panel(
 
 def figure_3_cascade_cost() -> tuple[str, dict[str, Any]]:
     c = SVG(1800, 900)
-    title(c, "图 3  C2 cascade 的真实服务成本消融", "相同 C1 full scenario；C2-B4 保持场景完整性并减少 LLM 调用")
-    variants = [("C1", COLORS["gray"]), ("C2-Rules", COLORS["teal"]), ("C2-B4", COLORS["purple"])]
+    title(c, "图 3  级联裁决的真实服务成本消融", "相同受控全场景；接地级联保持场景完整性并减少 LLM 调用")
+    variants = [("All-LLM", COLORS["gray"]), ("Rules-first", COLORS["teal"]), ("Grounded\ncascade", COLORS["purple"])]
     draw_bar_panel(c, 80, 205, 500, 510, "LLM 调用次数", [(name, value, color) for (name, color), value in zip(variants, [48, 47, 9])])
     draw_bar_panel(c, 650, 205, 500, 510, "Token 总量", [(name, value, color) for (name, color), value in zip(variants, [48762, 47293, 28528])])
     draw_bar_panel(c, 1220, 205, 500, 510, "检测时延（ms）", [(name, value, color) for (name, color), value in zip(variants, [145154, 149111, 75789])])
     c.rect(205, 760, 1390, 72, fill=COLORS["pale_teal"], stroke=COLORS["teal"], radius=12)
-    c.text(900, 806, "C2-B4 相对 C1：LLM calls −81.25%（5.33× fewer）；Tokens −41.50%；Duration −47.79%", size=23, color=COLORS["teal"], weight="700", anchor="middle")
-    footer(c, "数据来源：C2-B4 final matrix；此图为固定 C1 full scenario 的成本消融，不外推为所有真实文档的平均成本。")
+    c.text(900, 806, "Grounded cascade 相对 All-LLM：LLM calls −81.25%（5.33× fewer）；Tokens −41.50%；Duration −47.79%", size=23, color=COLORS["teal"], weight="700", anchor="middle")
+    footer(c, "数据来源：接地级联最终矩阵；此图为固定受控全场景的成本消融，不外推为所有真实文档的平均成本。")
     return c.render(), {
         "id": "fig3_cascade_cost",
-        "caption": "C1、C2-Rules 和 C2-B4 在相同场景下的 LLM 调用、Token 和检测时延对比。",
-        "evidence": "C2-B4 final cost ablation。",
+        "caption": "All-LLM、Rules-first 和 Grounded cascade 在相同场景下的 LLM 调用、Token 和检测时延对比。",
+        "evidence": "接地级联最终成本消融。",
     }
 
 
 def figure_4_holdout_baselines() -> tuple[str, dict[str, Any]]:
     c = SVG(1800, 930)
-    title(c, "图 4  C4.10 synthetic holdout：全局 proposal 与简化 baseline", "主口径：12 个 fact families，要求每个 family 的 3 次 independent replicates 全部正确")
+    title(c, "图 4  合成策略 holdout：全局 proposal 与简化 baseline", "主口径：12 个 fact families，要求每个 family 的 3 次 independent replicates 全部正确")
     methods = [
-        ("C4.6\nglobal", 1.000, 0, COLORS["teal"]),
+        ("Global\nproposal", 1.000, 0, COLORS["teal"]),
         ("Latest\nupload", 0.167, 6, COLORS["gray"]),
         ("Date\nonly", 0.667, 3, COLORS["orange"]),
         ("Version\nonly", 0.667, 3, COLORS["purple"]),
-        ("Raw C3\nlocal vote", 0.833, 2, COLORS["red"]),
+        ("Local\npair vote", 0.833, 2, COLORS["red"]),
     ]
     draw_bar_panel(c, 115, 205, 730, 535, "Fact-family policy accuracy", [(name, accuracy, color) for name, accuracy, _, color in methods], formatter=lambda v: f"{v:.3f}")
     draw_bar_panel(c, 955, 205, 730, 535, "Unsafe actions（越低越好）", [(name, unsafe, color) for name, _, unsafe, color in methods], formatter=fmt_number)
     c.rect(225, 785, 1350, 72, fill=COLORS["pale_teal"], stroke=COLORS["teal"], radius=12)
-    c.text(900, 830, "C4.6：accuracy = 1.000，unsafe actions = 0；结果仅适用于构造的 controlled synthetic policy holdout。", size=22, color=COLORS["teal"], weight="700", anchor="middle")
-    footer(c, "数据来源：C4.10 extended synthetic holdout（12 fact families × 3 replicates）；不是真实业务文档准确率。")
+    c.text(900, 830, "Global proposal：accuracy = 1.000，unsafe actions = 0；结果仅适用于构造的 controlled synthetic policy holdout。", size=22, color=COLORS["teal"], weight="700", anchor="middle")
+    footer(c, "数据来源：扩展合成策略 holdout（12 fact families × 3 replicates）；不是真实业务文档准确率。")
     return c.render(), {
         "id": "fig4_holdout_baselines",
-        "caption": "构造的事实家族 holdout 上，C4.6 global proposal 与 latest-upload、date-only、version-only、raw C3 local vote 的 policy accuracy 和 unsafe actions 对比。",
-        "evidence": "C4.10 controlled synthetic holdout；必须保留范围限定。",
+        "caption": "构造的事实家族 holdout 上，global proposal 与 latest-upload、date-only、version-only、local pair vote 的 policy accuracy 和 unsafe actions 对比。",
+        "evidence": "受控合成策略 holdout；必须保留范围限定。",
     }
 
 
@@ -375,11 +375,11 @@ def figure_5_state_machine() -> tuple[str, dict[str, Any]]:
     c.path("M 1275 380 L 1275 465", color=COLORS["red"], width=2.5, arrow=True, dash="7 7")
     c.path("M 1275 620 L 1275 560", color=COLORS["red"], width=2.5, arrow=True, dash="7 7")
 
-    footer(c, "C4.7/C4.8 设计：所有 side effects 都以显式 snapshot 和 durable record 为边界，拒绝不完整状态。")
+    footer(c, "显式采纳 / 撤销重开：所有 side effects 都以显式 snapshot 和 durable record 为边界，拒绝不完整状态。")
     return c.render(), {
         "id": "fig5_fail_closed_state_machine",
         "caption": "winner proposal、explicit adoption 与 durable reopen 的状态机。任何 metadata、snapshot 或 member/target 状态不匹配均 fail closed。",
-        "evidence": "C4.7/C4.8 safety protocol 与 C4.9/C4.10 lifecycle evidence。",
+        "evidence": "fail-closed safety protocol 与受控 lifecycle evidence。",
     }
 
 
@@ -388,7 +388,7 @@ def write_readme(path: Path, figures: list[dict[str, Any]], output: Path) -> Non
         f"| `{item['id']}.svg` | {item['caption']} | {item['evidence']} |"
         for item in figures
     )
-    text = f"""# WeKnora Conflict Detection V2 paper figures
+    text = f"""# WeKnora fact-level conflict-governance paper figures
 
 Generated by `scripts/paper_figures/generate_conflict_v2_figures.py`.
 
@@ -422,7 +422,7 @@ Output directory: `{output}`
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Generate editable SVG figures for the WeKnora Conflict Detection V2 paper.",
+        description="Generate editable SVG figures for the WeKnora fact-level conflict-governance paper.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--output-dir", required=True, help="Private/output directory for generated SVG vectors")
@@ -457,7 +457,7 @@ def main() -> int:
         }
         (output / "figures_manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         write_readme(output / "README.md", generated, output)
-        print(f"Conflict V2 paper SVG figures generated: {output}")
+        print(f"Conflict-governance paper SVG figures generated: {output}")
         for item in generated:
             print(f"  {item['file']}")
         print("  API/model/database: not contacted")
