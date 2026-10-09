@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -34,6 +35,12 @@ def read_json(path: Path) -> Any:
         raise BatchError(f"missing JSON: {path}") from exc
     except json.JSONDecodeError as exc:
         raise BatchError(f"invalid JSON: {path}: {exc}") from exc
+
+
+def reset_incomplete_run_dir(run_dir: Path) -> None:
+    if run_dir.exists():
+        shutil.rmtree(run_dir)
+    run_dir.mkdir(parents=True, exist_ok=True)
 
 
 def batch_status(run_dir: Path) -> str:
@@ -183,6 +190,14 @@ def main() -> int:
                 print(f"[native-batch] {batch_id}: reuse {status}")
                 summaries.append(summarize_batch(run_dir))
                 continue
+            if run_dir.exists() and any(run_dir.iterdir()):
+                if args.resume or args.overwrite:
+                    print(f"[native-batch] {batch_id}: reset incomplete status={status}")
+                    reset_incomplete_run_dir(run_dir)
+                else:
+                    raise BatchError(
+                        f"{batch_id} output exists ({run_dir}); rerun with RESUME=1 to retry incomplete batches"
+                    )
             print(f"[native-batch] {batch_id}: start {scenario}")
             code = run_batch(args, scenario, run_dir)
             status = batch_status(run_dir)
