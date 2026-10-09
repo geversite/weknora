@@ -113,16 +113,27 @@ class NativeCorpusEvalTests(unittest.TestCase):
                 "scenario_name": "native-standard-product",
                 "variant": "c2-batch",
                 "knowledge_base_id": "kb-1",
-                "knowledge_ids": {"doc-0001": "k-1"},
-                "document_ingest": {"doc-0001": {"ingest_mode": "file", "source_bytes": 4096}},
+                "knowledge_ids": {"doc-0001": "k-1", "doc-0002": "k-2"},
+                "document_ingest": {
+                    "doc-0001": {"ingest_mode": "file", "source_bytes": 4096},
+                    "doc-0002": {"ingest_mode": "file", "source_bytes": 2048},
+                },
+                "scenario_path": str(run_dir / "scenario.json"),
             }), encoding="utf-8")
+            (run_dir / "scenario.json").write_text(json.dumps({
+                "documents": [
+                    {"id": "doc-0001", "original_filename": "manual.docx"},
+                    {"id": "doc-0002", "original_filename": "manual.pdf"},
+                ]
+            }), encoding="utf-8")
+            (run_dir / "spans" / "doc-0002.json").write_text("{}\n", encoding="utf-8")
             (run_dir / "metrics.json").write_text(json.dumps({
-                "claim_count_total": 1102,
-                "claim_counts_by_document": {"doc-0001": 0},
-                "conflict_count_total": 1,
-                "observed_disputed_fact_count": 1,
+                "claim_count_total": 3,
+                "claim_counts_by_document": {"doc-0001": 0, "doc-0002": 0},
+                "conflict_count_total": 2,
+                "observed_disputed_fact_count": 2,
                 "observed_disputed_fact_winner_count": 0,
-                "clusters": {"cluster_count": 1},
+                "clusters": {"cluster_count": 2},
                 "cascade": {"totals": {
                     "rule_direct_conflict": 1,
                     "llm_batch_call_count": 0,
@@ -135,16 +146,43 @@ class NativeCorpusEvalTests(unittest.TestCase):
                 {"knowledge_id": "k-1", "subject": "y"},
                 {"knowledge_id": "k-1", "subject": "z"},
             ]), encoding="utf-8")
+            (run_dir / "disputed_facts.json").write_text(json.dumps([
+                {
+                    "anchor_kind": "claim_key",
+                    "fact_key": "claim_key:limit",
+                    "conflict_count": 1,
+                    "source_count": 2,
+                    "candidate_values": ["100", "150"],
+                    "suggested_winner_knowledge_id": "",
+                },
+                {
+                    "anchor_kind": "chunk_pair",
+                    "fact_key": "chunk_pair:a|b",
+                    "conflict_count": 1,
+                    "source_count": 2,
+                    "candidate_values": ["x"],
+                    "suggested_winner_knowledge_id": "",
+                },
+            ]), encoding="utf-8")
             (run_dir / "dead_letters.json").write_text("[]\n", encoding="utf-8")
             result = run_ok(str(SUMMARIZER), "--run-dir", str(run_dir), "--apply")
             payload = json.loads(result.stdout)
-            self.assertEqual(payload["claim_count_total"], 1102)
+            self.assertEqual(payload["claim_count_total"], 3)
             self.assertEqual(payload["claim_count_by_exported_rows"], 3)
             self.assertEqual(payload["documents"][0]["claims"], 3)
             self.assertEqual(payload["documents"][0]["claims_wait"], 0)
             self.assertEqual(payload["cascade"]["token_total"], 16)
-            self.assertEqual(payload["conflict_count_total"], 1)
+            self.assertEqual(payload["conflict_count_total"], 2)
             self.assertEqual(payload["winner_proposal_count"], 0)
+            obs = payload["observational_metrics"]
+            self.assertEqual(obs["files_parsed"], 2)
+            self.assertEqual(obs["files_with_claims"], 1)
+            self.assertEqual(obs["anchor_kind_clusters"]["claim_key"], 1)
+            self.assertEqual(obs["exact_key_clusters_with_ge2_values"], 1)
+            self.assertEqual(obs["global_proposals"], 0)
+            self.assertEqual(obs["abstention_rate"], 1.0)
+            self.assertEqual(obs["same_stem_pdf_docx_pairs"][0]["docx_claims"], 3)
+            self.assertEqual(obs["same_stem_pdf_docx_pairs"][0]["pdf_claims"], 0)
             self.assertIn("not real-document accuracy", payload["note"].lower())
             self.assertTrue((run_dir / "native_summary.md").is_file())
             markdown = (run_dir / "native_summary.md").read_text(encoding="utf-8")

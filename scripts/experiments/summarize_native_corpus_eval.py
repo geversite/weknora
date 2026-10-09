@@ -56,6 +56,126 @@ def original_names_from_scenario(manifest: dict[str, Any]) -> dict[str, str]:
     return names
 
 
+def parse_json_list(value: Any) -> list[Any]:
+    if isinstance(value, list):
+        return value
+    if isinstance(value, str) and value.strip():
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return []
+        return parsed if isinstance(parsed, list) else []
+    return []
+
+
+def knowledge_id_from_ref(ref: Any) -> str:
+    if isinstance(ref, dict):
+        ref = ref.get("knowledge_id") or ref.get("id") or ""
+    text = str(ref or "").strip()
+    if text.startswith("knowledge:"):
+        text = text.split(":", 1)[1]
+    return text
+
+
+def ratio(numerator: int, denominator: int) -> float | None:
+    if denominator <= 0:
+        return None
+    return numerator / denominator
+
+
+def observational_metrics(documents: list[dict[str, Any]], facts: list[dict[str, Any]]) -> dict[str, Any]:
+    parsed = sum(1 for item in documents if item.get("parse_span_artifact"))
+    with_claims = sum(1 for item in documents if as_int(item.get("claims")) > 0)
+    by_ext: dict[str, dict[str, int]] = {}
+    for item in documents:
+        ext = Path(str(item.get("original_filename") or item.get("id") or "")).suffix.lower() or "(none)"
+        bucket = by_ext.setdefault(ext, {"files": 0, "with_claims": 0, "claims": 0})
+        bucket["files"] += 1
+        claims = as_int(item.get("claims"))
+        bucket["claims"] += claims
+        if claims > 0:
+            bucket["with_claims"] += 1
+    same_stem_pdf_docx: list[dict[str, Any]] = []
+    by_stem: dict[str, dict[str, dict[str, Any]]] = {}
+    for item in documents:
+        name = str(item.get("original_filename") or "")
+        stem = Path(name).stem
+        ext = Path(name).suffix.lower()
+        if stem and ext in {".pdf", ".docx"}:
+            by_stem.setdefault(stem, {})[ext] = item
+    for stem, pair in sorted(by_stem.items()):
+        if ".pdf" in pair and ".docx" in pair:
+            same_stem_pdf_docx.append({
+                "stem": stem,
+                "docx_claims": as_int(pair[".docx"].get("claims")),
+                "pdf_claims": as_int(pair[".pdf"].get("claims")),
+            })
+
+    kind_clusters = {"claim_key": 0, "fuzzy_slot": 0, "chunk_pair": 0, "document_singleton": 0, "other": 0}
+    kind_raw = {key: 0 for key in kind_clusters}
+    exact_ge2_values = 0
+    exact_single_value = 0
+    exact_ge2_sources = 0
+    for fact in facts:
+        kind = str(fact.get("anchor_kind") or "")
+        key = str(fact.get("fact_key") or "")
+        if not kind:
+            if key.startswith("claim_key:"):
+                kind = "claim_key"
+            elif key.startswith("fuzzy_slot:"):
+                kind = "fuzzy_slot"
+            elif key.startswith("chunk_pair:"):
+                kind = "chunk_pair"
+            elif key.startswith("document_singleton:"):
+                kind = "document_singleton"
+        if kind not in kind_clusters:
+            kind = "other"
+        raw = as_int(fact.get("conflict_count"))
+        kind_clusters[kind] += 1
+        kind_raw[kind] += raw
+        if kind == "claim_key":
+            values = [str(item) for item in parse_json_list(fact.get("candidate_values"))]
+            unique_values = len(set(values))
+            sources = as_int(fact.get("source_count")) or len(parse_json_list(fact.get("source_refs")))
+            if unique_values >= 2:
+                exact_ge2_values += 1
+            elif unique_values == 1:
+                exact_single_value += 1
+            if sources >= 2:
+                exact_ge2_sources += 1
+
+    cluster_count = len(facts)
+    raw_total = sum(kind_raw.values()) or sum(as_int(item.get("conflict_count")) for item in facts)
+    proposals = sum(1 for fact in facts if str(fact.get("suggested_winner_knowledge_id") or "").strip())
+    return {
+        "files_selected": len(documents),
+        "files_parsed": parsed,
+        "files_with_claims": with_claims,
+        "parse_success_rate": ratio(parsed, len(documents)),
+        "nonzero_claim_rate": ratio(with_claims, len(documents)),
+        "claims_by_extension": by_ext,
+        "same_stem_pdf_docx_pairs": same_stem_pdf_docx,
+        "raw_conflicts": raw_total,
+        "disputed_facts": cluster_count,
+        "raw_per_disputed_fact": ratio(raw_total, cluster_count),
+        "anchor_kind_clusters": kind_clusters,
+        "anchor_kind_raw_conflicts": kind_raw,
+        "exact_key_cluster_share": ratio(kind_clusters["claim_key"], cluster_count),
+        "exact_key_raw_share": ratio(kind_raw["claim_key"], raw_total),
+        "exact_key_clusters": kind_clusters["claim_key"],
+        "exact_key_clusters_with_ge2_values": exact_ge2_values,
+        "exact_key_clusters_with_1_value": exact_single_value,
+        "exact_key_clusters_with_ge2_sources": exact_ge2_sources,
+        "global_proposals": proposals,
+        "proposal_rate": ratio(proposals, cluster_count),
+        "abstention_rate": ratio(cluster_count - proposals, cluster_count),
+        "note": (
+            "Structural observational metrics only. Abstention is not proposal "
+            "precision. Exact-key multi-value clusters are not human-labeled TPs."
+        ),
+    }
+
+
 def claims_by_knowledge(run_dir: Path) -> dict[str, int]:
     path = run_dir / "claims.json"
     if not path.is_file():
@@ -109,6 +229,13 @@ def summarize(run_dir: Path) -> dict[str, Any]:
         })
     final_total = sum(item["claims"] for item in documents)
     reported_total = as_int(metrics.get("claim_count_total", final_total))
+    facts: list[dict[str, Any]] = []
+    if (run_dir / "disputed_facts.json").is_file():
+        raw_facts = read_json(run_dir / "disputed_facts.json")
+        if not isinstance(raw_facts, list):
+            raise SummaryError("disputed_facts.json root must be an array")
+        facts = [row for row in raw_facts if isinstance(row, dict)]
+    paper = observational_metrics(documents, facts)
     return {
         "schema_version": 1,
         "kind": "native_docreader_observational_summary",
@@ -136,6 +263,7 @@ def summarize(run_dir: Path) -> dict[str, Any]:
             "duration_ms": as_int(cascade.get("duration_ms")),
         },
         "documents": documents,
+        "observational_metrics": paper,
         "note": (
             "Observational native-DocReader counts only. Per-document claims "
             "come from exported claims.json, not the in-run wait snapshot. "
@@ -160,6 +288,25 @@ def write_markdown(path: Path, summary: dict[str, Any]) -> None:
         f"- dead letters: `{summary['dead_letter_count']}`",
         "",
         "This is not labeled accuracy.",
+        "",
+        "## Paper-facing observational metrics",
+        "",
+    ]
+    paper = summary.get("observational_metrics") or {}
+    if paper:
+        lines += [
+            f"- parse success: `{paper.get('files_parsed')}/{paper.get('files_selected')}`",
+            f"- files with claims: `{paper.get('files_with_claims')}/{paper.get('files_selected')}`",
+            f"- exact-key / fuzzy / chunk-pair clusters: "
+            f"`{paper.get('anchor_kind_clusters', {}).get('claim_key')} / "
+            f"{paper.get('anchor_kind_clusters', {}).get('fuzzy_slot')} / "
+            f"{paper.get('anchor_kind_clusters', {}).get('chunk_pair')}`",
+            f"- exact-key share of raw conflicts: `{paper.get('exact_key_raw_share')}`",
+            f"- exact-key clusters with ≥2 values: `{paper.get('exact_key_clusters_with_ge2_values')}/{paper.get('exact_key_clusters')}`",
+            f"- global proposals / abstention: `{paper.get('global_proposals')}/{paper.get('disputed_facts')}` / `{paper.get('abstention_rate')}`",
+            "",
+        ]
+    lines += [
         "",
         "| document | claims | parse span |",
         "|---|---:|---|",
