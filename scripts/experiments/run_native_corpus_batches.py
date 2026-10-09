@@ -156,9 +156,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--fail-fast", type=int, default=2)
     parser.add_argument("--file-upload-timeout-seconds", type=int, default=300)
-    parser.add_argument("--timeout-seconds", type=int, default=600)
-    parser.add_argument("--claim-timeout-seconds", type=int, default=600)
-    parser.add_argument("--conflict-timeout-seconds", type=int, default=900)
+    parser.add_argument("--timeout-seconds", type=int, default=900)
+    parser.add_argument("--claim-timeout-seconds", type=int, default=1800)
+    parser.add_argument("--conflict-timeout-seconds", type=int, default=3600)
     return parser.parse_args()
 
 

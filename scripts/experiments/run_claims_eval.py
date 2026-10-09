@@ -834,6 +834,11 @@ def wait_for_claims(
         if minimum > 0 and last_count >= minimum:
             return last_count
         time.sleep(poll_seconds)
+    # Large office files can still be extracting after many claims exist and
+    # before detect is released. Do not fail an observational min=0 wait when
+    # claims are already present; wait_for_detection_runs is the later barrier.
+    if last_count > 0 or detection_run_exists(db, knowledge_id):
+        return last_count
     raise ExperimentError(
         f"等待 knowledge={knowledge_id} 的 claims 超时；期望 >= {minimum}，实际 {last_count}"
     )
