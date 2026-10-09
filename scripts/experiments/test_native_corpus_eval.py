@@ -117,18 +117,32 @@ class NativeCorpusEvalTests(unittest.TestCase):
                 "document_ingest": {"doc-0001": {"ingest_mode": "file", "source_bytes": 4096}},
             }), encoding="utf-8")
             (run_dir / "metrics.json").write_text(json.dumps({
-                "claim_count_total": 3,
-                "claim_counts_by_document": {"doc-0001": 3},
+                "claim_count_total": 1102,
+                "claim_counts_by_document": {"doc-0001": 0},
                 "conflict_count_total": 1,
                 "observed_disputed_fact_count": 1,
                 "observed_disputed_fact_winner_count": 0,
                 "clusters": {"cluster_count": 1},
-                "cascade": {"totals": {"rule_direct_conflict": 1, "llm_batch_call_count": 0}},
+                "cascade": {"totals": {
+                    "rule_direct_conflict": 1,
+                    "llm_batch_call_count": 0,
+                    "llm_prompt_tokens": 12,
+                    "llm_completion_tokens": 4,
+                }},
             }), encoding="utf-8")
+            (run_dir / "claims.json").write_text(json.dumps([
+                {"knowledge_id": "k-1", "subject": "x"},
+                {"knowledge_id": "k-1", "subject": "y"},
+                {"knowledge_id": "k-1", "subject": "z"},
+            ]), encoding="utf-8")
             (run_dir / "dead_letters.json").write_text("[]\n", encoding="utf-8")
             result = run_ok(str(SUMMARIZER), "--run-dir", str(run_dir), "--apply")
             payload = json.loads(result.stdout)
-            self.assertEqual(payload["claim_count_total"], 3)
+            self.assertEqual(payload["claim_count_total"], 1102)
+            self.assertEqual(payload["claim_count_by_exported_rows"], 3)
+            self.assertEqual(payload["documents"][0]["claims"], 3)
+            self.assertEqual(payload["documents"][0]["claims_wait"], 0)
+            self.assertEqual(payload["cascade"]["token_total"], 16)
             self.assertEqual(payload["conflict_count_total"], 1)
             self.assertEqual(payload["winner_proposal_count"], 0)
             self.assertIn("not real-document accuracy", payload["note"].lower())

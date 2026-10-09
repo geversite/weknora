@@ -34,6 +34,46 @@ def as_int(value: Any) -> int:
         return 0
 
 
+def original_names_from_scenario(manifest: dict[str, Any]) -> dict[str, str]:
+    raw_path = str(manifest.get("scenario_path") or "").strip()
+    if not raw_path:
+        return {}
+    path = Path(raw_path).expanduser()
+    if not path.is_file():
+        return {}
+    try:
+        scenario = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    names: dict[str, str] = {}
+    for document in scenario.get("documents") or []:
+        if not isinstance(document, dict):
+            continue
+        doc_id = str(document.get("id") or "")
+        name = str(document.get("original_filename") or document.get("source_relative_path") or "")
+        if doc_id and name:
+            names[doc_id] = name
+    return names
+
+
+def claims_by_knowledge(run_dir: Path) -> dict[str, int]:
+    path = run_dir / "claims.json"
+    if not path.is_file():
+        return {}
+    rows = read_json(path)
+    if not isinstance(rows, list):
+        raise SummaryError("claims.json root must be an array")
+    counts: dict[str, int] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        knowledge_id = str(row.get("knowledge_id") or "")
+        if not knowledge_id:
+            continue
+        counts[knowledge_id] = counts.get(knowledge_id, 0) + 1
+    return counts
+
+
 def summarize(run_dir: Path) -> dict[str, Any]:
     manifest = read_json(run_dir / "manifest.json")
     if not isinstance(manifest, dict):
@@ -41,7 +81,9 @@ def summarize(run_dir: Path) -> dict[str, Any]:
     metrics = read_json(run_dir / "metrics.json") if (run_dir / "metrics.json").is_file() else {}
     if metrics and not isinstance(metrics, dict):
         raise SummaryError("metrics.json root must be an object")
-    claims_by_doc = metrics.get("claim_counts_by_document") or {}
+    wait_counts = metrics.get("claim_counts_by_document") or {}
+    final_by_knowledge = claims_by_knowledge(run_dir)
+    original_names = original_names_from_scenario(manifest)
     cascade = ((metrics.get("cascade") or {}).get("totals") or {})
     clusters = metrics.get("clusters") or {}
     dead_letters = 0
@@ -53,14 +95,20 @@ def summarize(run_dir: Path) -> dict[str, Any]:
     knowledge_ids = manifest.get("knowledge_ids") or {}
     for doc_id, knowledge_id in knowledge_ids.items():
         detail = ingest.get(doc_id) or {}
+        wait_count = as_int(wait_counts.get(doc_id, 0))
+        final_count = as_int(final_by_knowledge.get(str(knowledge_id), wait_count))
         documents.append({
             "id": doc_id,
             "knowledge_id": knowledge_id,
+            "original_filename": original_names.get(doc_id, ""),
             "ingest_mode": detail.get("ingest_mode", ""),
             "source_bytes": detail.get("source_bytes"),
-            "claims": as_int(claims_by_doc.get(doc_id, 0)),
+            "claims_wait": wait_count,
+            "claims": final_count,
             "parse_span_artifact": (run_dir / "spans" / f"{doc_id}.json").is_file(),
         })
+    final_total = sum(item["claims"] for item in documents)
+    reported_total = as_int(metrics.get("claim_count_total", final_total))
     return {
         "schema_version": 1,
         "kind": "native_docreader_observational_summary",
@@ -70,7 +118,8 @@ def summarize(run_dir: Path) -> dict[str, Any]:
         "variant": manifest.get("variant", ""),
         "knowledge_base_id": manifest.get("knowledge_base_id", ""),
         "document_count": len(documents),
-        "claim_count_total": as_int(metrics.get("claim_count_total", sum(item["claims"] for item in documents))),
+        "claim_count_total": reported_total if reported_total else final_total,
+        "claim_count_by_exported_rows": final_total,
         "conflict_count_total": as_int(metrics.get("conflict_count_total")),
         "disputed_fact_count": as_int(clusters.get("cluster_count") or metrics.get("observed_disputed_fact_count")),
         "winner_proposal_count": as_int(metrics.get("observed_disputed_fact_winner_count")),
@@ -81,13 +130,17 @@ def summarize(run_dir: Path) -> dict[str, Any]:
             "rule_needs_llm": as_int(cascade.get("rule_needs_llm")),
             "llm_batch_call_count": as_int(cascade.get("llm_batch_call_count")),
             "llm_single_call_count": as_int(cascade.get("llm_single_call_count")),
-            "token_total": as_int(cascade.get("token_total") or cascade.get("llm_total_tokens")),
+            "llm_prompt_tokens": as_int(cascade.get("llm_prompt_tokens")),
+            "llm_completion_tokens": as_int(cascade.get("llm_completion_tokens")),
+            "token_total": as_int(cascade.get("llm_prompt_tokens")) + as_int(cascade.get("llm_completion_tokens")),
+            "duration_ms": as_int(cascade.get("duration_ms")),
         },
         "documents": documents,
         "note": (
-            "Observational native-DocReader counts only. Not real-document "
-            "accuracy, not human-review accuracy, not pooled with synthetic "
-            "policy or public-transfer tables."
+            "Observational native-DocReader counts only. Per-document claims "
+            "come from exported claims.json, not the in-run wait snapshot. "
+            "Not real-document accuracy, not human-review accuracy, not pooled "
+            "with synthetic policy or public-transfer tables."
         ),
     }
 

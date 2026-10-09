@@ -825,11 +825,13 @@ def wait_for_claims(
     while time.monotonic() < deadline:
         rows = db.query(query)
         last_count = int((rows[0] if rows else {}).get("count", "0"))
-        if last_count >= minimum:
+        extract_released = detection_run_exists(db, knowledge_id)
+        # minimum=0 is an observational "do not require claims" setting. It must
+        # still wait until extract has released detect; otherwise the first poll
+        # returns 0 and later per-document counts are stale.
+        if extract_released:
             return last_count
-        # Public transfer documents can finish extract with 0 claims. Treat that
-        # as an evaluable extractor outcome once detect has been released.
-        if minimum > 0 and detection_run_exists(db, knowledge_id):
+        if minimum > 0 and last_count >= minimum:
             return last_count
         time.sleep(poll_seconds)
     raise ExperimentError(
