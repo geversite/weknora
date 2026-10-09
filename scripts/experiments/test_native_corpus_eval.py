@@ -94,6 +94,10 @@ class NativeCorpusEvalTests(unittest.TestCase):
                 self.assertEqual(len(document["source_sha256"]), 64)
             self.assertEqual(scenario["expected_conflict_document_pairs"], [])
             self.assertEqual(scenario["min_claims_per_document"], 0)
+            census = json.loads((out / "corpus_census.json").read_text(encoding="utf-8"))
+            self.assertGreaterEqual(census["file_count"], 3)
+            manifest = json.loads((out / "batch_manifest.json").read_text(encoding="utf-8"))
+            self.assertGreaterEqual(manifest["batch_count"], 1)
             dry_out = root / "dry-run"
             dry = run_ok(
                 str(RUNNER),
@@ -187,6 +191,33 @@ class NativeCorpusEvalTests(unittest.TestCase):
             self.assertTrue((run_dir / "native_summary.md").is_file())
             markdown = (run_dir / "native_summary.md").read_text(encoding="utf-8")
             self.assertNotIn("limit 100", markdown)
+
+    def test_census_drops_pdf_when_docx_exists_and_batches(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            docs = root / "standard-product"
+            (docs / "a").mkdir(parents=True)
+            (docs / "b").mkdir()
+            write_docx(docs / "a" / "manual.docx", "body-a")
+            (docs / "a" / "manual.pdf").write_bytes(b"%PDF-1.4 " + b"x" * 400)
+            write_docx(docs / "b" / "other.docx", "body-b")
+            out = root / "plan"
+            run_ok(
+                str(PLANNER),
+                "--source-dir", str(docs),
+                "--output-dir", str(out),
+                "--max-files", "8",
+                "--batch-size", "1",
+                "--min-bytes", "50",
+            )
+            census = json.loads((out / "corpus_census.json").read_text(encoding="utf-8"))
+            self.assertEqual(census["file_count"], 3)
+            selected = json.loads((out / "native_eval_scenario.json").read_text(encoding="utf-8"))
+            names = {item["original_filename"] for item in selected["documents"]}
+            self.assertIn("manual.docx", names)
+            self.assertNotIn("manual.pdf", names)
+            manifest = json.loads((out / "batch_manifest.json").read_text(encoding="utf-8"))
+            self.assertEqual(manifest["batch_count"], len(selected["documents"]))
 
 
 if __name__ == "__main__":

@@ -15,8 +15,9 @@ import csv
 import hashlib
 import importlib.util
 import json
+import os
 import sys
-from collections import defaultdict
+from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
 
@@ -68,14 +69,12 @@ def stable_upload_name(doc_id: str, suffix: str) -> str:
     return name
 
 
-def select_records(
+def eligible_records(
     records: list[dict[str, Any]],
     *,
-    max_files: int,
     min_bytes: int,
     max_bytes: int,
-    prefer_families: bool,
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], dict[str, int]]:
     unique: list[dict[str, Any]] = []
     skipped: dict[str, int] = defaultdict(int)
     for record in records:
@@ -90,6 +89,40 @@ def select_records(
             skipped["too_large"] += 1
             continue
         unique.append(record)
+    return unique, dict(skipped)
+
+
+def drop_redundant_pdf(records: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]:
+    grouped: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+    for record in records:
+        parent = str(Path(str(record["relative_path"])).parent)
+        stem = Path(str(record["relative_path"])).stem.lower()
+        grouped[(parent, stem)].append(record)
+    kept: list[dict[str, Any]] = []
+    dropped = 0
+    for members in grouped.values():
+        exts = {str(item["extension"]) for item in members}
+        if ".docx" in exts and ".pdf" in exts:
+            kept.extend(item for item in members if str(item["extension"]) != ".pdf")
+            dropped += sum(1 for item in members if str(item["extension"]) == ".pdf")
+        else:
+            kept.extend(members)
+    return kept, dropped
+
+
+def select_records(
+    records: list[dict[str, Any]],
+    *,
+    max_files: int,
+    min_bytes: int,
+    max_bytes: int,
+    prefer_families: bool,
+    drop_pdf_if_docx: bool,
+) -> tuple[list[dict[str, Any]], dict[str, int]]:
+    unique, skipped = eligible_records(records, min_bytes=min_bytes, max_bytes=max_bytes)
+    if drop_pdf_if_docx:
+        unique, pdf_dropped = drop_redundant_pdf(unique)
+        skipped["pdf_if_docx"] = pdf_dropped
     unique.sort(key=lambda item: (-int(item["bytes"]), str(item["relative_path"])))
     selected: list[dict[str, Any]] = []
     seen: set[str] = set()
@@ -104,7 +137,9 @@ def select_records(
     if prefer_families:
         groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
         for record in unique:
-            groups[str(record.get("family_candidate") or record["filename_stem"])].append(record)
+            parent = str(Path(str(record["relative_path"])).parent)
+            family = str(record.get("family_candidate") or record["filename_stem"])
+            groups[f"{parent}::{family}"].append(record)
         ranked = sorted(
             groups.items(),
             key=lambda item: (-len(item[1]), -sum(int(row["bytes"]) for row in item[1]), item[0]),
@@ -112,10 +147,18 @@ def select_records(
         for _, members in ranked:
             if len(members) < 2:
                 continue
-            for record in members:
+            for record in members[:4]:
                 take(record)
             if len(selected) >= max_files:
                 break
+    by_dir: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for record in unique:
+        by_dir[str(Path(str(record["relative_path"])).parent)].append(record)
+    for _, members in sorted(by_dir.items(), key=lambda item: item[0]):
+        if members:
+            take(members[0])
+        if len(selected) >= max_files:
+            break
     for record in unique:
         take(record)
         if len(selected) >= max_files:
@@ -123,10 +166,57 @@ def select_records(
     if not selected:
         raise PlanError(
             "no eligible unique files after filters "
-            f"(min_bytes={min_bytes}, max_bytes={max_bytes}, skipped={dict(skipped)})"
+            f"(min_bytes={min_bytes}, max_bytes={max_bytes}, skipped={skipped})"
         )
     selected.sort(key=lambda item: str(item["relative_path"]))
-    return selected
+    skipped["eligible_unique"] = len(unique)
+    return selected, skipped
+
+
+def pack_batches(records: list[dict[str, Any]], batch_size: int) -> list[list[dict[str, Any]]]:
+    if batch_size <= 0:
+        raise PlanError("--batch-size must be positive")
+    by_parent: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for record in records:
+        by_parent[str(Path(str(record["relative_path"])).parent)].append(record)
+    batches: list[list[dict[str, Any]]] = []
+    current: list[dict[str, Any]] = []
+    for _, members in sorted(by_parent.items()):
+        for record in members:
+            if len(current) >= batch_size:
+                batches.append(current)
+                current = []
+            current.append(record)
+    if current:
+        batches.append(current)
+    return batches
+
+
+def corpus_census(source: Path, records: list[dict[str, Any]]) -> dict[str, Any]:
+    walk_dirs = 0
+    for dirpath, _dirnames, _filenames in os.walk(source):
+        if Path(dirpath).resolve() == source:
+            walk_dirs += 1
+            continue
+        walk_dirs += 1
+    parents = {str(Path(str(item["relative_path"])).parent) for item in records}
+    extensions = Counter(str(item["extension"]) for item in records)
+    unique = sum(1 for item in records if not item.get("duplicate_of"))
+    return {
+        "schema_version": 1,
+        "source_dir": str(source),
+        "directory_count": walk_dirs,
+        "directories_with_matching_files": len(parents),
+        "file_count": len(records),
+        "unique_file_count": unique,
+        "duplicate_file_count": len(records) - unique,
+        "bytes_total": sum(int(item["bytes"]) for item in records),
+        "extensions": dict(sorted(extensions.items())),
+        "note": (
+            "Full-folder census from filenames/hashes only. Not ingest, not "
+            "accuracy, and not a labeled corpus."
+        ),
+    }
 
 
 def build_scenario(
@@ -134,9 +224,11 @@ def build_scenario(
     name: str,
     source: Path,
     selected: list[dict[str, Any]],
+    start_index: int = 1,
 ) -> dict[str, Any]:
     documents = []
-    for index, record in enumerate(selected, start=1):
+    for offset, record in enumerate(selected):
+        index = start_index + offset
         doc_id = document_id(index)
         suffix = str(record["extension"])
         documents.append({
@@ -220,10 +312,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", required=True, help="Private output directory outside Git")
     parser.add_argument("--name", default="", help="Scenario name; default derived from folder name")
     parser.add_argument("--extensions", default=",".join(sorted(NATIVE_EXTENSIONS)))
-    parser.add_argument("--max-files", type=int, default=DEFAULT_MAX_FILES)
+    parser.add_argument("--max-files", type=int, default=DEFAULT_MAX_FILES, help="Stratified ingest sample cap, not the census size")
+    parser.add_argument("--batch-size", type=int, default=8, help="Files per temporary KB; keep small to bound pairwise detect cost")
     parser.add_argument("--min-bytes", type=int, default=DEFAULT_MIN_BYTES)
     parser.add_argument("--max-bytes", type=int, default=DEFAULT_MAX_BYTES, help="0 disables the size cap")
     parser.add_argument("--no-prefer-families", action="store_true", help="Do not prioritize filename version groups")
+    parser.add_argument("--keep-pdf-if-docx", action="store_true", help="Do not drop a PDF when a same-stem DOCX exists")
     parser.add_argument("--overwrite", action="store_true")
     return parser.parse_args()
 
@@ -233,6 +327,8 @@ def main() -> int:
     try:
         if args.max_files <= 0:
             raise PlanError("--max-files must be positive")
+        if args.batch_size <= 0:
+            raise PlanError("--batch-size must be positive")
         if args.min_bytes < 0 or args.max_bytes < 0:
             raise PlanError("--min-bytes/--max-bytes cannot be negative")
         source = Path(args.source_dir).expanduser().resolve()
@@ -254,42 +350,90 @@ def main() -> int:
         except Exception as exc:
             raise PlanError(str(exc)) from exc
         inventory.mark_duplicates(records)
-        selected = select_records(
+        census = corpus_census(source, records)
+        json_dump(output / "corpus_census.json", census)
+        selected, skipped = select_records(
             records,
             max_files=args.max_files,
             min_bytes=args.min_bytes,
             max_bytes=args.max_bytes,
             prefer_families=not args.no_prefer_families,
+            drop_pdf_if_docx=not args.keep_pdf_if_docx,
         )
         name = args.name.strip() or f"native-{slug_folder(source)}"
-        scenario = build_scenario(name=name, source=source, selected=selected)
+        packed = pack_batches(selected, args.batch_size)
+        batch_dir = output / "batches"
+        batch_dir.mkdir(exist_ok=True)
+        batch_entries = []
+        start_index = 1
+        all_documents: list[dict[str, Any]] = []
+        for batch_index, batch_records in enumerate(packed, start=1):
+            batch_name = f"{name}-b{batch_index:03d}"
+            scenario = build_scenario(
+                name=batch_name, source=source, selected=batch_records, start_index=start_index,
+            )
+            scenario_path = batch_dir / f"batch_{batch_index:03d}.json"
+            json_dump(scenario_path, scenario)
+            batch_entries.append({
+                "batch_id": f"batch_{batch_index:03d}",
+                "name": batch_name,
+                "scenario_path": str(scenario_path),
+                "document_count": len(batch_records),
+            })
+            all_documents.extend(scenario["documents"])
+            start_index += len(batch_records)
+        combined = build_scenario(name=name, source=source, selected=selected)
         scenario_path = output / "native_eval_scenario.json"
-        json_dump(scenario_path, scenario)
-        write_selection_csv(output / "selected_documents.csv", scenario["documents"])
+        json_dump(scenario_path, combined)
+        write_selection_csv(output / "selected_documents.csv", all_documents)
+        manifest = {
+            "schema_version": 1,
+            "name": name,
+            "source_dir": str(source),
+            "batch_size": args.batch_size,
+            "selected_file_count": len(selected),
+            "batch_count": len(batch_entries),
+            "batches": batch_entries,
+            "note": "Run batches separately. Do not upload the combined scenario of all sampled files into one KB.",
+        }
+        json_dump(output / "batch_manifest.json", manifest)
         summary = {
             "schema_version": 1,
             "source_dir": str(source),
             "output_dir": str(output),
             "scenario_path": str(scenario_path),
+            "batch_manifest_path": str(output / "batch_manifest.json"),
+            "census_path": str(output / "corpus_census.json"),
             "name": name,
+            "census": census,
+            "selection_skipped": skipped,
             "scanned_file_count": len(records),
-            "unique_file_count": sum(1 for item in records if not item.get("duplicate_of")),
+            "unique_file_count": census["unique_file_count"],
             "selected_file_count": len(selected),
+            "batch_count": len(batch_entries),
+            "batch_size": args.batch_size,
             "extensions": sorted(extensions),
             "max_files": args.max_files,
             "min_bytes": args.min_bytes,
             "max_bytes": args.max_bytes,
             "prefer_families": not args.no_prefer_families,
+            "drop_pdf_if_docx": not args.keep_pdf_if_docx,
             "note": (
-                "Unlabeled native DocReader observational plan. Filename hints "
-                "are not gold. Do not report this as real-document accuracy."
+                "Census covers the whole folder. Ingest sample is stratified and "
+                "batched. Not real-document accuracy. Do not load all sampled "
+                "files into one knowledge base."
             ),
         }
         json_dump(output / "plan_summary.json", summary)
         write_readme(output / "README.md", source, scenario_path, args.max_files)
         print(f"Native DocReader plan complete: {output}")
-        print(f"  scanned / unique / selected: {summary['scanned_file_count']} / {summary['unique_file_count']} / {summary['selected_file_count']}")
-        print(f"  scenario: {scenario_path}")
+        print(
+            "  census dirs/files/unique: "
+            f"{census['directory_count']} / {census['file_count']} / {census['unique_file_count']}"
+        )
+        print(f"  selected / batches: {len(selected)} / {len(batch_entries)} (batch_size={args.batch_size})")
+        print(f"  census: {output / 'corpus_census.json'}")
+        print(f"  batch manifest: {output / 'batch_manifest.json'}")
         print("  document bodies/API/model/database: not accessed")
         return 0
     except PlanError as exc:
