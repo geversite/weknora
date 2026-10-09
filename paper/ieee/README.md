@@ -105,7 +105,7 @@ The paper source is intentionally scoped as a controlled systems/prototype paper
 Lifecycle matrix: 15/15 controlled executions, 9/9 cycles, 15 detector artifacts with dead_letter_count=0
 Synthetic holdout: binary DocReader integration plus a 12-family synthetic holdout with 3 independent replicates per family
 Public transfer (independent tables): WikiFactDiff pair holdout 60/60 P/R/A=1.0; proposal exact success 25/30; VitaminC holdout P/R/A=0.750/0.800/0.767
-Native observational ingest (independent): 8 licensed office files; 8/8 parsed; 1102 claims; 38 raw → 24 DisputedFacts; 0/24 proposals; 0 dead letters; not labeled accuracy
+Native observational ingest (independent): stratified 48 files / 6 KBs; 48/48 parsed; 44/48 with claims; 6028 claims; 49 raw → 45 DisputedFacts (sum); 0/45 proposals; 5 dead letters; not labeled accuracy; not one-KB clustering of the full folder
 ```
 
 These results do not establish real-document generalization, cross-format PDF--DOCX clustering accuracy, human-review accuracy, or provider-seed-controlled causality. Public WikiFactDiff/VitaminC numbers and native observational counts must not be pooled with the synthetic policy tables.

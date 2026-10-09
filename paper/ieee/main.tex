@@ -58,7 +58,7 @@ email@example.edu}}
 \maketitle
 
 \begin{abstract}
-Versioned knowledge bases are commonly maintained through chunk retrieval and chunk-pair conflict detection. Yet an individual conflict pair cannot naturally represent a dispute shared by multiple sources, nor can its local A/B direction be safely promoted to a global governance action. We present a \sys{} prototype for fact-level conflict governance in versioned, multi-source knowledge bases. The system extracts atomic claims with source quotes, combines exact claim keys with semantic fallback candidates, and applies a rule-plus-grounded-LLM cascade for conflict adjudication. Raw chunk-pair conflicts are projected into \disputedfact{}s. A global \proposal{} is produced only when every source carries explicit and mutually consistent issuer, date, and version evidence. Proposals are advisory: \adoption{} requires an explicit snapshot-bound request, while a durable record enables a precise \reopen{} operation. In a live environment with HTTP APIs, DocReader, Asynq, PostgreSQL, and configured models, the grounded cascade reduced LLM calls from 48 to 9 relative to an all-LLM baseline. A controlled lifecycle matrix completed 15/15 case executions and 9/9 adoption--reopen cycles with zero dead letters across 15 detector artifacts. In an expanded synthetic development/holdout policy corpus, the held-out matrix completed 36/36 executions and 18/18 lifecycle cycles. The global proposal policy achieved 1.000 controlled fact-family accuracy with zero unsafe actions, while simple recency and local-vote baselines produced unsafe proposals. Separately, adapter-defined public transfer is reported in independent tables: WikiFactDiff templated two-snapshot pairs reached 60/60 holdout accuracy, while VitaminC claim--evidence transfer reached holdout precision/recall/accuracy of 0.750/0.800/0.767. On eight licensed enterprise office files ingested through native DocReader, the prototype extracted 1,102 claims, clustered 38 raw conflicts into 24 disputed facts, and issued 0 global proposals. These findings establish controlled integration, safety, public-text transfer, and small-sample native-ingest evidence, not real-document generalization, human-review accuracy, or seed-controlled causal claims.
+Versioned knowledge bases are commonly maintained through chunk retrieval and chunk-pair conflict detection. Yet an individual conflict pair cannot naturally represent a dispute shared by multiple sources, nor can its local A/B direction be safely promoted to a global governance action. We present a \sys{} prototype for fact-level conflict governance in versioned, multi-source knowledge bases. The system extracts atomic claims with source quotes, combines exact claim keys with semantic fallback candidates, and applies a rule-plus-grounded-LLM cascade for conflict adjudication. Raw chunk-pair conflicts are projected into \disputedfact{}s. A global \proposal{} is produced only when every source carries explicit and mutually consistent issuer, date, and version evidence. Proposals are advisory: \adoption{} requires an explicit snapshot-bound request, while a durable record enables a precise \reopen{} operation. In a live environment with HTTP APIs, DocReader, Asynq, PostgreSQL, and configured models, the grounded cascade reduced LLM calls from 48 to 9 relative to an all-LLM baseline. A controlled lifecycle matrix completed 15/15 case executions and 9/9 adoption--reopen cycles with zero dead letters across 15 detector artifacts. In an expanded synthetic development/holdout policy corpus, the held-out matrix completed 36/36 executions and 18/18 lifecycle cycles. The global proposal policy achieved 1.000 controlled fact-family accuracy with zero unsafe actions, while simple recency and local-vote baselines produced unsafe proposals. Separately, adapter-defined public transfer is reported in independent tables: WikiFactDiff templated two-snapshot pairs reached 60/60 holdout accuracy, while VitaminC claim--evidence transfer reached holdout precision/recall/accuracy of 0.750/0.800/0.767. On a stratified 48-file native DocReader sample from a licensed enterprise folder (six temporary knowledge bases), the prototype parsed 48/48 files, extracted 6,028 claims, summed 49 raw conflicts into 45 disputed facts, and issued 0 global proposals. These findings establish controlled integration, safety, public-text transfer, and small-sample native-ingest evidence, not real-document generalization, human-review accuracy, or seed-controlled causal claims.
 \end{abstract}
 
 \begin{IEEEkeywords}
@@ -346,10 +346,10 @@ Table~\ref{tab:vitaminc-public} shows a harder public claim--evidence setting. F
 \subsection{Native Enterprise-Document Observational Ingest}
 \label{sec:native-obs}
 
-To add licensed office files without turning them into a labeled accuracy study, we ingested eight de-identified enterprise documents through the public multipart API and DocReader: one DOCX manual, its PDF sibling, and six PPTX training decks. The run used one temporary knowledge base, the grounded cascade, and no gold pairs or winner assertions. Table~\ref{tab:native-obs} reports structural counts only.
+A licensed enterprise folder was first inventoried without upload. Pairwise detection cannot place hundreds of office files in one knowledge base: an eight-file smoke already produced 805 grey-zone candidates. We therefore report a stratified observational ingest of 48 files in six temporary knowledge bases (eight files each), using native DocReader, the grounded cascade, and no gold labels. Table~\ref{tab:native-obs} sums structural counts across those independent KBs. Disputed-fact totals are not one global clustering.
 
 \begin{table}[t]
-\caption{Native DocReader observational ingest on eight licensed enterprise office files in one temporary knowledge base. Not labeled accuracy and not pooled with synthetic or public-transfer tables.}
+\caption{Native DocReader observational ingest on a stratified 48-file sample (six temporary KBs). Not labeled accuracy and not pooled with synthetic or public-transfer tables.}
 \label{tab:native-obs}
 \centering
 \small
@@ -357,22 +357,19 @@ To add licensed office files without turning them into a labeled accuracy study,
 \toprule
 Metric & Value \\
 \midrule
-Files parsed & 8/8 \\
-Files with $\ge$1 claim & 7/8 \\
-DOCX / PPTX / PDF with $\ge$1 claim & 1/1 / 6/6 / 0/1 \\
-Claims & 1,102 \\
-Raw conflicts $\rightarrow$ DisputedFacts & 38 $\rightarrow$ 24 \\
-Exact-key / fuzzy-slot / chunk-pair clusters & 8 / 7 / 9 \\
-Exact-key share of raw conflicts & 20/38 \\
-Exact-key clusters with $\ge$2 values & 7/8 \\
-Global proposals / clusters & 0/24 \\
-Dead letters & 0 \\
-LLM batch calls / tokens / duration (s) & 44 / 204,757 / 713.7 \\
+Files parsed & 48/48 \\
+Files with $\ge$1 claim & 44/48 \\
+Claims (sum) & 6,028 \\
+Raw conflicts $\rightarrow$ DisputedFacts (sum) & 49 $\rightarrow$ 45 \\
+Global proposals / clusters (sum) & 0/45 \\
+Dead letters (sum) & 5 \\
+Rule no-conflict / direct / needs-LLM & 37 / 0 / 2,233 \\
+LLM batch / single calls & 179 / 15 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-All eight files completed native parse with zero detector dead letters. The PDF sibling of the DOCX manual yielded 0 claims while the DOCX yielded 114, so this sample cannot support a PDF--DOCX clustering claim. Of 24 disputed facts, only eight used exact claim keys (20/38 raw conflicts). Seven of those eight exact-key clusters had at least two distinct values; one had a single normalized value and should not be counted as a confirmed disagreement. The 24 clusters received 0 global proposals: the files lack verified native issuer/date/version headers, and several exact-key disagreements are cross-institution parallel materials rather than same-issuer revisions. Abstention is therefore the intended fail-closed outcome, not proposal precision. These counts must not be pooled with Table~\ref{tab:holdout} or the public-transfer tables.
+All 48 files completed native parse. Four files yielded zero claims. The six batches produced 6,028 claims and 45 disputed facts with 0 global proposals: sampled files lack verified native issuer/date/version headers, so abstention is the intended fail-closed outcome, not proposal precision. Five detector dead letters were recorded and are not rewritten as zero. An earlier eight-file smoke in one KB found that a PDF sibling of a DOCX manual yielded 0 claims versus 114 for the DOCX; that smoke is not pooled with Table~\ref{tab:native-obs}. These counts must not be pooled with Table~\ref{tab:holdout} or the public-transfer tables.
 
 \section{Related Work}
 \label{sec:related}
@@ -396,7 +393,7 @@ Data provenance motivates retaining source, derivation, and recovery information
 \section{Limitations and Threats to Validity}
 \label{sec:limitations}
 
-The prototype has several limitations. First, the claim-extraction audit is a development/calibration analysis with incomplete dual-review coverage. Second, the lifecycle matrix and synthetic holdout are controlled policy experiments. The holdout separates generated fact-family subjects, paths, and labels from development, but retains deliberately simple document syntax and metadata topology. It is therefore a held-out policy test, not a real-document semantic or authority-generalization benchmark. Public WikiFactDiff and VitaminC results are likewise not pooled with those tables: WikiFactDiff uses templated verbalizations and derived snapshot metadata, VitaminC uses an adapter-defined partition of the official real test member, and neither evaluates native headers, multi-authority abstention, adoption/reopen, or enterprise documents. The eight-file native ingest is an unlabeled observational sample of mixed office formats; it is not a labeled holdout, not a human-review study, and not evidence that cross-institution training decks should receive a global winner.
+The prototype has several limitations. First, the claim-extraction audit is a development/calibration analysis with incomplete dual-review coverage. Second, the lifecycle matrix and synthetic holdout are controlled policy experiments. The holdout separates generated fact-family subjects, paths, and labels from development, but retains deliberately simple document syntax and metadata topology. It is therefore a held-out policy test, not a real-document semantic or authority-generalization benchmark. Public WikiFactDiff and VitaminC results are likewise not pooled with those tables: WikiFactDiff uses templated verbalizations and derived snapshot metadata, VitaminC uses an adapter-defined partition of the official real test member, and neither evaluates native headers, multi-authority abstention, adoption/reopen, or enterprise documents. The 48-file native ingest is an unlabeled stratified observational sample, not a 544-file one-KB clustering, not a labeled holdout, and not evidence that cross-institution materials should receive a global winner.
 
 Third, PDF processing has been tested as binary ingress and claim extraction only. In the native sample the PDF sibling of a DOCX manual produced zero claims, so the paper does not claim a PDF--DOCX cross-format clustering benchmark. Fourth, provider random seeds are not portable across the configured model API, so the reported repetitions are independent executions rather than seed-controlled trials. Fifth, the current proposal rule uses explicit issuer/date/version evidence and does not represent organization hierarchies, jurisdiction, legal force, scope precedence, or arbitrary version semantics.
 
@@ -405,7 +402,7 @@ Finally, one earlier synthetic holdout matrix execution became incomplete before
 \section{Conclusion}
 \label{sec:conclusion}
 
-We presented a \sys{} prototype for fact-level conflict governance in versioned multi-source knowledge bases. The system transforms raw chunk-pair conflicts into \disputedfact{}s, issues global proposals only under all-source metadata consistency, and separates advisory proposals from explicit, snapshot-bound, durable, and reversible governance actions. Controlled real-service experiments demonstrate cost reductions for cascade adjudication, repeated lifecycle safety behavior, binary DocReader integration, and a fact-family policy comparison against simple baselines. Adapter-defined public transfer adds external text: WikiFactDiff templated pairs transferred at 60/60 holdout accuracy, while VitaminC claim--evidence holdout reached 0.750/0.800/0.767 and WikiFactDiff two-snapshot exact-proposal success was 25/30. Native DocReader ingest of eight licensed office files additionally produced 1,102 claims, 24 disputed facts, and 0 global proposals.
+We presented a \sys{} prototype for fact-level conflict governance in versioned multi-source knowledge bases. The system transforms raw chunk-pair conflicts into \disputedfact{}s, issues global proposals only under all-source metadata consistency, and separates advisory proposals from explicit, snapshot-bound, durable, and reversible governance actions. Controlled real-service experiments demonstrate cost reductions for cascade adjudication, repeated lifecycle safety behavior, binary DocReader integration, and a fact-family policy comparison against simple baselines. Adapter-defined public transfer adds external text: WikiFactDiff templated pairs transferred at 60/60 holdout accuracy, while VitaminC claim--evidence holdout reached 0.750/0.800/0.767 and WikiFactDiff two-snapshot exact-proposal success was 25/30. Native DocReader ingest of a stratified 48-file enterprise sample additionally produced 6,028 claims, 45 disputed facts, and 0 global proposals, with five dead letters reported rather than rewritten as zero.
 
 The central conclusion is deliberately narrow: fact-level conflict governance can cluster evidence, abstain under unsafe metadata conditions, and execute reversible winner actions through a fail-closed protocol. Public-text pair transfer and unlabeled native ingest are separate supplements, not substitutes for independently annotated real versioned documents. Future work should evaluate independently annotated real holdouts, organization-specific authority semantics, cross-format extraction drift, and user-facing review workflows.
 
