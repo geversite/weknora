@@ -1,4 +1,4 @@
-.PHONY: help build run test clean docker-build-app docker-build-docreader docker-build-frontend docker-build-all docker-run migrate-up migrate-down docker-restart docker-stop start-all stop-all start-ollama stop-ollama build-images build-images-app build-images-docreader build-images-frontend clean-images check-env list-containers pull-images show-platform dev-start dev-stop dev-restart dev-logs dev-status dev-app dev-frontend docs install-swagger build-lite run-lite package-lite experiment-check experiment-c1 experiment-c2-rules experiment-c2-batch experiment-c2-compare experiment-c3 experiment-c46 experiment-c46-negative experiment-c47 experiment-c47-negative experiment-c48 experiment-c48-negative experiment-c49 experiment-c49-review experiment-c410-plan experiment-c410-inventory experiment-c410-prepare experiment-c410-materialize experiment-c410-docreader-fixture experiment-c410-docreader-smoke experiment-c410-docreader-pdf-smoke experiment-c410-docreader-lifecycle experiment-c410-synthetic-corpus experiment-c410-fact-eval experiment-public-wikifactdiff-plan experiment-public-vitaminc-plan experiment-public-pair-eval experiment-public-pair-dry-run experiment-public-pair-resummarize experiment-public-self-test experiment-c4 experiment-c4-fuzzy experiment-c4-resolve experiment-p2 experiment-p3 experiment-p12 experiment-v1 experiment-audit experiment-audit-summary experiment-audit-metrics experiment-gold-v2 experiment-gold-v2-review experiment-gold-v2-scope-review experiment-gold-v2-apply-recommendations experiment-gold-v2-finalize experiment-dual-scope-metrics paper-figures
+.PHONY: help build run test clean docker-build-app docker-build-docreader docker-build-frontend docker-build-all docker-run migrate-up migrate-down docker-restart docker-stop start-all stop-all start-ollama stop-ollama build-images build-images-app build-images-docreader build-images-frontend clean-images check-env list-containers pull-images show-platform dev-start dev-stop dev-restart dev-logs dev-status dev-app dev-frontend docs install-swagger build-lite run-lite package-lite experiment-check experiment-c1 experiment-c2-rules experiment-c2-batch experiment-c2-compare experiment-c3 experiment-c46 experiment-c46-negative experiment-c47 experiment-c47-negative experiment-c48 experiment-c48-negative experiment-c49 experiment-c49-review experiment-c410-plan experiment-c410-inventory experiment-c410-prepare experiment-c410-materialize experiment-c410-docreader-fixture experiment-c410-docreader-smoke experiment-c410-docreader-pdf-smoke experiment-c410-docreader-lifecycle experiment-c410-synthetic-corpus experiment-c410-fact-eval experiment-native-plan experiment-native-eval experiment-native-summarize experiment-native-self-test experiment-public-wikifactdiff-plan experiment-public-vitaminc-plan experiment-public-pair-eval experiment-public-pair-dry-run experiment-public-pair-resummarize experiment-public-self-test experiment-c4 experiment-c4-fuzzy experiment-c4-resolve experiment-p2 experiment-p3 experiment-p12 experiment-v1 experiment-audit experiment-audit-summary experiment-audit-metrics experiment-gold-v2 experiment-gold-v2-review experiment-gold-v2-scope-review experiment-gold-v2-apply-recommendations experiment-gold-v2-finalize experiment-dual-scope-metrics paper-figures
 
 # Show help
 help:
@@ -83,6 +83,10 @@ help:
 	@echo "  experiment-c410-docreader-lifecycle 运行内置 DOCX C4.6/C4.7/C4.8 matrix"
 	@echo "  experiment-c410-synthetic-corpus 生成 split-safe synthetic DOCX policy corpus（OUTPUT=<dir>）"
 	@echo "  experiment-c410-fact-eval 汇总 matrix 的事实家族 winner/baseline 指标（MATRIX_RUN=<dir>）"
+	@echo "  experiment-native-plan 从私有文件夹生成无标注原生 DocReader 场景（DOC_ROOT=<dir> OUTPUT=<dir>）"
+	@echo "  experiment-native-eval 用原生文件上传跑无标注观测实验（SCENARIO=<json> OUTPUT=<dir>）"
+	@echo "  experiment-native-summarize 只读汇总原生摄取 run 的计数（RUN=<dir>）"
+	@echo "  experiment-native-self-test 离线校验原生摄取计划与汇总"
 	@echo "  experiment-public-wikifactdiff-plan 生成公开 WikiFactDiff 评测计划（PUBLIC_OUTPUT=<dir>）"
 	@echo "  experiment-public-vitaminc-plan 生成公开 VitaminC real-split 评测计划（PUBLIC_OUTPUT=<dir>）"
 	@echo "  experiment-public-pair-eval 运行已生成的公开 pair manifest（PUBLIC_MANIFEST=<json>）"
@@ -502,6 +506,26 @@ experiment-c410-synthetic-corpus:
 experiment-c410-fact-eval:
 	@test -n "$(MATRIX_RUN)" || (echo "Usage: make experiment-c410-fact-eval MATRIX_RUN=experiments/comparisons/<matrix-run>"; exit 2)
 	python3 scripts/experiments/score_winner_fact_families.py --matrix-run "$(MATRIX_RUN)" $(if $(SPLIT),--split "$(SPLIT)") $(if $(OUTPUT),--output-dir "$(OUTPUT)") $(if $(ALLOW_FAILED),--allow-failed) $(if $(OVERWRITE),--overwrite)
+
+# Usage: make experiment-native-plan DOC_ROOT=$HOME/weknora-private-corpus/docs/standard-product OUTPUT=$HOME/weknora-private-corpus/native-standard-product [MAX_FILES=8] [OVERWRITE=1]
+experiment-native-plan:
+	@test -n "$(DOC_ROOT)" || (echo "Usage: make experiment-native-plan DOC_ROOT=$$HOME/weknora-private-corpus/docs/standard-product OUTPUT=$$HOME/weknora-private-corpus/native-standard-product"; exit 2)
+	@test -n "$(OUTPUT)" || (echo "Usage: make experiment-native-plan DOC_ROOT=<dir> OUTPUT=<private-output-dir>"; exit 2)
+	python3 scripts/experiments/prepare_native_corpus_eval.py --source-dir "$(DOC_ROOT)" --output-dir "$(OUTPUT)" $(if $(NAME),--name "$(NAME)") $(if $(EXTS),--extensions "$(EXTS)") $(if $(MAX_FILES),--max-files "$(MAX_FILES)") $(if $(MIN_BYTES),--min-bytes "$(MIN_BYTES)") $(if $(MAX_BYTES),--max-bytes "$(MAX_BYTES)") $(if $(NO_PREFER_FAMILIES),--no-prefer-families) $(if $(OVERWRITE),--overwrite)
+
+# Usage: make experiment-native-eval SCENARIO=$HOME/weknora-private-corpus/native-standard-product/native_eval_scenario.json OUTPUT=$HOME/weknora-private-corpus/runs/standard-product-smoke
+experiment-native-eval:
+	@test -n "$(SCENARIO)" || (echo "Usage: make experiment-native-eval SCENARIO=<native_eval_scenario.json> OUTPUT=<private-run-dir>"; exit 2)
+	@test -n "$(OUTPUT)" || (echo "Usage: make experiment-native-eval SCENARIO=<native_eval_scenario.json> OUTPUT=<private-run-dir>"; exit 2)
+	python3 -X utf8 scripts/experiments/run_claims_eval.py --scenario "$(SCENARIO)" --variant "$(or $(VARIANT),c2-batch)" --output "$(OUTPUT)" $(if $(OVERWRITE),--overwrite) $(if $(FILE_UPLOAD_TIMEOUT),--file-upload-timeout-seconds "$(FILE_UPLOAD_TIMEOUT)") $(if $(TIMEOUT),--timeout-seconds "$(TIMEOUT)") $(if $(CLAIM_TIMEOUT),--claim-timeout-seconds "$(CLAIM_TIMEOUT)") $(if $(CONFLICT_TIMEOUT),--conflict-timeout-seconds "$(CONFLICT_TIMEOUT)")
+
+# Usage: make experiment-native-summarize RUN=$HOME/weknora-private-corpus/runs/standard-product-smoke
+experiment-native-summarize:
+	@test -n "$(RUN)" || (echo "Usage: make experiment-native-summarize RUN=<private-run-dir>"; exit 2)
+	python3 scripts/experiments/summarize_native_corpus_eval.py --run-dir "$(RUN)" --apply
+
+experiment-native-self-test:
+	python3 scripts/experiments/test_native_corpus_eval.py
 
 # Public data adapters keep raw releases and generated documents outside Git.
 # WikiFactDiff may stream its public Hugging Face release; set WFD_INPUT for a

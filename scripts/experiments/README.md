@@ -24,7 +24,16 @@ HTTP API → Knowledge 创建 → Asynq manual:process → chunking
 相比反复通过 UI 上传文件，manual Markdown 注入能固定原始文本、文档顺序和 chunk 配置，
 避免 DocReader 的格式转换成为 C1/C2 算法实验的混杂变量。
 
-对于 C1/C2 的可控 Markdown 消融，仍建议使用 manual API，避免 DocReader 格式转换成为混杂变量。对于 C4.10 已人工审核的真实 `pdf/doc/docx` 小样本，场景可显式设置 `ingest_mode=file`；运行器会调用同一份真实 multipart 文件 API，并等待正常的 DocReader → Asynq → claim/detect 链路。它不是未审文件夹的一键批量上传入口。
+对于 C1/C2 的可控 Markdown 消融，仍建议使用 manual API，避免 DocReader 格式转换成为混杂变量。对于 C4.10 已人工审核的真实 `pdf/doc/docx` 小样本，场景可显式设置 `ingest_mode=file`；运行器会调用同一份真实 multipart 文件 API，并等待正常的 DocReader → Asynq → claim/detect 链路。
+
+若只要对未标注企业文件夹做**原生解析观测**（不造 gold、不上准确率），用：
+
+```bash
+make experiment-native-plan DOC_ROOT=$HOME/weknora-private-corpus/docs/standard-product OUTPUT=$HOME/weknora-private-corpus/native-standard-product
+make experiment-native-eval SCENARIO=$HOME/weknora-private-corpus/native-standard-product/native_eval_scenario.json OUTPUT=$HOME/weknora-private-corpus/runs/standard-product-smoke
+```
+
+完整步骤见 [`冲突检测V2-真实企业文档原生摄取实验.md`](../../docs/冲突检测V2-真实企业文档原生摄取实验.md)。它仍不是未审文件夹的全量一键上传，默认最多 8 个去重文件。
 
 ## 一次性准备
 
