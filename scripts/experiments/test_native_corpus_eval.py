@@ -90,6 +90,7 @@ class NativeCorpusEvalTests(unittest.TestCase):
             for document in scenario["documents"]:
                 self.assertEqual(document["ingest_mode"], "file")
                 self.assertTrue(document["upload_file_name"].startswith("doc-"))
+                self.assertEqual(document["metadata"]["source_filename"], document["original_filename"])
                 self.assertTrue(document["upload_file_name"].endswith(".docx"))
                 self.assertEqual(len(document["source_sha256"]), 64)
             self.assertEqual(scenario["expected_conflict_document_pairs"], [])
@@ -218,6 +219,18 @@ class NativeCorpusEvalTests(unittest.TestCase):
             self.assertNotIn("manual.pdf", names)
             manifest = json.loads((out / "batch_manifest.json").read_text(encoding="utf-8"))
             self.assertEqual(manifest["batch_count"], len(selected["documents"]))
+            hidden = root / "plan-hidden"
+            run_ok(
+                str(PLANNER),
+                "--source-dir", str(docs),
+                "--output-dir", str(hidden),
+                "--max-files", "8",
+                "--min-bytes", "50",
+                "--hide-source-filename",
+            )
+            hidden_scenario = json.loads((hidden / "native_eval_scenario.json").read_text(encoding="utf-8"))
+            for document in hidden_scenario["documents"]:
+                self.assertNotIn("metadata", document)
 
     def test_review_csv_export_and_score(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

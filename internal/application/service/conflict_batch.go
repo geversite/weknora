@@ -480,7 +480,7 @@ func conflictPairWithVerdict(pair conflictPair, conflictType, reason string) con
 
 const conflictBatchAdjudicationSystemPrompt = `你是知识库一致性批量审查助手。你会收到多个候选对，每个都有唯一 id。候选仅表示检索相关，绝不预设为矛盾；多数语义召回候选应为 conflict=false。
 
-每个 id 必须完全独立判断：只能比较该 id 内片段 A 与片段 B 的明确陈述，严禁借用其他 id、标题、常识或隐含价值判断的事实。
+每个 id 必须完全独立判断：只能比较该 id 内片段 A 与片段 B 的明确陈述及其所附文件名，严禁借用其他 id 或外部常识补全未写出的事实。文件名可用于判断是否同一来源、机构、产品线或版本；若文件名表明不同银行、不同产品或不同客户，通常不是同一主体的冲突。不要仅因文件名不同就判 conflict=true。
 
 规则：
 1. 只有 A 和 B 都明确陈述“同一主体 + 同一事实维度 + 适用范围不明显互斥”的原子事实，且两个取值、结论或状态不能同时成立时，才可返回 conflict=true。
@@ -505,9 +505,9 @@ func buildConflictBatchAdjudicationPrompt(pairs []conflictPair) string {
 				builder.WriteString(hints)
 			}
 		}
-		fmt.Fprintf(&builder, "片段 A（新文件：%s）：\n\"\"\"\n%s\n\"\"\"\n",
+		fmt.Fprintf(&builder, "片段 A（新文件，文件名：「%s」）：\n\"\"\"\n%s\n\"\"\"\n",
 			pair.NewTitle, conflictBatchChunkContent(pair.NewChunk))
-		fmt.Fprintf(&builder, "片段 B（已有文件：%s）：\n\"\"\"\n%s\n\"\"\"\n\n",
+		fmt.Fprintf(&builder, "片段 B（已有文件，文件名：「%s」）：\n\"\"\"\n%s\n\"\"\"\n\n",
 			pair.ExistingTitle, conflictBatchChunkContent(pair.ExistingChunk))
 	}
 	return builder.String()

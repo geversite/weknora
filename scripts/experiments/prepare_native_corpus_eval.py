@@ -225,13 +225,15 @@ def build_scenario(
     source: Path,
     selected: list[dict[str, Any]],
     start_index: int = 1,
+    hide_source_filename: bool = False,
 ) -> dict[str, Any]:
     documents = []
     for offset, record in enumerate(selected):
         index = start_index + offset
         doc_id = document_id(index)
         suffix = str(record["extension"])
-        documents.append({
+        original_filename = Path(str(record["relative_path"])).name
+        document: dict[str, Any] = {
             "id": doc_id,
             "path": record["absolute_path"],
             "title": str(record["filename_stem"])[:80],
@@ -240,12 +242,15 @@ def build_scenario(
             "source_sha256": record["sha256"],
             "source_document_id": record["document_id"],
             "source_relative_path": record["relative_path"],
-            "original_filename": Path(str(record["relative_path"])).name,
+            "original_filename": original_filename,
             "family_candidate": record.get("family_candidate", ""),
             "version_hint": record.get("version_hint", ""),
             "date_hint": record.get("date_hint", ""),
             "bytes": int(record["bytes"]),
-        })
+        }
+        if not hide_source_filename:
+            document["metadata"] = {"source_filename": original_filename}
+        documents.append(document)
     return {
         "schema_version": 1,
         "name": name,
@@ -318,6 +323,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-bytes", type=int, default=DEFAULT_MAX_BYTES, help="0 disables the size cap")
     parser.add_argument("--no-prefer-families", action="store_true", help="Do not prioritize filename version groups")
     parser.add_argument("--keep-pdf-if-docx", action="store_true", help="Do not drop a PDF when a same-stem DOCX exists")
+    parser.add_argument(
+        "--hide-source-filename",
+        action="store_true",
+        help="Ablation: do not send original filenames to the conflict LLM (upload names stay doc-0001.*)",
+    )
     parser.add_argument("--overwrite", action="store_true")
     return parser.parse_args()
 
@@ -370,7 +380,11 @@ def main() -> int:
         for batch_index, batch_records in enumerate(packed, start=1):
             batch_name = f"{name}-b{batch_index:03d}"
             scenario = build_scenario(
-                name=batch_name, source=source, selected=batch_records, start_index=start_index,
+                name=batch_name,
+                source=source,
+                selected=batch_records,
+                start_index=start_index,
+                hide_source_filename=args.hide_source_filename,
             )
             scenario_path = batch_dir / f"batch_{batch_index:03d}.json"
             json_dump(scenario_path, scenario)
@@ -382,7 +396,12 @@ def main() -> int:
             })
             all_documents.extend(scenario["documents"])
             start_index += len(batch_records)
-        combined = build_scenario(name=name, source=source, selected=selected)
+        combined = build_scenario(
+            name=name,
+            source=source,
+            selected=selected,
+            hide_source_filename=args.hide_source_filename,
+        )
         scenario_path = output / "native_eval_scenario.json"
         json_dump(scenario_path, combined)
         write_selection_csv(output / "selected_documents.csv", all_documents)
@@ -418,6 +437,7 @@ def main() -> int:
             "max_bytes": args.max_bytes,
             "prefer_families": not args.no_prefer_families,
             "drop_pdf_if_docx": not args.keep_pdf_if_docx,
+            "hide_source_filename": args.hide_source_filename,
             "note": (
                 "Census covers the whole folder. Ingest sample is stratified and "
                 "batched. Not real-document accuracy. Do not load all sampled "

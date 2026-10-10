@@ -511,7 +511,7 @@ experiment-c410-fact-eval:
 experiment-native-plan:
 	@test -n "$(DOC_ROOT)" || (echo "Usage: make experiment-native-plan DOC_ROOT=$$HOME/weknora-private-corpus/docs/standard-product OUTPUT=$$HOME/weknora-private-corpus/native-standard-product"; exit 2)
 	@test -n "$(OUTPUT)" || (echo "Usage: make experiment-native-plan DOC_ROOT=<dir> OUTPUT=<private-output-dir>"; exit 2)
-	python3 scripts/experiments/prepare_native_corpus_eval.py --source-dir "$(DOC_ROOT)" --output-dir "$(OUTPUT)" $(if $(NAME),--name "$(NAME)") $(if $(EXTS),--extensions "$(EXTS)") $(if $(MAX_FILES),--max-files "$(MAX_FILES)") $(if $(BATCH_SIZE),--batch-size "$(BATCH_SIZE)") $(if $(MIN_BYTES),--min-bytes "$(MIN_BYTES)") $(if $(MAX_BYTES),--max-bytes "$(MAX_BYTES)") $(if $(NO_PREFER_FAMILIES),--no-prefer-families) $(if $(KEEP_PDF_IF_DOCX),--keep-pdf-if-docx) $(if $(OVERWRITE),--overwrite)
+	python3 scripts/experiments/prepare_native_corpus_eval.py --source-dir "$(DOC_ROOT)" --output-dir "$(OUTPUT)" $(if $(NAME),--name "$(NAME)") $(if $(EXTS),--extensions "$(EXTS)") $(if $(MAX_FILES),--max-files "$(MAX_FILES)") $(if $(BATCH_SIZE),--batch-size "$(BATCH_SIZE)") $(if $(MIN_BYTES),--min-bytes "$(MIN_BYTES)") $(if $(MAX_BYTES),--max-bytes "$(MAX_BYTES)") $(if $(NO_PREFER_FAMILIES),--no-prefer-families) $(if $(KEEP_PDF_IF_DOCX),--keep-pdf-if-docx) $(if $(HIDE_SOURCE_FILENAME),--hide-source-filename) $(if $(OVERWRITE),--overwrite)
 
 # Usage: make experiment-native-eval SCENARIO=$HOME/weknora-private-corpus/native-standard-product/native_eval_scenario.json OUTPUT=$HOME/weknora-private-corpus/runs/standard-product-smoke
 experiment-native-eval:

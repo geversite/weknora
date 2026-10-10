@@ -174,12 +174,11 @@ func (s *KnowledgeConflictService) Handle(ctx context.Context, task *asynq.Task)
 	// tenant-injected ctx up front and use it for every KB-scoped call.
 	detectCtx := withTenantContext(ctx, payload.TenantID)
 
-	// Resolve the new file's title (used as context for LLM adjudication so it
-	// can tell whether the two passages describe the same subject).
-	newTitle := ""
-	if newKb, err := s.knowledgeSvc.GetKnowledgeByID(detectCtx, payload.KnowledgeID); err == nil && newKb != nil {
-		newTitle = newKb.Title
-	}
+	// Resolve the new file's display name for LLM adjudication. Prefer an
+	// explicit source_filename (original upload name) so the model can tell
+	// different institutions/products apart; Title remains the unique API name.
+	titleCache := make(map[string]string)
+	newTitle := s.knowledgeConflictLabel(detectCtx, payload.KnowledgeID, titleCache)
 
 	// 3. Coarse candidate generation, dual channel (C1):
 	//    main channel — exact claim-key pairing over the claims index;
@@ -591,13 +590,7 @@ func (s *KnowledgeConflictService) resolveClaimCounterpart(
 		if err != nil || c == nil || !c.IsEnabled {
 			return nil, "", ""
 		}
-		t, ok := titleCache[c.KnowledgeID]
-		if !ok {
-			if k, err := s.knowledgeSvc.GetKnowledgeByID(ctx, c.KnowledgeID); err == nil && k != nil {
-				t = k.Title
-			}
-			titleCache[c.KnowledgeID] = t
-		}
+		t := s.knowledgeConflictLabel(ctx, c.KnowledgeID, titleCache)
 		return c, t, ""
 	case types.ClaimSourceWikiPage:
 		if s.wikiRepo == nil {
@@ -658,6 +651,7 @@ func (s *KnowledgeConflictService) coarseFilterBySearch(
 	newChunks []*types.Chunk,
 ) []conflictPair {
 	var pairs []conflictPair
+	titleCache := map[string]string{newKnowledgeID: newTitle}
 	for _, chunk := range newChunks {
 		params := types.SearchParams{
 			QueryText:             chunk.Content,
@@ -675,11 +669,15 @@ func (s *KnowledgeConflictService) coarseFilterBySearch(
 			if r == nil || r.KnowledgeID == newKnowledgeID || r.ID == "" {
 				continue
 			}
+			existTitle := s.knowledgeConflictLabel(ctx, r.KnowledgeID, titleCache)
+			if existTitle == "" {
+				existTitle = r.KnowledgeTitle
+			}
 			pairs = append(pairs, conflictPair{
 				NewChunk:      chunk,
 				ExistingChunk: toExistingChunk(r),
 				NewTitle:      newTitle,
-				ExistingTitle: r.KnowledgeTitle,
+				ExistingTitle: existTitle,
 			})
 		}
 	}
@@ -920,7 +918,8 @@ func (s *KnowledgeConflictService) adjudicatePair(
 	return "", "", lastErr
 }
 
-const conflictAdjudicationSystemPrompt = `你是知识库一致性审查助手。你会收到两份内容片段，它们来自同一知识库中独立上传的不同文件，并会附带各自所属文件的标题。` +
+const conflictAdjudicationSystemPrompt = `你是知识库一致性审查助手。你会收到两份内容片段，它们来自同一知识库中独立上传的不同文件，并会附带各自所属文件名。` +
+	`文件名可用于判断是否同一来源、机构、产品线或版本；若文件名表明不同银行、不同产品或不同客户，通常不是同一主体的冲突。不要仅因文件名不同就判 conflict=true。` +
 	`请严格判断：只有它们描述"同一主体 + 同一事实维度"且给出互斥的数值、结论或状态时，才算冲突。` +
 	`必须避免误报（false positive），遵守以下规则：` +
 	`1. 若两段属于不同主体/不同对象（例如不同银行、不同产品线、不同客户、不同部门），属于正常差异，conflict 必须为 false。` +
@@ -939,20 +938,70 @@ const conflictAdjudicationSystemPrompt = `你是知识库一致性审查助手�
 func buildConflictAdjudicationPrompt(pair conflictPair) string {
 	evidence := renderClaimEvidence(pair)
 	return fmt.Sprintf(`%s
-片段 A（新上传文件，标题：「%s」）：
+片段 A（新上传文件，文件名：「%s」）：
 """
 %s
 """
 
-片段 B（知识库中已有文件，标题：「%s」）：
+片段 B（知识库中已有文件，文件名：「%s」）：
 """
 %s
 """
 
-请严格判断它们是否矛盾。若包含候选声明证据，请优先围绕该证据的同一事实槽位判断；若没有候选声明证据，则按片段整体语义保守判断。请按指定 JSON 格式作答，reason 使用中文。`,
+请严格判断它们是否矛盾。文件名可帮助判断是否同一来源/机构/产品，但不要仅因文件名不同就判冲突。若包含候选声明证据，请优先围绕该证据的同一事实槽位判断；若没有候选声明证据，则按片段整体语义保守判断。请按指定 JSON 格式作答，reason 使用中文。`,
 		evidence,
 		pair.NewTitle, conflictTruncateRunes(pair.NewChunk.Content, 3000),
 		pair.ExistingTitle, conflictTruncateRunes(pair.ExistingChunk.Content, 3000))
+}
+
+const conflictSourceFilenameMaxRunes = 180
+
+func (s *KnowledgeConflictService) knowledgeConflictLabel(ctx context.Context, knowledgeID string, cache map[string]string) string {
+	if knowledgeID == "" {
+		return ""
+	}
+	if cache != nil {
+		if label, ok := cache[knowledgeID]; ok {
+			return label
+		}
+	}
+	label := ""
+	if s != nil && s.knowledgeSvc != nil {
+		if k, err := s.knowledgeSvc.GetKnowledgeByID(ctx, knowledgeID); err == nil && k != nil {
+			label = conflictDocumentLabel(k)
+		}
+	}
+	if cache != nil {
+		cache[knowledgeID] = label
+	}
+	return label
+}
+
+func conflictDocumentLabel(k *types.Knowledge) string {
+	if k == nil {
+		return ""
+	}
+	meta := k.GetMetadata()
+	if meta == nil {
+		meta = map[string]string{}
+	}
+	for _, key := range []string{"source_filename", "original_filename"} {
+		if name := sanitizeConflictFilename(meta[key]); name != "" {
+			return name
+		}
+	}
+	return sanitizeConflictFilename(k.Title)
+}
+
+func sanitizeConflictFilename(raw string) string {
+	name := strings.TrimSpace(raw)
+	name = strings.ReplaceAll(name, "\\", "/")
+	if i := strings.LastIndex(name, "/"); i >= 0 {
+		name = name[i+1:]
+	}
+	name = strings.ReplaceAll(name, "\r", " ")
+	name = strings.ReplaceAll(name, "\n", " ")
+	return conflictTruncateRunes(name, conflictSourceFilenameMaxRunes)
 }
 
 func renderClaimEvidence(pair conflictPair) string {

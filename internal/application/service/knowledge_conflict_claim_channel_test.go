@@ -96,6 +96,33 @@ func TestBuildConflictAdjudicationPromptIncludesClaimEvidence(t *testing.T) {
 	}
 }
 
+func TestConflictDocumentLabelPrefersSourceFilename(t *testing.T) {
+	k := &types.Knowledge{
+		Title:    "doc-0001.pptx",
+		Metadata: types.JSON(`{"source_filename":"平安银行手册.pptx"}`),
+	}
+	if got := conflictDocumentLabel(k); got != "平安银行手册.pptx" {
+		t.Fatalf("label=%q", got)
+	}
+	if got := conflictDocumentLabel(&types.Knowledge{Title: "doc-0002.docx"}); got != "doc-0002.docx" {
+		t.Fatalf("title fallback=%q", got)
+	}
+}
+
+func TestBuildConflictAdjudicationPromptIncludesFilenames(t *testing.T) {
+	prompt := buildConflictAdjudicationPrompt(conflictPair{
+		NewChunk:      &types.Chunk{Content: "新文档原文"},
+		ExistingChunk: &types.Chunk{Content: "旧文档原文"},
+		NewTitle:      "平安银行手册.pptx",
+		ExistingTitle: "恒丰银行手册.pptx",
+	})
+	for _, want := range []string{"文件名", "平安银行手册.pptx", "恒丰银行手册.pptx", "不要仅因文件名不同就判冲突"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("prompt missing %q", want)
+		}
+	}
+}
+
 func TestBuildConflictAdjudicationPromptKeepsFallbackEvidenceFree(t *testing.T) {
 	prompt := buildConflictAdjudicationPrompt(conflictPair{
 		NewChunk:      &types.Chunk{Content: "新文档原文"},
