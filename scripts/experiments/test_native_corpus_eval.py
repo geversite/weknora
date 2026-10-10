@@ -219,6 +219,61 @@ class NativeCorpusEvalTests(unittest.TestCase):
             manifest = json.loads((out / "batch_manifest.json").read_text(encoding="utf-8"))
             self.assertEqual(manifest["batch_count"], len(selected["documents"]))
 
+    def test_review_csv_export_and_score(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            batch = root / "batch_001"
+            batch.mkdir()
+            (batch / "manifest.json").write_text(json.dumps({
+                "knowledge_ids": {"doc-0001": "k-1", "doc-0002": "k-2"},
+                "scenario_path": str(root / "scenario.json"),
+            }), encoding="utf-8")
+            (root / "scenario.json").write_text(json.dumps({
+                "documents": [
+                    {"id": "doc-0001", "original_filename": "a.docx"},
+                    {"id": "doc-0002", "original_filename": "b.docx"},
+                ]
+            }), encoding="utf-8")
+            (batch / "disputed_facts.json").write_text(json.dumps([
+                {
+                    "id": "f1",
+                    "anchor_kind": "claim_key",
+                    "fact_key": "claim_key:limit",
+                    "subject": "x",
+                    "predicate": "limit",
+                    "source_count": 2,
+                    "conflict_count": 1,
+                    "candidate_values": ["100", "150"],
+                    "source_refs": ["knowledge:k-1", "knowledge:k-2"],
+                }
+            ]), encoding="utf-8")
+            csv_path = root / "review.csv"
+            run_ok(
+                str(ROOT / "scripts/experiments/export_native_review_csv.py"),
+                "--runs-dir", str(root),
+                "--output", str(csv_path),
+            )
+            text = csv_path.read_text(encoding="utf-8")
+            self.assertIn("same_fact", text)
+            self.assertIn("100 | 150", text)
+            import csv as csvlib
+            with csv_path.open(encoding="utf-8", newline="") as handle:
+                rows = list(csvlib.DictReader(handle))
+            rows[0]["same_fact"] = "yes"
+            rows[0]["human_conflict"] = "conflict"
+            rows[0]["cluster_quality"] = "good"
+            with csv_path.open("w", encoding="utf-8", newline="") as handle:
+                writer = csvlib.DictWriter(handle, fieldnames=list(rows[0].keys()))
+                writer.writeheader()
+                writer.writerows(rows)
+            scored = run_ok(
+                str(ROOT / "scripts/experiments/score_native_review_csv.py"),
+                "--review", str(csv_path),
+            )
+            payload = json.loads(scored.stdout)
+            self.assertEqual(payload["tp_real_conflict"], 1)
+            self.assertEqual(payload["precision_same_fact_conflict"], 1.0)
+
 
 if __name__ == "__main__":
     unittest.main()
