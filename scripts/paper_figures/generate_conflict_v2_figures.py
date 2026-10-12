@@ -24,7 +24,7 @@ from xml.sax.saxutils import escape
 
 
 ROOT = Path(__file__).resolve().parents[2]
-FIGURE_VERSION = "conflict-v2-paper-figures-v2"
+FIGURE_VERSION = "conflict-v2-paper-figures-v3"
 
 COLORS = {
     "ink": "#17324D",
@@ -303,41 +303,79 @@ def draw_bar_panel(
 
 
 def figure_3_cascade_cost() -> tuple[str, dict[str, Any]]:
-    c = SVG(1800, 900)
-    title(c, "图 3  级联裁决的真实服务成本消融", "相同受控全场景；接地级联保持场景完整性并减少 LLM 调用")
-    variants = [("All-LLM", COLORS["gray"]), ("Rules-first", COLORS["teal"]), ("Grounded\ncascade", COLORS["purple"])]
-    draw_bar_panel(c, 80, 205, 500, 510, "LLM 调用次数", [(name, value, color) for (name, color), value in zip(variants, [48, 47, 9])])
-    draw_bar_panel(c, 650, 205, 500, 510, "Token 总量", [(name, value, color) for (name, color), value in zip(variants, [48762, 47293, 28528])])
-    draw_bar_panel(c, 1220, 205, 500, 510, "检测时延（ms）", [(name, value, color) for (name, color), value in zip(variants, [145154, 149111, 75789])])
-    c.rect(205, 760, 1390, 72, fill=COLORS["pale_teal"], stroke=COLORS["teal"], radius=12)
-    c.text(900, 806, "Grounded cascade 相对 All-LLM：LLM calls −81.25%（5.33× fewer）；Tokens −41.50%；Duration −47.79%", size=23, color=COLORS["teal"], weight="700", anchor="middle")
-    footer(c, "数据来源：接地级联最终矩阵；此图为固定受控全场景的成本消融，不外推为所有真实文档的平均成本。")
+    # Compact IEEE two-column plot: English only, no in-image title.
+    c = SVG(1800, 780)
+    series = [
+        ("All-LLM", COLORS["gray"]),
+        ("Rules-first", COLORS["teal"]),
+        ("Grounded cascade", COLORS["purple"]),
+    ]
+    groups = [
+        ("LLM calls", [48, 47, 9], lambda v: f"{int(v)}"),
+        ("Tokens ×10³", [48.762, 47.293, 28.528], lambda v: f"{v:.1f}"),
+        ("Duration (s)", [145.154, 149.111, 75.789], lambda v: f"{v:.0f}"),
+    ]
+    panel_w, panel_h, gap = 520, 520, 40
+    x0, y0 = 70, 70
+    for g_i, (heading, values, formatter) in enumerate(groups):
+        x = x0 + g_i * (panel_w + gap)
+        c.rect(x, y0, panel_w, panel_h, fill=COLORS["panel"], stroke=COLORS["light_line"], radius=10, stroke_width=1.2)
+        c.text(x + panel_w / 2, y0 + 32, heading, size=20, weight="700", anchor="middle")
+        chart_x, chart_y = x + 50, y0 + 58
+        chart_w, chart_h = panel_w - 90, panel_h - 130
+        c.line(chart_x, chart_y + chart_h, chart_x + chart_w, chart_y + chart_h, color=COLORS["line"], width=1.4)
+        maximum = max(values) or 1
+        gap_x = chart_w / len(values)
+        bar_w = min(64, gap_x * 0.5)
+        for i, ((name, color), value) in enumerate(zip(series, values)):
+            bar_h = chart_h * value / maximum
+            bx = chart_x + i * gap_x + (gap_x - bar_w) / 2
+            by = chart_y + chart_h - bar_h
+            c.rect(bx, by, bar_w, bar_h, fill=color, stroke=color, stroke_width=0, radius=4)
+            c.text(bx + bar_w / 2, by - 10, formatter(value), size=15, weight="700", anchor="middle")
+            label = name.replace(" ", "\n")
+            c.multiline(bx + bar_w / 2, chart_y + chart_h + 22, label.split("\n"), size=13, color=COLORS["muted"], anchor="middle", line_height=16)
+    c.text(900, 640, "Grounded cascade vs All-LLM: calls −81.25%  ·  tokens −41.50%  ·  duration −47.79%", size=18, color=COLORS["teal"], weight="700", anchor="middle")
+    footer(c, "Same controlled full scenario. Not average document cost. English IEEE plot; numbers are frozen.")
     return c.render(), {
         "id": "fig3_cascade_cost",
-        "caption": "All-LLM、Rules-first 和 Grounded cascade 在相同场景下的 LLM 调用、Token 和检测时延对比。",
-        "evidence": "接地级联最终成本消融。",
+        "caption": "Real-service cost ablation on a fixed controlled scenario: All-LLM, Rules-first, and Grounded cascade.",
+        "evidence": "Frozen cascade cost ablation. Not real-document average cost.",
     }
 
 
 def figure_4_holdout_baselines() -> tuple[str, dict[str, Any]]:
-    c = SVG(1800, 930)
-    title(c, "图 4  合成策略 holdout：全局 proposal 与简化 baseline", "主口径：12 个 fact families，要求每个 family 的 3 次 independent replicates 全部正确")
+    # Compact IEEE two-panel horizontal bars: English only, no in-image title.
+    c = SVG(1800, 760)
     methods = [
-        ("Global\nproposal", 1.000, 0, COLORS["teal"]),
-        ("Latest\nupload", 0.167, 6, COLORS["gray"]),
-        ("Date\nonly", 0.667, 3, COLORS["orange"]),
-        ("Version\nonly", 0.667, 3, COLORS["purple"]),
-        ("Local\npair vote", 0.833, 2, COLORS["red"]),
+        ("Global proposal", 1.000, 0, COLORS["teal"]),
+        ("Latest upload", 0.167, 6, COLORS["gray"]),
+        ("Date only", 0.667, 3, COLORS["orange"]),
+        ("Version only", 0.667, 3, COLORS["purple"]),
+        ("Local pair vote", 0.833, 2, COLORS["red"]),
     ]
-    draw_bar_panel(c, 115, 205, 730, 535, "Fact-family policy accuracy", [(name, accuracy, color) for name, accuracy, _, color in methods], formatter=lambda v: f"{v:.3f}")
-    draw_bar_panel(c, 955, 205, 730, 535, "Unsafe actions（越低越好）", [(name, unsafe, color) for name, _, unsafe, color in methods], formatter=fmt_number)
-    c.rect(225, 785, 1350, 72, fill=COLORS["pale_teal"], stroke=COLORS["teal"], radius=12)
-    c.text(900, 830, "Global proposal：accuracy = 1.000，unsafe actions = 0；结果仅适用于构造的 controlled synthetic policy holdout。", size=22, color=COLORS["teal"], weight="700", anchor="middle")
-    footer(c, "数据来源：扩展合成策略 holdout（12 fact families × 3 replicates）；不是真实业务文档准确率。")
+
+    def hpanel(x: float, heading: str, values: list[float], vmax: float, formatter) -> None:
+        w, h = 820, 560
+        c.rect(x, 50, w, h, fill=COLORS["panel"], stroke=COLORS["light_line"], radius=10, stroke_width=1.2)
+        c.text(x + w / 2, 82, heading, size=20, weight="700", anchor="middle")
+        left, top, bar_h, gap = x + 210, 120, 58, 18
+        plot_w = w - 280
+        for i, ((name, _, _, color), value) in enumerate(zip(methods, values)):
+            y = top + i * (bar_h + gap)
+            c.text(x + 24, y + bar_h * 0.62, name, size=16, color=COLORS["ink"])
+            bw = max(4, plot_w * value / vmax)
+            c.rect(left, y, bw, bar_h, fill=color, stroke=color, stroke_width=0, radius=4)
+            c.text(left + bw + 10, y + bar_h * 0.62, formatter(value), size=16, weight="700")
+
+    hpanel(50, "Policy accuracy (higher is better)", [m[1] for m in methods], 1.0, lambda v: f"{v:.3f}")
+    hpanel(930, "Unsafe actions (lower is better)", [float(m[2]) for m in methods], 6.0, lambda v: f"{int(v)}")
+    c.text(900, 650, "Global proposal: accuracy 1.000, unsafe actions 0. Constructed synthetic holdout only.", size=17, color=COLORS["teal"], weight="700", anchor="middle")
+    footer(c, "12 synthetic fact families; a family counts only if all 3 replicates match. Not real-corpus or human-review accuracy.")
     return c.render(), {
         "id": "fig4_holdout_baselines",
-        "caption": "构造的事实家族 holdout 上，global proposal 与 latest-upload、date-only、version-only、local pair vote 的 policy accuracy 和 unsafe actions 对比。",
-        "evidence": "受控合成策略 holdout；必须保留范围限定。",
+        "caption": "Controlled synthetic holdout: global all-source proposal versus recency and local-vote baselines.",
+        "evidence": "Controlled synthetic policy holdout; keep the scope footer.",
     }
 
 
