@@ -49,7 +49,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", default=str(ROOT / "paper/ieee/figures"), help="LaTeX figures directory")
     parser.add_argument("--convert-pdf", action="store_true", help="Use Inkscape to create PDFs after copying SVGs")
     parser.add_argument("--inkscape", default="inkscape", help="Inkscape executable used only with --convert-pdf")
-    parser.add_argument("--overwrite", action="store_true", help="Allow an existing non-empty output directory")
+    parser.add_argument("--overwrite", action="store_true", help="Deprecated; existing figure files are overwritten in place")
+    parser.add_argument(
+        "--only",
+        default="",
+        help="Comma-separated SVG stems to copy, e.g. fig3_cascade_cost_ablation,fig4_holdout_baselines",
+    )
     return parser.parse_args()
 
 
@@ -60,15 +65,22 @@ def main() -> int:
         output = Path(args.output_dir).expanduser().resolve()
         if not source.is_dir():
             raise StageError(f"source directory 不存在: {source}")
-        missing = [name for name in REQUIRED_SVGS if not (source / name).is_file()]
+        wanted = {item.strip() for item in args.only.split(",") if item.strip()}
+        names = []
+        for name in REQUIRED_SVGS:
+            stem = name.rsplit(".", 1)[0]
+            if wanted and stem not in wanted and name not in wanted:
+                continue
+            names.append(name)
+        if not names:
+            raise StageError(f"no figures matched --only {sorted(wanted)}")
+        missing = [name for name in names if not (source / name).is_file()]
         if missing:
             raise StageError("source directory 缺少 SVG: " + ", ".join(missing))
-        if output.exists() and any(output.iterdir()) and not args.overwrite:
-            raise StageError(f"输出目录已存在且非空: {output}（需要 --overwrite）")
         output.mkdir(parents=True, exist_ok=True)
 
         staged: list[dict[str, str]] = []
-        for name in REQUIRED_SVGS:
+        for name in names:
             src = source / name
             dst = output / name
             shutil.copy2(src, dst)

@@ -305,7 +305,7 @@ build-prod:
 # Usage: make paper-figures FIGURE_OUTPUT=$HOME/weknora-paper-assets/conflict-v2 [OVERWRITE=1]
 paper-figures:
 	@test -n "$(FIGURE_OUTPUT)" || (echo "Usage: make paper-figures FIGURE_OUTPUT=$$HOME/weknora-paper-assets/conflict-v2"; exit 2)
-	python3 scripts/paper_figures/generate_conflict_v2_figures.py --output-dir "$(FIGURE_OUTPUT)" $(if $(OVERWRITE),--overwrite)
+	python3 scripts/paper_figures/generate_conflict_v2_figures.py --output-dir "$(FIGURE_OUTPUT)" $(if $(ONLY),--only "$(ONLY)") $(if $(OVERWRITE),--overwrite)
 
 build-lite:
 	@if [ -f frontend/package.json ] && [ "$${SKIP_FRONTEND:-}" != "1" ]; then \

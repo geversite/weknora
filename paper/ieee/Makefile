@@ -29,7 +29,7 @@ references:
 	cp ../../docs/冲突检测V2-论文参考文献.bib references.bib
 
 figures:
-	$(PYTHON) ../../scripts/paper_figures/stage_ieee_figures.py --source-dir "$(FIGURE_SOURCE)" --output-dir "$(FIGURE_DIR)" --overwrite $(if $(CONVERT_PDF),--convert-pdf)
+	$(PYTHON) ../../scripts/paper_figures/stage_ieee_figures.py --source-dir "$(FIGURE_SOURCE)" --output-dir "$(FIGURE_DIR)" --overwrite $(if $(CONVERT_PDF),--convert-pdf) $(if $(ONLY),--only "$(ONLY)")
 
 pdf: references
 	$(LATEXMK) $(LATEXMK_FLAGS) main.tex

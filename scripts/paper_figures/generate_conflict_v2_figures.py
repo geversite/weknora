@@ -464,7 +464,12 @@ def parse_args() -> argparse.Namespace:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--output-dir", required=True, help="Private/output directory for generated SVG vectors")
-    parser.add_argument("--overwrite", action="store_true", help="Allow a non-empty output directory")
+    parser.add_argument(
+        "--only",
+        default="",
+        help="Comma-separated figure stems to write, e.g. fig3_cascade_cost_ablation,fig4_holdout_baselines",
+    )
+    parser.add_argument("--overwrite", action="store_true", help="Deprecated; generated files are overwritten in place")
     return parser.parse_args()
 
 
@@ -472,20 +477,26 @@ def main() -> int:
     args = parse_args()
     try:
         output = Path(args.output_dir).expanduser().resolve()
-        if output.exists() and any(output.iterdir()) and not args.overwrite:
-            raise FigureError(f"输出目录已存在且非空: {output}（需要 --overwrite）")
         output.mkdir(parents=True, exist_ok=True)
-        generated: list[dict[str, Any]] = []
-        for filename, builder in (
+        wanted = {item.strip() for item in args.only.split(",") if item.strip()}
+        builders = (
             ("fig1_system_architecture.svg", figure_1_architecture),
             ("fig2_fact_lifecycle.svg", figure_2_fact_lifecycle),
             ("fig3_cascade_cost_ablation.svg", figure_3_cascade_cost),
             ("fig4_holdout_baselines.svg", figure_4_holdout_baselines),
             ("fig5_fail_closed_state_machine.svg", figure_5_state_machine),
-        ):
+        )
+        generated: list[dict[str, Any]] = []
+        for filename, builder in builders:
+            stem = filename.rsplit(".", 1)[0]
+            if wanted and stem not in wanted and filename not in wanted:
+                continue
             content, metadata = builder()
             (output / filename).write_text(content, encoding="utf-8")
             generated.append({"file": filename, **metadata})
+            print(f"  wrote {output / filename}")
+        if not generated:
+            raise FigureError(f"no figures matched --only {sorted(wanted)}")
         manifest = {
             "schema_version": 1,
             "figure_version": FIGURE_VERSION,
@@ -494,7 +505,8 @@ def main() -> int:
             "note": "Generated vector figures from frozen controlled-study data; no API/model/database operation was performed.",
         }
         (output / "figures_manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        write_readme(output / "README.md", generated, output)
+        if not wanted:
+            write_readme(output / "README.md", generated, output)
         print(f"Conflict-governance paper SVG figures generated: {output}")
         for item in generated:
             print(f"  {item['file']}")
