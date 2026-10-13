@@ -58,7 +58,7 @@ email@example.edu}}
 \maketitle
 
 \begin{abstract}
-Versioned knowledge bases are commonly maintained through chunk retrieval and chunk-pair conflict detection. Yet an individual conflict pair cannot naturally represent a dispute shared by multiple sources, nor can its local A/B direction be safely promoted to a global governance action. We present a \sys{} prototype for fact-level conflict governance in versioned, multi-source knowledge bases. The system extracts atomic claims with source quotes, combines exact claim keys with semantic fallback candidates, and applies a rule-plus-grounded-LLM cascade for conflict adjudication. Raw chunk-pair conflicts are projected into \disputedfact{}s. A global \proposal{} is produced only when every source carries explicit and mutually consistent issuer, date, and version evidence. Proposals are advisory: \adoption{} requires an explicit snapshot-bound request, while a durable record enables a precise \reopen{} operation. In a live environment with HTTP APIs, DocReader, Asynq, PostgreSQL, and configured models, the grounded cascade reduced LLM calls from 48 to 9 relative to an all-LLM baseline. A controlled lifecycle matrix completed 15/15 case executions and 9/9 adoption--reopen cycles with zero dead letters across 15 detector artifacts. In an expanded synthetic development/holdout policy corpus, the held-out matrix completed 36/36 executions and 18/18 lifecycle cycles. The global proposal policy achieved 1.000 controlled fact-family accuracy with zero unsafe actions, while simple recency and local-vote baselines produced unsafe proposals. Separately, adapter-defined public transfer is reported in independent tables: WikiFactDiff templated two-snapshot pairs reached 60/60 holdout accuracy, while VitaminC claim--evidence transfer reached holdout precision/recall/accuracy of 0.750/0.800/0.767. On a stratified 48-file native DocReader sample, parse success was 1.000, claim coverage 0.917, and proposal abstention 1.000; 98.4\% of candidates required the LLM. Giving original filenames to the grey-zone prompt reduced disputed facts from 45 to 31 on an independent ingest of the same sample. These findings establish controlled integration, safety, public-text transfer, and small-sample native-ingest evidence, not real-document generalization, human-review accuracy, or seed-controlled causal claims.
+Versioned knowledge bases are commonly maintained through chunk retrieval and chunk-pair conflict detection. Yet an individual conflict pair cannot naturally represent a dispute shared by multiple sources, nor can its local A/B direction be safely promoted to a global governance action. We present a \sys{} prototype for fact-level conflict governance in versioned, multi-source knowledge bases. The system extracts atomic claims with source quotes, combines exact claim keys with semantic fallback candidates, and applies a rule-plus-grounded-LLM cascade for conflict adjudication. Raw chunk-pair conflicts are projected into \disputedfact{}s. A global \proposal{} is produced only when every source carries explicit and mutually consistent issuer, date, and version evidence. Proposals are advisory: \adoption{} requires an explicit snapshot-bound request, while a durable record enables a precise \reopen{} operation. In a live environment with HTTP APIs, DocReader, Asynq, PostgreSQL, and configured models, the grounded cascade reduced LLM calls from 48 to 9 relative to an all-LLM baseline. A controlled lifecycle matrix completed 15/15 case executions and 9/9 adoption--reopen cycles with zero dead letters across 15 detector artifacts. In an expanded synthetic development/holdout policy corpus, the held-out matrix completed 36/36 executions and 18/18 lifecycle cycles. The all-source proposal policy achieved 1.000 controlled fact-family accuracy with zero unsafe actions. Conjunction ablations that omit issuer, date, or version, as well as recency, local-vote, and an LLM winner judge, all produced unsafe proposals; the LLM judge reached 0.833 accuracy with two unsafe actions on the same 12 families. Separately, adapter-defined public pair transfer is reported in independent tables: the grounded cascade reached 60/60 WikiFactDiff holdout accuracy and VitaminC precision/recall/accuracy of 0.750/0.800/0.767 ($N{=}60$). A pair-level LLM judge on those frozen holdouts scored 1.000/0.967/0.983 and 0.926/0.833/0.883, respectively. Pair detection is therefore competitive with an industrial LLM-as-judge default; the prototype's additional claim is fail-closed clustering, abstention, and reversible adoption rather than pairwise accuracy alone. On a stratified 48-file native DocReader sample, parse success was 1.000, claim coverage 0.917, and proposal abstention 1.000; 98.4\% of candidates required the LLM. Giving original filenames to the grey-zone prompt reduced disputed facts from 45 to 31 on an independent ingest of the same sample. These findings establish controlled integration, safety, public-text transfer, and small-sample native-ingest evidence, not real-document generalization, human-review accuracy, or seed-controlled causal claims.
 \end{abstract}
 
 \begin{IEEEkeywords}
@@ -79,8 +79,8 @@ Our contributions are as follows:
     \item \textbf{Claim-aware candidate generation and cascade adjudication.} We integrate atomic claim extraction, exact claim-key candidates, uncovered-chunk fallback, conservative rules, and grounded batch LLM verification.
     \item \textbf{Fact-level conflict projection.} We project raw chunk-pair conflicts into \disputedfact{}s using exact and deliberately conservative fallback anchors.
     \item \textbf{Explicit and reversible winner governance.} We separate advisory global proposals from snapshot-bound adoption, and support durable, precise reopen rather than inferred rollback.
-    \item \textbf{Real-service controlled evaluation.} We report cascade cost ablation, lifecycle safety experiments, binary DocReader integration, and a fact-family development/holdout policy evaluation with simple baselines.
-    \item \textbf{Separate public-text transfer.} We additionally evaluate adapter-defined WikiFactDiff temporal-fact and VitaminC claim--evidence pair transfer, reported independently of the synthetic policy metrics.
+    \item \textbf{Real-service controlled evaluation.} We report cascade cost ablation, lifecycle safety experiments, binary DocReader integration, and a fact-family holdout comparing all-source proposals with conjunction ablations, recency/local-vote heuristics, and an LLM winner judge.
+    \item \textbf{Separate public-text transfer.} We additionally evaluate adapter-defined WikiFactDiff temporal-fact and VitaminC claim--evidence pair transfer, including a pair-level LLM judge on the same frozen holdouts, reported independently of the synthetic policy metrics.
     \item \textbf{Native office-file operational rates.} We report parse success, claim coverage, cascade routing, and proposal abstention on a stratified licensed sample, independently of labeled accuracy.
 \end{enumerate}
 
@@ -196,8 +196,8 @@ We evaluate six questions:
     \item \textbf{RQ1:} Can claim-aware extraction and candidate generation run with auditable evidence in the live service?
     \item \textbf{RQ2:} Can the adjudication cascade reduce LLM cost without breaking scenario integrity?
     \item \textbf{RQ3:} Can the prototype repeatedly execute proposal, adoption, reopen, and fail-closed guards?
-    \item \textbf{RQ4:} Does global all-source metadata checking avoid unsafe proposals made by simple local or single-signal baselines in a controlled fact-family holdout?
-    \item \textbf{RQ5:} Does claim-aware pair detection transfer to public temporal-fact and claim--evidence text under adapter-defined mappings, separately from the synthetic policy corpus?
+    \item \textbf{RQ4:} Does all-source issuer/date/version checking avoid unsafe proposals made by single-signal rules, conjunction subsets, local pair votes, and an LLM winner judge in a controlled fact-family holdout?
+    \item \textbf{RQ5:} Does claim-aware pair detection transfer to public temporal-fact and claim--evidence text under adapter-defined mappings, and how does it compare with a pair-level LLM judge on the same frozen holdouts?
     \item \textbf{RQ6:} On unlabeled licensed office files, what are native parse success, claim coverage, cascade routing, and proposal abstention, and do original filenames change grey-zone cluster yield?
 \end{enumerate}
 
@@ -277,7 +277,7 @@ Table~\ref{tab:holdout} uses a strict fact-family metric: a family counts as cor
 \toprule
 Method & TP & TN & FP & FN & Precision & Recall & Accuracy & Unsafe actions \\
 \midrule
-Global proposal & 6 & 6 & 0 & 0 & 1.000 & 1.000 & 1.000 & 0 \\
+All-source proposal & 6 & 6 & 0 & 0 & 1.000 & 1.000 & 1.000 & 0 \\
 Latest upload & 2 & 0 & 10 & 4 & 0.167 & 0.333 & 0.167 & 6 \\
 Date only & 5 & 3 & 3 & 1 & 0.625 & 0.833 & 0.667 & 3 \\
 Version only & 5 & 3 & 3 & 1 & 0.625 & 0.833 & 0.667 & 3 \\
@@ -293,7 +293,27 @@ Local pair vote & 6 & 4 & 2 & 0 & 0.750 & 1.000 & 0.833 & 2 \\
     \label{fig:holdout}
 \end{figure*}
 
-The latest-upload baseline necessarily chooses a source even for no-proposal cases and fails on intentionally out-of-order positives. Date-only and version-only baselines ignore one part of the metadata condition and can select an unsafe source under issuer or direction failures. Local pair voting preserves pair directions but cannot require all cluster sources to be mutually consistent. The global rule abstains in these cases. This result is meaningful as a controlled safety-policy comparison, but its numerical values are shaped by the constructed topology and should not be generalized to arbitrary documents.
+The latest-upload baseline necessarily chooses a source even for no-proposal cases and fails on intentionally out-of-order positives. Date-only and version-only baselines ignore one part of the metadata condition and can select an unsafe source under issuer or direction failures. Local pair voting preserves pair directions but cannot require all cluster sources to be mutually consistent. The all-source rule abstains in these cases. This result is meaningful as a controlled safety-policy comparison, but its numerical values are shaped by the constructed topology and should not be generalized to arbitrary documents.
+
+Table~\ref{tab:holdout-compare} isolates two same-task controls on those 12 families. Conjunction ablations keep a unique-max rule but drop part of the issuer/date/version condition: issuer-only, issuer+date, and date+version each introduce at least one unsafe action. An OpenAI-compatible LLM winner judge, prompted to abstain under issuer mismatch, missing metadata, or date/version disagreement, reached 0.750/1.000/0.833 with two unsafe actions---matching local pair vote, not the all-source rule. The judge reads detector metadata and candidate values only; it does not mutate WeKnora and is not seed-controlled. This is a controlled policy comparison against an industrial LLM-as-judge default, not a claim of higher accuracy than trained truth-discovery models on real corpora.
+
+\begin{table}[t]
+\caption{Same-task holdout controls on the 12 fact families of Table~\ref{tab:holdout}. Unsafe action $=$ a winner on a gold no-proposal family. Not real-corpus or human-review accuracy.}
+\label{tab:holdout-compare}
+\centering
+\small
+\begin{tabular}{lrrrr}
+\toprule
+Method & Precision & Recall & Accuracy & Unsafe \\
+\midrule
+All-source proposal & 1.000 & 1.000 & 1.000 & 0 \\
+Issuer only & 0.857 & 1.000 & 0.917 & 1 \\
+Issuer + date & 0.833 & 0.833 & 0.833 & 1 \\
+Date + version & 0.667 & 0.667 & 0.667 & 2 \\
+LLM winner judge & 0.750 & 1.000 & 0.833 & 2 \\
+\bottomrule
+\end{tabular}
+\end{table}
 
 On the completed holdout, all 84 candidate pairs were exact claim-key pairs and the rule layer directly resolved all 84 conflicts. Thus, this particular synthetic holdout should not be used to estimate LLM cost; the cascade ablation above is the relevant evidence for that question.
 
@@ -342,6 +362,25 @@ Holdout-v2 & 200 & 85 & 60 & 40 & 15 & 0.680 / 0.850 / 0.725 \\
 Table~\ref{tab:wfd-public} shows that templated WikiFactDiff pairs transferred at the pair level with development 20/20 and frozen holdout 60/60. Pair holdout recorded two \texttt{wiki:ingest} dead letters on one true-negative control; claim extraction and conflict detection completed, so the case remains evaluable and the 1.000 pair score is not rewritten as all-zero dead letters. Nested holdout-v2 ($N{=}200$) reached 0.990/1.000/0.995 with zero dead letters and does not replace the 60-family freeze. Two-snapshot advisory-proposal exact success was 10/10 in development and 25/30 in holdout. All 30 frozen holdout replacements were pair true positives; the five exact-success misses were clustering failures (four duplicate correct new-snapshot proposals, one unique correct proposal with a cluster-count assertion failure), not wrong-snapshot selections. Holdout-v2 exact success was 86/100, reported separately; 25/30 is not relaxed. Pair detection therefore does not imply a single advisory cluster.
 
 Table~\ref{tab:vitaminc-public} shows a harder public claim--evidence setting. Frozen holdout precision/recall/accuracy were 0.750/0.800/0.767 on 60 families (24 TP, 22 TN, 8 FP, 6 FN), with zero detector dead letters. Nested holdout-v2 ($N{=}200$) yielded 0.680/0.850/0.725 (85 TP, 60 TN, 40 FP, 15 FN) and is not pooled with the 60-family freeze. WikiFactDiff's templated pair accuracy must not be used to interpret VitaminC, and neither table is pooled with Table~\ref{tab:holdout}.
+
+Table~\ref{tab:public-pair-compare} compares the grounded cascade with a pair-level LLM judge on the same frozen holdout families and the same \texttt{expected\_conflict} labels. The judge reads the two adapter texts and returns JSON \texttt{conflict} true/false; it does not ingest through WeKnora and is not an official NLI service. On WikiFactDiff the cascade remains 60/60 while the judge misses one replacement (recall 0.967). On VitaminC the judge is higher (0.926/0.833/0.883 versus 0.750/0.800/0.767). These numbers are adapter-defined transfer under this mapping. They must not be compared with VitaminC leaderboard or original-paper scores, must not be pooled with Table~\ref{tab:holdout} or Table~\ref{tab:holdout-compare}, and do not measure document-version governance. Pair detection can be competitive with an LLM judge; the prototype's additional claim is fail-closed clustering, abstention, and reversible adoption rather than pairwise accuracy alone.
+
+\begin{table}[t]
+\caption{Pair detection on the frozen public holdouts ($N{=}60$ each). LLM pair judge is an OpenAI-compatible JSON baseline on adapter text, not an official NLI service and not a published VitaminC score. Holdout-v2 is not re-run here.}
+\label{tab:public-pair-compare}
+\centering
+\small
+\begin{tabular}{llrlll}
+\toprule
+Corpus & Method & $N$ & P & R & Acc. \\
+\midrule
+WikiFactDiff & Grounded cascade & 60 & 1.000 & 1.000 & 1.000 \\
+WikiFactDiff & LLM pair judge & 60 & 1.000 & 0.967 & 0.983 \\
+VitaminC & Grounded cascade & 60 & 0.750 & 0.800 & 0.767 \\
+VitaminC & LLM pair judge & 60 & 0.926 & 0.833 & 0.883 \\
+\bottomrule
+\end{tabular}
+\end{table}
 
 \subsection{Native Enterprise-Document Observational Ingest}
 \label{sec:native-obs}
@@ -417,7 +456,7 @@ Truth discovery and data fusion address conflicting observations from multiple s
 
 \subsection{Fact Verification and Natural Language Inference}
 
-Fact-verification datasets such as FEVER and SciFact connect claims to supporting or refuting evidence \cite{thorne2018fever,wadden2020scifact}. VitaminC constructs contrastive claim--evidence pairs from Wikipedia revisions \cite{schuster2021vitaminc}, and WikiFactDiff organizes atomic Wikidata updates between two public snapshots \cite{ammarkhodja2024wikifactdiff}. NLI datasets provide foundational entailment/contradiction/neutral formulations and expose cross-genre difficulty \cite{bowman2015snli,williams2018multinli}. Our use of claims and quotes is compatible with these traditions, but the output is a multi-source governance object rather than an objective-veracity label for a single claim. Section~\ref{sec:public-transfer} therefore reports adapter-defined transfer on VitaminC and WikiFactDiff separately from document-version governance.
+Fact-verification datasets such as FEVER and SciFact connect claims to supporting or refuting evidence \cite{thorne2018fever,wadden2020scifact}. VitaminC constructs contrastive claim--evidence pairs from Wikipedia revisions \cite{schuster2021vitaminc}, and WikiFactDiff organizes atomic Wikidata updates between two public snapshots \cite{ammarkhodja2024wikifactdiff}. NLI datasets provide foundational entailment/contradiction/neutral formulations and expose cross-genre difficulty \cite{bowman2015snli,williams2018multinli}. Our use of claims and quotes is compatible with these traditions, but the output is a multi-source governance object rather than an objective-veracity label for a single claim. Section~\ref{sec:public-transfer} therefore reports adapter-defined transfer on VitaminC and WikiFactDiff separately from document-version governance, and compares the cascade with a pair-level LLM judge on the same frozen holdouts rather than with published dataset leaderboards.
 
 \subsection{RAG and Knowledge Conflicts}
 
@@ -432,14 +471,14 @@ Data provenance motivates retaining source, derivation, and recovery information
 
 The prototype has several limitations. First, the claim-extraction audit is a development/calibration analysis with incomplete dual-review coverage. Second, the lifecycle matrix and synthetic holdout are controlled policy experiments. The holdout separates generated fact-family subjects, paths, and labels from development, but retains deliberately simple document syntax and metadata topology. It is therefore a held-out policy test, not a real-document semantic or authority-generalization benchmark. Public WikiFactDiff and VitaminC results are likewise not pooled with those tables: WikiFactDiff uses templated verbalizations and derived snapshot metadata, VitaminC uses an adapter-defined partition of the official real test member, and neither evaluates native headers, multi-authority abstention, adoption/reopen, or enterprise documents. The 48-file native ingest is an unlabeled stratified observational sample, not a 544-file one-KB clustering, not a labeled holdout, and not evidence that cross-institution materials should receive a global winner.
 
-Third, PDF processing has been tested as binary ingress and claim extraction only. In the native sample the PDF sibling of a DOCX manual produced zero claims, so the paper does not claim a PDF--DOCX cross-format clustering benchmark. Fourth, provider random seeds are not portable across the configured model API, so the reported repetitions are independent executions rather than seed-controlled trials. Fifth, the current proposal rule uses explicit issuer/date/version evidence and does not represent organization hierarchies, jurisdiction, legal force, scope precedence, or arbitrary version semantics.
+Third, PDF processing has been tested as binary ingress and claim extraction only. In the native sample the PDF sibling of a DOCX manual produced zero claims, so the paper does not claim a PDF--DOCX cross-format clustering benchmark. Fourth, provider random seeds are not portable across the configured model API, so the reported repetitions are independent executions rather than seed-controlled trials. The LLM-as-judge columns use one configured OpenAI-compatible chat model on frozen artifacts; they are not a trained NLI baseline, not a multi-model study, and are not compared with published VitaminC or truth-discovery leaderboards. Fifth, the current proposal rule uses explicit issuer/date/version evidence and does not represent organization hierarchies, jurisdiction, legal force, scope precedence, or arbitrary version semantics.
 
 Finally, one earlier synthetic holdout matrix execution became incomplete before writing a detector metrics artifact. It was retained and excluded rather than pooled with the completed matrix. A subsequent report-integrity fix marks unevaluable detector executions as incomplete and prevents an empty winner list from being counted as a correct no-proposal outcome. The completed holdout matrix reported here used 36/36 evaluable executions; this chronology should remain available in the artifact record.
 
 \section{Conclusion}
 \label{sec:conclusion}
 
-We presented a \sys{} prototype for fact-level conflict governance in versioned multi-source knowledge bases. The system transforms raw chunk-pair conflicts into \disputedfact{}s, issues global proposals only under all-source metadata consistency, and separates advisory proposals from explicit, snapshot-bound, durable, and reversible governance actions. Controlled real-service experiments demonstrate cost reductions for cascade adjudication, repeated lifecycle safety behavior, binary DocReader integration, and a fact-family policy comparison against simple baselines. Adapter-defined public transfer adds external text: WikiFactDiff templated pairs transferred at 60/60 holdout accuracy, while VitaminC claim--evidence holdout reached 0.750/0.800/0.767 and WikiFactDiff two-snapshot exact-proposal success was 25/30. Native DocReader ingest of a stratified 48-file sample reached parse success 1.000, claim coverage 0.917, and proposal abstention 1.000; a filename-aware grey-zone run reduced disputed facts from 45 to 31 on the same sample.
+We presented a \sys{} prototype for fact-level conflict governance in versioned multi-source knowledge bases. The system transforms raw chunk-pair conflicts into \disputedfact{}s, issues global proposals only under all-source metadata consistency, and separates advisory proposals from explicit, snapshot-bound, durable, and reversible governance actions. Controlled real-service experiments demonstrate cost reductions for cascade adjudication, repeated lifecycle safety behavior, binary DocReader integration, and a fact-family policy comparison against conjunction ablations, recency/local-vote heuristics, and an LLM winner judge. On that holdout the all-source rule kept unsafe actions at zero while the LLM judge did not. Adapter-defined public transfer adds external text: WikiFactDiff templated pairs transferred at 60/60 cascade holdout accuracy versus 0.983 for a pair-level LLM judge, while VitaminC claim--evidence holdout reached 0.750/0.800/0.767 versus 0.926/0.833/0.883; WikiFactDiff two-snapshot exact-proposal success remains 25/30. Native DocReader ingest of a stratified 48-file sample reached parse success 1.000, claim coverage 0.917, and proposal abstention 1.000; a filename-aware grey-zone run reduced disputed facts from 45 to 31 on the same sample.
 
 The central conclusion is deliberately narrow: fact-level conflict governance can cluster evidence, abstain under unsafe metadata conditions, and execute reversible winner actions through a fail-closed protocol. Public-text pair transfer and unlabeled native ingest are separate supplements, not substitutes for independently annotated real versioned documents. Future work should evaluate independently annotated real holdouts, organization-specific authority semantics, cross-format extraction drift, and user-facing review workflows.
 
