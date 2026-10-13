@@ -34,19 +34,28 @@ from typing import Any, Callable
 
 ROOT = Path(__file__).resolve().parents[2]
 VALID_SPLITS = {"all", "development", "holdout"}
-METHODS = (
+CORE_METHODS = (
     "c46_global_proposal",
     "latest_upload",
     "date_only",
     "version_only",
     "raw_c3_local_vote",
+    "issuer_only",
+    "issuer_and_date",
+    "date_and_version",
 )
+METHODS = CORE_METHODS
+LLM_JUDGE_PREDICTIONS: dict[str, str] = {}
 METHOD_LABELS = {
-    "c46_global_proposal": "C4.6 global proposal",
+    "c46_global_proposal": "All-source proposal",
     "latest_upload": "Latest upload",
     "date_only": "Date only",
     "version_only": "Version only",
-    "raw_c3_local_vote": "Raw C3 local vote",
+    "raw_c3_local_vote": "Local pair vote",
+    "issuer_only": "Issuer only",
+    "issuer_and_date": "Issuer + date",
+    "date_and_version": "Date + version",
+    "llm_judge": "LLM winner judge",
 }
 OUTCOME_POSITIVE = "adopt_reopen"
 OUTCOME_NEGATIVE = "no_proposal"
@@ -258,6 +267,40 @@ def compare_versions(left: dict[str, str], right: dict[str, str]) -> int | None:
     return 0
 
 
+def issuers_agree(document_ids: list[str], metadata: dict[str, dict[str, str]]) -> bool:
+    issuers = [str(metadata.get(document_id, {}).get("issuer", "") or "") for document_id in document_ids]
+    return bool(issuers) and all(issuers) and len(set(issuers)) == 1
+
+
+def issuer_only_prediction(document_ids: list[str], metadata: dict[str, dict[str, str]]) -> str:
+    if not issuers_agree(document_ids, metadata):
+        return ""
+    by_date = unique_strict_max(document_ids, metadata, compare_dates)
+    if by_date:
+        return by_date
+    return unique_strict_max(document_ids, metadata, compare_versions)
+
+
+def issuer_and_date_prediction(document_ids: list[str], metadata: dict[str, dict[str, str]]) -> str:
+    if not issuers_agree(document_ids, metadata):
+        return ""
+    return unique_strict_max(document_ids, metadata, compare_dates)
+
+
+def date_and_version_prediction(document_ids: list[str], metadata: dict[str, dict[str, str]]) -> str:
+    if any(
+        not metadata.get(document_id, {}).get("effective_date")
+        or not metadata.get(document_id, {}).get("version")
+        for document_id in document_ids
+    ):
+        return ""
+    date_winner = unique_strict_max(document_ids, metadata, compare_dates)
+    version_winner = unique_strict_max(document_ids, metadata, compare_versions)
+    if date_winner and version_winner and date_winner == version_winner:
+        return date_winner
+    return ""
+
+
 def unique_strict_max(
     document_ids: list[str],
     metadata: dict[str, dict[str, str]],
@@ -466,7 +509,13 @@ def execution_row(record: dict[str, Any], case: dict[str, Any]) -> dict[str, Any
         "date_only": unique_strict_max(upload_order, metadata, compare_dates),
         "version_only": unique_strict_max(upload_order, metadata, compare_versions),
         "raw_c3_local_vote": raw_c3_vote_prediction(conflicts, knowledge_to_document),
+        "issuer_only": issuer_only_prediction(upload_order, metadata),
+        "issuer_and_date": issuer_and_date_prediction(upload_order, metadata),
+        "date_and_version": date_and_version_prediction(upload_order, metadata),
     }
+    if "llm_judge" in METHODS:
+        judge_key = f"{context['case_id']}:{as_int(record.get('replicate'))}"
+        predictions["llm_judge"] = str(LLM_JUDGE_PREDICTIONS.get(judge_key, "") or "")
     evaluations = {
         method: evaluate_prediction(prediction, context["expected_outcome"], context["expected_winner_document"])
         for method, prediction in predictions.items()
@@ -739,11 +788,15 @@ def write_report(path: Path, result: dict[str, Any]) -> None:
         "", "## Baseline definitions", "",
         "| Method | Rule |",
         "|---|---|",
-        "| C4.6 global proposal | Observed `winner_proposals` from the detector artifact. |",
+        "| All-source proposal | Observed detector `winner_proposals` (issuer + date + version, unique max). |",
         "| Latest upload | Always selects the last document ingested by the scenario. |",
         "| Date only | Unique strict maximum effective-date interval; ignores issuer and version. |",
         "| Version only | Unique strict maximum numeric version; ignores issuer and date. |",
-        "| Raw C3 local vote | One vote from each directional raw C3 suggestion; tie/no vote abstains. |",
+        "| Local pair vote | One vote from each directional pair suggestion; tie/no vote abstains. |",
+        "| Issuer only | Same issuer required; unique max by date, else version. |",
+        "| Issuer + date | Same issuer required; unique max by date; ignores version. |",
+        "| Date + version | Unique max only if date-max and version-max agree; ignores issuer. |",
+        "| LLM winner judge | Optional external LLM JSON winner/abstain. |",
         "", "## Execution-level controlled policy metrics", "",
     ]
     if all_metrics:
@@ -782,12 +835,42 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--split", choices=sorted(VALID_SPLITS), default="all", help="Score all/development/holdout rows")
     parser.add_argument("--allow-failed", action="store_true", help="Export diagnostics even when matrix records failed")
     parser.add_argument("--overwrite", action="store_true", help="Allow a non-empty output directory")
+    parser.add_argument(
+        "--llm-judge-file",
+        default="",
+        help="Optional JSON from run_winner_llm_judge.py; enables the llm_judge column",
+    )
     return parser.parse_args()
+
+
+def load_llm_judge_predictions(path: Path) -> dict[str, str]:
+    payload = read_json(path)
+    rows = payload.get("predictions") if isinstance(payload, dict) else payload
+    if not isinstance(rows, list):
+        raise FactFamilyScoreError(f"llm judge file 缺少 predictions 数组: {path}")
+    out: dict[str, str] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        case_id = str(row.get("case_id") or "").strip()
+        replicate = as_int(row.get("replicate"))
+        winner = str(row.get("winner_document") or "").strip()
+        if row.get("abstain") is True:
+            winner = ""
+        if case_id:
+            out[f"{case_id}:{replicate}"] = winner
+    return out
 
 
 def main() -> int:
     args = parse_args()
+    global METHODS, LLM_JUDGE_PREDICTIONS
+    METHODS = CORE_METHODS
+    LLM_JUDGE_PREDICTIONS = {}
     try:
+        if args.llm_judge_file:
+            LLM_JUDGE_PREDICTIONS = load_llm_judge_predictions(Path(args.llm_judge_file).expanduser().resolve())
+            METHODS = CORE_METHODS + ("llm_judge",)
         matrix_run = Path(args.matrix_run).expanduser().resolve()
         matrix_manifest = read_json(matrix_run / "matrix_manifest.json")
         matrix_results = read_json(matrix_run / "matrix_results.json")
