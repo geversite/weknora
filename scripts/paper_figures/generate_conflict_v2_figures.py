@@ -285,7 +285,7 @@ def draw_bar_panel(
     c: SVG, x: float, y: float, width: float, height: float, heading: str, values: list[tuple[str, float, str]],
     *, formatter: callable = fmt_number,
 ) -> None:
-    c.rect(x, y, width, height, fill=COLORS["panel"], stroke=COLORS["light_line"], radius=16)
+    # Plots stay on a plain white canvas: no tinted panel fill, no frame border.
     c.text(x + width / 2, y + 38, heading, size=23, weight="700", anchor="middle")
     chart_x, chart_y = x + 55, y + 78
     chart_w, chart_h = width - 90, height - 145
@@ -303,7 +303,8 @@ def draw_bar_panel(
 
 
 def figure_3_cascade_cost() -> tuple[str, dict[str, Any]]:
-    # Compact IEEE two-column plot: English only, no in-image title.
+    # Compact IEEE two-column plot: English only, no in-image title, plain white
+    # canvas with neither tinted panel fills nor frame borders.
     c = SVG(1800, 780)
     series = [
         ("All-LLM", COLORS["gray"]),
@@ -319,7 +320,6 @@ def figure_3_cascade_cost() -> tuple[str, dict[str, Any]]:
     x0, y0 = 70, 70
     for g_i, (heading, values, formatter) in enumerate(groups):
         x = x0 + g_i * (panel_w + gap)
-        c.rect(x, y0, panel_w, panel_h, fill=COLORS["panel"], stroke=COLORS["light_line"], radius=10, stroke_width=1.2)
         c.text(x + panel_w / 2, y0 + 32, heading, size=20, weight="700", anchor="middle")
         chart_x, chart_y = x + 50, y0 + 58
         chart_w, chart_h = panel_w - 90, panel_h - 130
@@ -348,7 +348,7 @@ def figure_4_holdout_baselines() -> tuple[str, dict[str, Any]]:
     # Compact IEEE two-panel horizontal bars: English only, no in-image title.
     c = SVG(1800, 760)
     methods = [
-        ("Global proposal", 1.000, 0, COLORS["teal"]),
+        ("All-source proposal", 1.000, 0, COLORS["teal"]),
         ("Latest upload", 0.167, 6, COLORS["gray"]),
         ("Date only", 0.667, 3, COLORS["orange"]),
         ("Version only", 0.667, 3, COLORS["purple"]),
@@ -357,7 +357,6 @@ def figure_4_holdout_baselines() -> tuple[str, dict[str, Any]]:
 
     def hpanel(x: float, heading: str, values: list[float], vmax: float, formatter) -> None:
         w, h = 820, 560
-        c.rect(x, 50, w, h, fill=COLORS["panel"], stroke=COLORS["light_line"], radius=10, stroke_width=1.2)
         c.text(x + w / 2, 82, heading, size=20, weight="700", anchor="middle")
         left, top, bar_h, gap = x + 210, 120, 58, 18
         plot_w = w - 280
@@ -370,7 +369,7 @@ def figure_4_holdout_baselines() -> tuple[str, dict[str, Any]]:
 
     hpanel(50, "Policy accuracy (higher is better)", [m[1] for m in methods], 1.0, lambda v: f"{v:.3f}")
     hpanel(930, "Unsafe actions (lower is better)", [float(m[2]) for m in methods], 6.0, lambda v: f"{int(v)}")
-    c.text(900, 650, "Global proposal: accuracy 1.000, unsafe actions 0. Constructed synthetic holdout only.", size=17, color=COLORS["teal"], weight="700", anchor="middle")
+    c.text(900, 650, "All-source proposal: accuracy 1.000, unsafe actions 0. Constructed synthetic holdout only.", size=17, color=COLORS["teal"], weight="700", anchor="middle")
     footer(c, "12 synthetic fact families; a family counts only if all 3 replicates match. Not real-corpus or human-review accuracy.")
     return c.render(), {
         "id": "fig4_holdout_baselines",

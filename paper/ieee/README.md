@@ -34,38 +34,47 @@ For example, on a Debian/Ubuntu host, install missing components only if necessa
 sudo apt-get install texlive-latex-extra texlive-publishers latexmk inkscape
 ```
 
-`inkscape` is optional when the SVG package is allowed to invoke it during LaTeX compilation, but installing it is the easiest way to convert staged SVG figures to PDF.
+For staging the plots, either `inkscape` or the `cairosvg` CLI is enough;
+`stage_ieee_figures.py` tries Inkscape first and falls back to `cairosvg`:
+
+```bash
+pip install cairosvg
+```
 
 ## 2. Stage the already-generated figures
 
-The figure generator writes editable SVG files outside the repository. Copy them into this paper project:
-
-```bash
-cd ~/weknora/paper/ieee
-
-make figures \
-  FIGURE_SOURCE="$HOME/weknora-paper-assets/conflict-v2-figures"
-```
-
-This copies:
+Figure sourcing is split:
 
 ```text
-fig1_system_architecture.svg
-fig2_fact_lifecycle.svg
-fig3_cascade_cost_ablation.svg
-fig4_holdout_baselines.svg
-fig5_fail_closed_state_machine.svg
+Figs. 1, 2, 5  paper/ieee/fig1.png, fig2.png, fig5.png   (frozen case schematics, in Git)
+Figs. 3, 4      figures/fig3_cascade_cost_ablation, fig4_holdout_baselines  (generated plots)
 ```
 
-For a staged PDF fallback as well:
+Figs. 1/2/5 are complete as committed and must not be regenerated. Only the two
+data plots are restaged from the generator output:
 
 ```bash
-make figures \
-  FIGURE_SOURCE="$HOME/weknora-paper-assets/conflict-v2-figures" \
-  CONVERT_PDF=1
+# 1) regenerate just the bar charts (outside the repo)
+cd ~/weknora
+FIGURE_OUT="$HOME/weknora-paper-assets/conflict-v2-figures"
+mkdir -p "$FIGURE_OUT"
+make paper-figures \
+  FIGURE_OUTPUT="$FIGURE_OUT" \
+  ONLY=fig3_cascade_cost_ablation,fig4_holdout_baselines
+
+# 2) stage them into the paper, rendering SVG to PDF on the way
+cd paper/ieee
+make figures-plots FIGURE_SOURCE="$FIGURE_OUT"
 ```
 
-The copied figure files are intentionally Git-ignored. SVG is editable in Inkscape, Figma, Illustrator, diagrams.net, or a browser.
+This copies `fig3_cascade_cost_ablation.{svg,pdf}` and
+`fig4_holdout_baselines.{svg,pdf}` into `figures/` and leaves `fig1.png`,
+`fig2.png`, and `fig5.png` untouched. PDF rendering uses Inkscape when present
+and falls back to the `cairosvg` CLI otherwise.
+
+The staged plot files are intentionally Git-ignored; the Figs. 1/2/5 PNGs are
+tracked. SVG is editable in Inkscape, Figma, Illustrator, diagrams.net, or a
+browser.
 
 ## 3. Build
 
@@ -79,12 +88,14 @@ The build runs:
 latexmk -pdf -shell-escape -interaction=nonstopmode main.tex
 ```
 
-Without pre-rendered PDFs, `svg` invokes Inkscape under shell escape. If the venue or build environment forbids shell escape, first render and stage PDFs, then disable the flag explicitly; `main.tex` automatically prefers `figures/<name>.pdf` when present:
+`main.tex` uses `\casefigure` for Figs. 1/2/5 (the tracked PNGs) and
+`\plotfigure` for Figs. 3/4 (which prefers `figures/<name>.pdf` and only falls
+back to the `svg` package when no PDF was staged). After `make figures-plots`
+the build therefore needs no shell escape:
 
 ```bash
-make figures \\
-  FIGURE_SOURCE="$HOME/weknora-paper-assets/conflict-v2-figures" \\
-  CONVERT_PDF=1
+make figures-plots \
+  FIGURE_SOURCE="$HOME/weknora-paper-assets/conflict-v2-figures"
 
 make pdf SHELL_ESCAPE=0
 ```

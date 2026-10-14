@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Stage generated Conflict V2 SVG figures for the IEEE LaTeX manuscript.
 
-Copies the five editable SVG sources produced by generate_conflict_v2_figures.py
-into paper/ieee/figures (or another caller-selected directory). With
---convert-pdf it invokes a caller-provided Inkscape executable once per figure,
-so the IEEE source can use pre-rendered PDFs without relying on LaTeX shell
-escape at build time.
+Copies generated SVG sources into paper/ieee/figures (or another caller-selected
+directory). Figs. 1/2/5 case schematics are frozen PNGs next to main.tex and
+should be staged with --only fig3...,fig4... via `make figures-plots`. With
+--convert-pdf it tries Inkscape first and falls back to the cairosvg CLI, so
+the IEEE source can use pre-rendered PDFs without LaTeX shell escape.
 
 This tool never calls a model/API/database and never removes source images.
 """
@@ -40,6 +40,47 @@ def json_dump(path: Path, data: Any) -> None:
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
+def convert_svg_to_pdf(svg: Path, pdf: Path, inkscape: str) -> str:
+    """Render SVG to PDF. Prefer Inkscape; fall back to the cairosvg CLI."""
+    inkscape_err = f"找不到 Inkscape ({inkscape})"
+    try:
+        result = subprocess.run(
+            [inkscape, str(svg), "--export-type=pdf", f"--export-filename={pdf}"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+    except FileNotFoundError:
+        result = None
+    except subprocess.TimeoutExpired as exc:
+        raise StageError(f"Inkscape 转换超时: {svg.name}") from exc
+    else:
+        if result.returncode == 0 and pdf.is_file():
+            return "inkscape"
+        inkscape_err = (result.stderr or result.stdout).strip()[:2000] or inkscape_err
+
+    try:
+        result = subprocess.run(
+            ["cairosvg", str(svg), "-o", str(pdf)],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+    except FileNotFoundError as exc:
+        raise StageError(
+            f"无法渲染 PDF: Inkscape 失败（{inkscape_err}）；"
+            "也找不到 cairosvg CLI。安装 inkscape 或 `pip install cairosvg`。",
+        ) from exc
+    except subprocess.TimeoutExpired as exc:
+        raise StageError(f"cairosvg 转换超时: {svg.name}") from exc
+    if result.returncode != 0 or not pdf.is_file():
+        detail = (result.stderr or result.stdout).strip()[:2000]
+        raise StageError(f"cairosvg 转换失败 {svg.name}: {detail}")
+    return "cairosvg"
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Copy generated Conflict V2 SVGs into an IEEE paper figures directory.",
@@ -47,7 +88,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--source-dir", required=True, help="Output directory from generate_conflict_v2_figures.py")
     parser.add_argument("--output-dir", default=str(ROOT / "paper/ieee/figures"), help="LaTeX figures directory")
-    parser.add_argument("--convert-pdf", action="store_true", help="Use Inkscape to create PDFs after copying SVGs")
+    parser.add_argument("--convert-pdf", action="store_true", help="Render PDFs after copying SVGs (Inkscape, then cairosvg)")
     parser.add_argument("--inkscape", default="inkscape", help="Inkscape executable used only with --convert-pdf")
     parser.add_argument("--overwrite", action="store_true", help="Deprecated; existing figure files are overwritten in place")
     parser.add_argument(
@@ -87,20 +128,8 @@ def main() -> int:
             record = {"svg": name, "source": str(src), "staged": str(dst)}
             if args.convert_pdf:
                 pdf = dst.with_suffix(".pdf")
-                command = [args.inkscape, str(dst), "--export-type=pdf", f"--export-filename={pdf}"]
-                try:
-                    result = subprocess.run(command, check=False, capture_output=True, text=True, timeout=120)
-                except FileNotFoundError as exc:
-                    raise StageError(
-                        f"找不到 Inkscape ({args.inkscape})；安装 inkscape，或省略 --convert-pdf 并使用 latexmk -shell-escape。",
-                    ) from exc
-                except subprocess.TimeoutExpired as exc:
-                    raise StageError(f"Inkscape 转换超时: {name}") from exc
-                if result.returncode != 0 or not pdf.is_file():
-                    raise StageError(
-                        f"Inkscape 转换失败 {name}: {(result.stderr or result.stdout).strip()[:2000]}",
-                    )
                 record["pdf"] = str(pdf)
+                record["pdf_renderer"] = convert_svg_to_pdf(dst, pdf, args.inkscape)
             staged.append(record)
 
         manifest = {
